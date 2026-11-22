@@ -5049,7 +5049,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const handOver = useCallback(async (opts?: unknown): Promise<string | null> => {
     // Telegram's "Super'i aç" (N5): the same hand-over, adopting none of the open chats.
     const adoptNone = !!opts && typeof opts === 'object' && (opts as { adoptNone?: unknown }).adoptNone === true;
-    // Only the onboarding landing (`super-landing`, C8a) asks for a quiet hand-over: no turn queued.
+    // A quiet hand-over queues no turn: the onboarding landing (`super-landing`, C8a) and a sidebar
+    // header press that lands on the Super Agent (wb-sol-panel C6).
     const quiet = !!opts && typeof opts === 'object' && (opts as { quiet?: unknown }).quiet === true;
     let landed: string | null = null;
     const live = flightRunRef.current;
@@ -6429,7 +6430,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       arrivalHeldRef.current = true;
       void runSuperRow(plan, {
         showStage: () => setSuperView('super'),
-        handOver: async () => { await handOver(); },
+        handOver: async () => { await handOver(intent.quiet ? { quiet: true } : undefined); },
         spawnChat: () => {
           const id = addSession(SUPER_ROW_SPAWN.kind, { bypass: SUPER_ROW_SPAWN.bypass, explicitBypass: SUPER_ROW_SPAWN.explicitBypass });
           if (!id) throw new Error('40 chats are open in this project');

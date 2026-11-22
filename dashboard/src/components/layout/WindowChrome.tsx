@@ -1756,7 +1756,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     const seq = ++enterSeqRef.current;
     const land = (chats: boolean) => {
       if (chats) switchTo(name);
-      else void trackedIntent(name, { kind: 'super' });
+      else void trackedIntent(name, { kind: 'super', quiet: true });
     };
     if (sidebarModeNow !== 'chat') { switchTo(name); return; }
     const live = mountedChats(drawerFacts[name]);

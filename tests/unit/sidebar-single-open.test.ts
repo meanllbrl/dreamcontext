@@ -67,4 +67,8 @@ describe('wiring (source pins)', () => {
     expect(chrome).toContain('void readChatCount(name).then((tabs) => {');
     expect(chrome).not.toMatch(/mountedChats\([^)]*fanout/);
   });
+  it('a header press landing on the Super Agent hands over quietly (no hand-over turn queued)', () => {
+    expect(chrome).toContain("else void trackedIntent(name, { kind: 'super', quiet: true });");
+    expect(src('components/sleepy/AgentSurface.tsx')).toContain('await handOver(intent.quiet ? { quiet: true } : undefined);');
+  });
 });
