@@ -304,7 +304,7 @@ These are the defaults: the deep and overdue edges follow the configured Must Sl
 1. Tell the user you're consolidating.
 2. `dreamcontext sleep start` — pins the epoch (safe clearing).
 3. Build a brief inline (cheap CLI): read `state/.sleep.json`, `git status --short`, `git log` since last sleep, `dreamcontext core releases active`.
-4. Dispatch specialists **in parallel** (one message, multiple Agent calls; never inline, never sequential): sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when their signals fire (sleep-product: knowledge/feature/research signals, or `sleep start` reports automation output or app findings; sleep-migration: `dreamcontext migrations pending` has output; sleep-learn: learning is enabled and a thesis is due). Each on the model `sleep start` prints for it. Over-fire sleep-product when unsure: it no-ops cheaply.
+4. Dispatch specialists **in parallel** (one message, multiple Agent calls; never inline, never sequential): sleep-tasks + sleep-state always; sleep-product and sleep-learn only when their signals fire (sleep-product: knowledge/feature/research signals, or `sleep start` reports automation output or app findings; sleep-learn: learning is enabled and a thesis is due). Each on the model `sleep start` prints for it. Over-fire sleep-product when unsure: it no-ops cheaply.
 5. Wait for reports, then `dreamcontext reflect` (promote only genuinely load-bearing terms).
 6. If `core/objectives/` is non-empty, run `dreamcontext roadmap` and surface any 🔴 SLIPPING objectives.
 7. `dreamcontext sleep done "<one-paragraph summary>"` — clears pre-epoch state, resets debt. Add `--product-ran` when sleep-product ran.
@@ -370,7 +370,7 @@ It refuses while a part is missing. Details → [tasks-and-features.md](referenc
 - **`dreamcontext-explore`**: context-accelerated codebase exploration. Use for ALL exploration (default Explore is blocked). It is the **fast, single-pass** searcher, one agent, tight budget, one answer.
 - **`dreamcontext-deep-research` skill**: the iterative counterpart for **synthesis across a large or multi-project corpus**, returning a cited report. Start with `dreamcontext-explore`; escalate when one pass leaves a cross-corpus question half-answered.
 - **`initializer` skill**: the interactive, sub-agent-driven **brain bootstrap** for a missing or sparse `_dream_context/` (it drives `initializer-scout`, `initializer-ingestor`, `initializer-verifier`, and handles codebase-only repos too).
-- **Sleep specialists** (`sleep-tasks`, `sleep-state`, `sleep-product`, `sleep-migration`, `sleep-learn`), dispatched by the main agent during the sleep flow only.
+- **Sleep specialists** (`sleep-tasks`, `sleep-state`, `sleep-product`, `sleep-learn`), dispatched by the main agent during the sleep flow only.
 - **Preloads:** dreamcontext's own sub-agents preload the small `dreamcontext-agent-core` skill; only the four curator/initializer judges preload this one.
 
 **First-run self-recognition (do not skip):** a missing or sparse brain → **offer, unasked,** to ingest the user's material (docs, a Notion export, a wiki) or bootstrap from the codebase with the `initializer` skill. A hook's `🧠 dreamcontext:` offer means the same: relay it, invoke on consent (→ [cli-reference.md](references/cli-reference.md) § Setup & maintenance).

@@ -462,8 +462,10 @@ function recordIfManifest(
  * recall time, so there is nothing for a sleep specialist to drain or distribute.
  * `review-coordinator` retired 2026-05-26 (the main agent synthesizes a multi-review itself) but
  * was never pruned: it still sat in upgraded projects' agent listing (audit IN-16, 2026-11-12).
+ * `sleep-migration` retired 2026-11-22 (oto-migration C5): a migration's agent work runs in a
+ * session of its own (the Super's Taşıma child, or `dreamcontext migrations pending`), never at sleep.
  */
-export const RETIRED_CORE_AGENTS = ['sleep-federation', 'review-coordinator'] as const;
+export const RETIRED_CORE_AGENTS = ['sleep-federation', 'review-coordinator', 'sleep-migration'] as const;
 
 /**
  * Delete the installed copy of every retired core agent that is still exactly
@@ -514,7 +516,7 @@ export function pruneRetiredCoreAgents(projectRoot: string, manifest?: Manifest)
       ? isCustomizedAgent(content, baseline)
       : !shipped.includes(guardedFileSha(Buffer.from(content, 'utf-8')));
     if (edited) {
-      notes.push(chalk.dim(`Kept ${rel} because it was edited. The ${name} agent is retired and never dispatched; \`dreamcontext update\` may still list it as a stale file to remove.`));
+      notes.push(chalk.dim(`Kept ${rel} because it was edited. The ${name} agent is retired and never dispatched; delete it yourself if you no longer need it.`));
       continue;
     }
     rmSync(abs, { force: true });

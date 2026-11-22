@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pruneStaleFiles } from '../../src/cli/commands/update.js';
 import { guardedFileSha as designFileSha } from '../../src/lib/core-guarded-skill.js';
+import { agentBaselineSha } from '../../src/lib/sleep-specialist-frontmatter.js';
 import {
   emptyManifest,
   writeManifest,
@@ -89,6 +90,26 @@ describe('pruneStaleFiles — partition + keep contract', () => {
     expect(removed).toEqual([untouched]);
     expect(existsSync(join(tmp, edited))).toBe(true);
     expect(keep).toContain(edited);
+  });
+
+  it('an agent file a release dropped is deleted only when untouched; an edited one is kept with no prompt', async () => {
+    // A retired agent (sleep-migration, 2026-11-22): the app updates with no TTY, so nothing asks.
+    const untouched = '.claude/agents/old-helper.md';
+    const edited = '.claude/agents/sleep-migration.md';
+    const shipped = '---\nname: sleep-migration\n---\n\n# Body\n';
+    const old = emptyManifest();
+    touch(tmp, untouched, '---\nname: old-helper\n---\n\n# Body\n');
+    touch(tmp, edited, `${shipped}\nmy own notes\n`);
+    old.files[untouched] = { version: '0.41.0', kind: 'agent', baselineSha: agentBaselineSha('---\nname: old-helper\n---\n\n# Body\n') };
+    old.files[edited] = { version: '0.41.0', kind: 'agent', baselineSha: agentBaselineSha(shipped) };
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
+    const { removed, keep } = await pruneStaleFiles(tmp, old, emptyManifest(), false, false);
+
+    expect(removed).toEqual([untouched]);
+    expect(readFileSync(join(tmp, edited), 'utf-8')).toContain('my own notes');
+    expect(keep).toContain(edited);
+    expect(confirmMock).not.toHaveBeenCalled();
   });
 
   it('T6: deletes a concrete-version owned candidate (yes:true)', async () => {

@@ -1,5 +1,5 @@
 import { Command, Option } from 'commander';
-import { existsSync, lstatSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
@@ -22,6 +22,7 @@ import {
   type Manifest,
 } from '../../lib/manifest.js';
 import { guardedFileIsUnchanged, isGuardedSkillPath, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
+import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { adoptLocalPending } from '../../lib/automations/adopt-local.js';
 import { pruneRetiredPacks, pruneStoppedSkills, retireExcalidraw } from '../../lib/retired-packs.js';
@@ -130,11 +131,25 @@ export async function pruneStaleFiles(
   function editedDesignFile(p: string): boolean {
     return isGuardedSkillPath(p) && !guardedFileIsUnchanged(projectRoot, p, oldManifest.files[p]?.baselineSha);
   }
+  // An agent file a later release dropped (a retired agent) that someone edited is their work: kept
+  // and tracked, never deleted, even without a prompt (the app updates with no TTY). One that cannot
+  // be read is kept too; a symlink is only a link and goes the usual way.
+  function editedAgentFile(p: string): boolean {
+    if (!/^\.claude\/agents\/[^/]+\.md$/.test(p)) return false;
+    const abs = join(projectRoot, p);
+    try {
+      if (lstatSync(abs).isSymbolicLink()) return false;
+      return isCustomizedAgent(readFileSync(abs, 'utf-8'), oldManifest.files[p]?.baselineSha);
+    } catch {
+      return true;
+    }
+  }
+  const editedKept = (p: string): boolean => editedDesignFile(p) || editedAgentFile(p);
   const heuristic = candidates.filter(
     (p) => oldManifest.files[p]?.version === PRE_MANIFEST_VERSION,
   );
   const owned = candidates.filter(
-    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && !editedDesignFile(p),
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && !editedKept(p),
   );
   // A guarded-skill file (design, draw) a later release dropped is deleted only if nobody edited it; an edited one is
   // someone's work, kept and tracked like the heuristic files above (and `upgrade` runs --yes).
@@ -145,6 +160,14 @@ export async function pruneStaleFiles(
     console.log();
     warn(`${editedDesign.length} design/draw skill file(s) no longer ship but were edited, not removed:`);
     for (const p of editedDesign) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
+  }
+  const editedAgents = candidates.filter(
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && !editedDesignFile(p) && editedAgentFile(p),
+  );
+  if (editedAgents.length > 0) {
+    console.log();
+    warn(`${editedAgents.length} agent file(s) no longer ship but were edited, not removed (delete them yourself if you no longer need them):`);
+    for (const p of editedAgents) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
   }
 
   if (heuristic.length > 0) {

@@ -270,6 +270,9 @@ describe('the consent fingerprint', () => {
     expect(currentAutoSleepFingerprint(project)).toBe(legacy);
     rmSync(join(agentsDir, 'sleep-federation.md'));
     expect(currentAutoSleepFingerprint(project)).toBe(legacy);
+    // sleep-migration retired too (2026-11-22): its slot hashes the same, installed or not.
+    rmSync(join(agentsDir, 'sleep-migration.md'));
+    expect(currentAutoSleepFingerprint(project)).toBe(legacy);
   });
 });
 

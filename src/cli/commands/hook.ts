@@ -2036,7 +2036,7 @@ export function userPromptReminder(
  *     Do not use workflows or deep-research unless the user requested it
  *
  * That outranks a SKILL.md instruction, so `sleep` silently degraded to running
- * `sleep-tasks` / `sleep-state` / `sleep-product` / `sleep-migration` INLINE in the
+ * `sleep-tasks` / `sleep-state` / `sleep-product` INLINE in the
  * main context — the exact opposite of why those specialists exist. Fan-out is not
  * a speed optimization here: each specialist owns a disjoint file domain, and the
  * no-stomp guarantee plus the per-agent context budget both come from them running
@@ -2068,7 +2068,7 @@ export function userPromptReminder(
 export const SUBAGENT_DISPATCH_AUTHORIZATION =
   'Sub-agent dispatch is pre-authorized by the user for dreamcontext\'s documented '
   + 'orchestration flows — sleep (sleep-tasks / sleep-state / sleep-product / '
-  + 'sleep-migration / sleep-learn), curator, initializer, goal-skill, '
+  + 'sleep-learn), curator, initializer, goal-skill, '
   + 'dreamcontext-deep-research, council, multi-review, and the Plan and Develop chat '
   + 'modes\' clean judges (goal-plan-reviewer, reviewer, goal-validator, and the '
   + 'review-router and review-* specialists of the end review the diff picks). '
