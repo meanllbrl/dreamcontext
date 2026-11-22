@@ -41,7 +41,7 @@ describe('the heavy-step gate', () => {
       const l = lead("echo 'it(1)' >> tests/a.test.ts && npm test");
       expect(l).toContain('NO part of this command ran');
       expect(l).toContain('`npm test`');
-      expect(l).toContain('NOT the rest of your command');
+      expect(l).toContain('does NOT show did not run');
       expect(l).toContain("Your command was: echo 'it(1)' >> tests/a.test.ts && npm test");
     });
     it('a lone heavy step says nothing ran', () => {
@@ -52,7 +52,7 @@ describe('the heavy-step gate', () => {
       for (const cmd of ['echo x >> src/a.ts && npx tsc --noEmit', 'echo x >> f && npx vitest run --dir tests/unit', 'npx tsc --noEmit || git checkout -- .']) {
         const l = lead(cmd);
         expect(l).toContain('runs the whole command');
-        expect(l).not.toContain('NOT the rest');
+        expect(l).not.toContain('does NOT show did not run');
       }
     });
     it('never classifies or relabels the other parts: build+suite, after-parts, ||, tee, heredoc, red record, mid cd', () => {
@@ -75,8 +75,15 @@ describe('the heavy-step gate', () => {
       expect(lead("cat >> tests/a.test.ts <<'EOF2'\nit('x', () => {})\nEOF2\nnpm test")).toContain("it('x', () => {})");
       // A red record's form (`--failed`) is no whole command: the write is handed back, the suite is not asked for again.
       const red = lead("echo 'it(1)' >> tests/a.test.ts && npm test", { redOpen: true });
-      expect(red).toContain('NOT the rest of your command');
+      expect(red).toContain('does NOT show did not run');
       expect(red).not.toMatch(/also not covered/);
+    });
+    it('never says the suite or a leading cd "never runs": the form shows them, so the agent is told not to repeat them', () => {
+      for (const cmd of ['npm run build && npm test', 'cd pkg && npm test 2>&1', 'cd pkg && npm run build | tail -20']) {
+        const l = lead(cmd);
+        expect(l).toContain('never repeat that');
+        expect(l).not.toMatch(/runs only the heavy step|the rest never runs/);
+      }
     });
     it('names the part of the reported kind', () => {
       expect(lead('npx tsc --noEmit && npm run build')).toContain('`npm run build` (build)');
