@@ -5452,6 +5452,9 @@ export async function startFirstRead(contextRoot: string): Promise<FirstReadStar
 export async function resumeCutChild(key: string, child: string): Promise<boolean> {
   if (isLiveChat(child)) return true;
   const { root, superId } = parseSuperKey(key);
+  // Main's children only: a member's child's arrival is watched on main's record (expectChild),
+  // so a reopen that never came would leave its row working for good. It gets `gone background=cut`.
+  if (superId !== 'main') return false;
   const state = await readSuperState(root, superId, superSanitizeOpts()).catch(() => null);
   const ch = state?.children[child];
   if (!state || !state.enabled || !ch || ch.endedAt !== undefined || ch.adopted) return false;

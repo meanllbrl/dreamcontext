@@ -152,7 +152,7 @@ import { noteOwnerWords, waitingCards } from '../../lib/super/owner-consent.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, isOwnerProse, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
-  childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
+  childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildEnding, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
 import { registerOwnerCardLookup, registerOwnerItemCloser, registerOwnerReceiptDeliverer } from '../owner-receipts.js';
@@ -6078,7 +6078,7 @@ export function startChatSession(
 
     // The client is closing this pane on purpose (a closed tab, a respawn): the socket's close
     // that follows ends the child as it always did, instead of detaching it for a reattach.
-    if (msg.type === 'end') { endOnSocketGone = true; return; }
+    if (msg.type === 'end') { endOnSocketGone = true; if (registry) noteChildEnding(chatRegistryId); return; }
 
     // MCP status and sign-in (task mcp-management), desktop-held sockets only.
     if (msg.type === 'mcpConnect' || msg.type === 'mcpReconnect' || msg.type === 'mcpRefresh') { onMcpMessage(msg as { type: string; name?: unknown }); return; }

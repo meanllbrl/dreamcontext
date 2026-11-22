@@ -2668,6 +2668,14 @@ const MAX_PARKING_NOTED = 200;
 
 /** A child is being parked (K2): recorded BEFORE it drains, so its exit reads `parked`, not
  *  `gone`, while a card waits on the owner. */
+/** Children the window closed ON PURPOSE (its `end` frame: ⌘W, a closed row, closing the window
+ *  over its running chats, a respawn): their exit is never a cut to reopen (review 2026-11-23). */
+const endingNoted = new Map<string, number>();
+export function noteChildEnding(sessionId: string): void {
+  endingNoted.delete(sessionId);
+  endingNoted.set(sessionId, Date.now());
+  while (endingNoted.size > MAX_PARKING_NOTED) endingNoted.delete(endingNoted.keys().next().value as string);
+}
 export function noteChildParking(sessionId: string): void {
   parkingNoted.delete(sessionId);
   parkingNoted.set(sessionId, Date.now());
@@ -5320,6 +5328,9 @@ async function onMoved(root: string, sid: string, status: 'working' | 'starting'
 /** Children whose process ended while their own background work ran (the registry's roster at
  *  the exit, or a roster that had just shrunk with no turn after it): the work died with them. */
 const cutAtGone = new Set<string>();
+/** When the server last reopened each child for a cut: at most once in CUT_REOPEN_WINDOW_MS. */
+const cutReopened = new Map<string, number>();
+export const CUT_REOPEN_WINDOW_MS = 60 * 60_000;
 
 /** The server's own resume of a child its exit cut off mid-background-work (routes/super.ts
  *  registers it: the same checks and start as `super resume`). True = it is coming back. */
@@ -5333,8 +5344,15 @@ export const CUT_LINE = 'An item whose own server line says event=gone backgroun
 async function addGone(root: string, sid: string, seenExit = false): Promise<void> {
   let added = false;
   const parked = wasParked(sid);
-  const cut = cutAtGone.delete(sid) && !parked;
+  const ended = endingNoted.delete(sid);
+  const reopenedAt = cutReopened.get(sid);
+  // Reopened for a cut within the hour and gone again (it never came, or it was cut again): still
+  // a cut, never a result, and never reopened a second time (review 2026-11-23: a job that kills
+  // its own process would loop).
+  const again = reopenedAt !== undefined && Date.now() - reopenedAt < CUT_REOPEN_WINDOW_MS;
+  const cut = (cutAtGone.delete(sid) || again) && !parked && !ended;
   let reopen = false;
+  let plainCut = false;
   let dropped: Array<{ kind: OwnerWaitKind; id: string; postingSession?: string }> = [];
   await writeSuper(root, (s) => {
     dropped = [];
@@ -5379,7 +5397,7 @@ async function addGone(root: string, sid: string, seenExit = false): Promise<voi
     // and nothing of it is a result. The server reopens it as a relaunch does (`restarted`, said
     // without a word to the owner), with a turn that says the work stopped. Once: a child cut again
     // before a turn of its own ended since takes the plain path below.
-    if (cut && cutResumer && ch.endedAt === undefined && ch.resuming === undefined && ch.row !== 'done') {
+    if (cut && !again && cutResumer && ch.endedAt === undefined && ch.resuming === undefined && ch.row !== 'done') {
       const now = Date.now();
       ch.resuming = now;
       setRow(ch, 'working', undefined, now);
@@ -5398,13 +5416,17 @@ async function addGone(root: string, sid: string, seenExit = false): Promise<voi
     setRow(s.children[sid], 'gone');
     if (doneWaits) return;
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'gone' && q.state === 'pending')) return;
-    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now(), ...(cut ? { cut: true as const } : {}) });
+    plainCut = cut && !doneWaits && ch.endedAt === undefined;
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now(), ...(plainCut ? { cut: true as const } : {}) });
     countEvent(s);
     added = true;
   });
+  // A cut the Super resumes by hand: the child is told on its own that its work stopped.
+  if (plainCut) await keepWorkAcrossRelaunch(root, [sid], Date.now(), BACKGROUND_CUT_TEXT).catch(() => 0);
   // After the write (never inside the mutator): the records close, the registry forgets the waits.
   for (const d of dropped) dropOwnerWait(sid, d.kind, d.id, d.postingSession ? { postingSession: d.postingSession } : {});
   if (reopen) {
+    cutReopened.set(sid, Date.now());
     let back = false;
     try {
       await keepWorkAcrossRelaunch(root, [sid], Date.now(), BACKGROUND_CUT_TEXT);
@@ -5662,7 +5684,8 @@ function onChange({ entry, from }: ChatChange): void {
       if (isLive(getChat(sid))) return;
       // Its own background work still ran at the exit (or had just ended with no turn after it):
       // that work died with the process (owner 2026-11-23).
-      if ((entry.backgroundTasks ?? 0) > 0 || entry.wakeOwedAt !== undefined) cutAtGone.add(sid); else cutAtGone.delete(sid);
+      // A JOB, never a server or a follow left running (a finished child with its dev server up).
+      if ((entry.backgroundJobs ?? 0) > 0) cutAtGone.add(sid); else cutAtGone.delete(sid);
       armGone(root, sid, GONE_DEBOUNCE_MS, goneTimers, true);
       // A process of this project ended or was parked: a seat is free for a result held at the
       // live-children cap (K6 `held:cap`).
@@ -5893,6 +5916,8 @@ export function _resetSuperInbox(): void {
   inboxes.clear();
   resuming.clear();
   cutAtGone.clear();
+  cutReopened.clear();
+  endingNoted.clear();
   cutResumer = null;
   carried.clear();
   turnsEnded.clear();

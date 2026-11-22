@@ -36,7 +36,7 @@ import {
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
-  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, CUT_LINE, OWNER_WAIT_LINE, setCutChildResumer, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
+  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, CUT_LINE, OWNER_WAIT_LINE, noteChildEnding, setCutChildResumer, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
   noteChildParking, reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn, refusalWait, refusalWaitId, stalledWait } from '../../src/lib/super/owner-wait.js';
@@ -656,6 +656,61 @@ describe('a background JOB holds the row for as long as the CLI runs it', { time
     expect(text).toMatch(/child=c1 event=gone background=cut/);
     expect(text).not.toMatch(/child=c1[^\n]*awaited=owner/);
     expect(text).toContain(CUT_LINE);
+  });
+
+  it('review 2026-11-23: the owner closing the tab (its end frame) is never a cut, whatever still ran', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'Run the load test' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    noteChildEnding('c1');
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual([]);
+    const gone = await ofKind('gone', 'c1');
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBeUndefined();
+  });
+
+  it('review 2026-11-23: a child with only a dev server left running is no cut', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'npm run dev on port 5173' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual([]);
+    expect((await ofKind('gone', 'c1'))[0]?.cut).toBeUndefined();
+  });
+
+  it('review 2026-11-23: reopened once, cut again within the hour: `gone background=cut`, no second reopen, never a result', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs, delivered } = await boot(['c1']);
+    await writeSuper(root, (s) => { s.children.c1.awaited = true; });
+    roster(hs[0], [{ desc: 'Run the benchmark' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+    // It came back, started the job again, and its process ended again.
+    const h2 = reg('c1');
+    h2.userSent(BACKGROUND_CUT_TEXT);
+    roster(h2, [{ desc: 'Run the benchmark' }]);
+    h2.observe({ type: 'result' });
+    await advance(30_000);
+    h2.exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+    const gone = (await ofKind('gone', 'c1')).filter((q) => q.state !== 'done' || q.cut);
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBe(true);
+    expect(delivered.map((d) => d.text).join('\n')).not.toMatch(/child=c1[^\n]*awaited=owner/);
   });
 
   it('a child that exits with nothing running in the background is a plain gone (no resume asked)', async () => {
