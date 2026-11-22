@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lowerModel, resolveSpawnModel, parseModelSource, type ModelSource } from '../../src/lib/eco-plus.js';
-import { chatModelSourceFor, launchModelOf, nextModelOrigin, pickedModelOrigin, ecoPlusLowerModel, ecoPlusSpawnModel, savingModeOf, savingModePatch } from '../../dashboard/src/lib/agentSettings.js';
+import { chatModelSource, ecoPlusLowerModel, ecoPlusSpawnModel, savingModeOf, savingModePatch } from '../../dashboard/src/lib/agentSettings.js';
 import { ecoPlusKeepEnv, ECO_PLUS_KEEP_ENV } from '../../src/lib/eco-plus.js';
 import { ecoPlusDefault, appendLowered, ecoPlusLoweredPath, appendEcoPlusHistory, ecoPlusHistoryPath } from '../../src/lib/context-watch.js';
 
@@ -63,31 +63,10 @@ describe('resolveSpawnModel (K1): only on + Claude + saved|default', () => {
   });
 });
 
-describe('a chat\'s model source is where the VALUE came from (review r1)', () => {
-  it('a named model is a pick or the resumed conversation\'s own; a filled-in default is saved, on a resume too', () => {
-    expect(chatModelSourceFor(true, false)).toBe('pick');
-    expect(chatModelSourceFor(true, true)).toBe('resume');
-    expect(chatModelSourceFor(false, true)).toBe('saved');
-    expect(chatModelSourceFor(false, false)).toBe('saved');
-  });
-  it('a respawn carrying the same model keeps its origin; a new model or a live pick starts one (review r2)', () => {
-    // New chat on the saved Opus default, then a mode switch before the first message.
-    const first = nextModelOrigin(undefined, 'opus', false, false);
-    expect(first).toEqual({ source: 'saved', model: 'opus' });
-    expect(nextModelOrigin(first, 'opus', true, true).source).toBe('saved');
-    expect(nextModelOrigin(first, 'opus', true, false).source).toBe('saved');
-    // The CLI reported the lowered id: carrying it is the conversation's own model.
-    expect(nextModelOrigin(first, 'claude-sonnet-5-5', true, true)).toEqual({ source: 'resume', model: 'claude-sonnet-5-5' });
-    // A live pick of Opus on that chat is a pick, kept on the next respawn.
-    const picked = pickedModelOrigin('opus');
-    expect(nextModelOrigin(picked, 'opus', true, true).source).toBe('pick');
-  });
-  it('a roster record stores a still-saved default as none, everything else as is', () => {
-    expect(launchModelOf({ source: 'saved', model: 'opus' }, 'opus')).toBe('');
-    expect(launchModelOf({ source: 'default', model: '' }, '')).toBe('');
-    expect(launchModelOf({ source: 'saved', model: 'opus' }, 'claude-sonnet-5-5')).toBe('claude-sonnet-5-5');
-    expect(launchModelOf({ source: 'pick', model: 'opus' }, 'opus')).toBe('opus');
-    expect(launchModelOf(undefined, 'opus')).toBe('opus');
+describe('a chat\'s model source comes only from a pick event (review r3, fix the class)', () => {
+  it('picked = pick; anything else = saved', () => {
+    expect(chatModelSource(true)).toBe('pick');
+    expect(chatModelSource(false)).toBe('saved');
   });
   it('the kept-tree marker: only a named heavy model under Eco Plus', () => {
     expect(ecoPlusKeepEnv('opus', true)[ECO_PLUS_KEEP_ENV]).toBe('1');

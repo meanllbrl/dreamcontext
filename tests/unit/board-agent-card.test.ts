@@ -18,7 +18,6 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
 /** Every createChatSession call, with the fake session it returned. */
 const spawned: Array<{ args: unknown[]; session: { claudeId: string; scratchId?: string; dispose: ReturnType<typeof vi.fn>; busy: boolean; asking: boolean; emit: () => void } }> = [];
 vi.mock('../../dashboard/src/components/sleepy/chatSession.js', () => ({
-  noteChatSpawnModel: vi.fn(),
   createChatSession: (...args: unknown[]) => {
     const listeners = new Set<() => void>();
     const session = {

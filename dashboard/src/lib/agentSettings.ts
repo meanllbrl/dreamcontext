@@ -769,39 +769,16 @@ export function savingModePatch(mode: SavingMode): { ecoMode: boolean; ecoPlus: 
  */
 export type ModelSource = 'saved' | 'default' | 'pick' | 'resume';
 /**
- * The ONE rule for a chat's model-source tag (review r1 model-source-misattributed): the source is
- * where the model VALUE came from, not how the conversation opened. A model the caller named is the
- * resumed conversation's own (`resume`) or this chat's pick (`pick`); a model filled in from the
- * saved default, or none at all, is `saved`, on a resume too, so Eco Plus lowers it.
+ * The ONE rule for a chat's model source (review r3, fix the class: knowledge/patterns/
+ * fix-the-class-not-the-finding.md). A conversation's model is the owner's (`pick`, kept by Eco
+ * Plus) only when a real pick EVENT wrote it: the model picker (a live switch, a parked tab's pick,
+ * the Assistant, a board card), a composer model changed on purpose, or an explicit `--model` (a
+ * delegation, `window new --model`). Nothing is inferred from state: a new conversation id, a model
+ * carried over from another conversation, a restore and a saved default are all `saved`, so Eco
+ * Plus applies. The pick record itself lives in chatSession.ts (`noteChatModelPick`).
  */
-export function chatModelSourceFor(named: boolean, resume: boolean): ModelSource {
-  if (!named) return 'saved';
-  return resume ? 'resume' : 'pick';
-}
-
-/**
- * A conversation's model ORIGIN (review r2 redesign of model-source-misattributed): the model it
- * was spawned with and where that came from, kept per conversation for its whole life in this
- * window. Every spawn goes through {@link nextModelOrigin}: a respawn that carries the same model
- * (a mode switch, a permission or account change, a new tab of the same chat, all before the CLI
- * reported anything) is the same origin, so a saved default stays `saved`. Only a different model
- * starts a new origin: a live pick ({@link pickedModelOrigin}), or the id the CLI reported.
- */
-export interface ModelOrigin { source: ModelSource; model: string }
-export function nextModelOrigin(prior: ModelOrigin | undefined, model: string, named: boolean, resume: boolean): ModelOrigin {
-  if (prior && prior.model === model) return prior;
-  return { source: chatModelSourceFor(named, resume), model };
-}
-export function pickedModelOrigin(model: string): ModelOrigin {
-  return { source: 'pick', model };
-}
-/**
- * The model a saved roster or park record keeps: a model that is still this conversation's saved
- * default is stored as none, so a relaunch fills in the saved default again (and Eco Plus lowers
- * it), never a frozen copy that would come back as a named model.
- */
-export function launchModelOf(origin: ModelOrigin | undefined, model: string): string {
-  return origin && origin.model === model && (origin.source === 'saved' || origin.source === 'default') ? '' : model;
+export function chatModelSource(picked: boolean): ModelSource {
+  return picked ? 'pick' : 'saved';
 }
 const ECO_PLUS_HEAVY_RE = /^(?:opus|fable)(?:\[1m\])?$|^claude-(?:opus|fable)(?:-[a-z0-9.-]*)?(?:\[1m\])?$/i;
 export function ecoPlusLowerModel(model: string | null | undefined): string {
