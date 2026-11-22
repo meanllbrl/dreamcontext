@@ -1697,6 +1697,15 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // open across the relaunch (K2, kart-alta-yapisma-2).
         noteServerStopping();
         console.log('\n  Shutting down...');
+        // Reap spawned children (chat `claude` groups, agent-terminal PTYs) FIRST and
+        // synchronously. Each chat child is its own process group, so the desktop shell's
+        // signal to this server's group never reaches it, and the shell SIGKILLs this server
+        // 1.5 s after its SIGTERM: anything left for after an await below (the Mac-mode stop
+        // can take seconds) was skipped, and the children lived on under launchd, writing
+        // beside the next server's resumed copy. A SIGKILL from the parent still skips this;
+        // `reapOrphanCopies` (orphan-chats.ts) ends such a leftover before its conversation
+        // is resumed.
+        killTrackedChildren();
         unpublishDesktopServer();
         stopAppsSweeper();
         stopAllRuntimes();
@@ -1713,9 +1722,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
         void macDone.finally(() => {
-          // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
-          // when this server exits — SIGKILL from the parent would skip this, but a
-          // graceful SIGTERM or the parent-death watchdog both route through here.
+          // A child tracked while the Mac-mode stop ran is reaped too (no-op otherwise).
           killTrackedChildren();
           // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
           declineAllProposals();

@@ -26,6 +26,7 @@ import { sniffImageType } from '../../lib/image-sniff.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, SUPER_STAGE_FRAME, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
+import { reapOrphanCopies } from '../orphan-chats.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
 import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
@@ -1899,6 +1900,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // target, or the conversation reads as still-held and the spawn silently starts a new,
       // unpinned one. No-op unless a resume was asked for and is genuinely still held.
       if (!adoptable) await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
+      // A conversation this server does not hold may still be running in a child a previous
+      // server left behind (ppid 1): end it first, so the spawn below is its only writer.
+      if (!adoptable && (resumeId || sessionId)) {
+        const ctxRoot = join(projectRoot, '_dream_context');
+        await reapOrphanCopies([resumeId, resumeId ? resolveAgentSession(ctxRoot, resumeId) : '', sessionId]).catch(() => []);
+      }
 
       const wss = new WebSocketServer({ noServer: true });
       // A Mac-mode phone socket: the device this socket proved (its id's hash) owns whatever it
@@ -3358,7 +3365,9 @@ export function startChatSession(
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerKillTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const untrack = trackChild(child);
+  // The server's shutdown ends the child's whole process group (MCP servers, tool shells), not
+  // only its leader: the group is what the desktop shell's signal to the server never reaches.
+  const untrack = trackChild(() => signalGroup(child, 'SIGTERM'));
   // A write that loses a race with stdin's end is reported as an asynchronous 'error' event,
   // which `writeStdin`'s try/catch cannot see — and an unheard 'error' takes the whole server
   // down. The close handler already reports the child going away.
