@@ -449,6 +449,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   /** What ending a prepare does beyond the gate (drop its intent, end its move): set below. */
   const prepareEndRef = useRef<(p: Prepare, why: 'cancel' | 'replaced') => void>(() => {});
   const gateRef = useRef<RevealGate | null>(null);
+  /** Set by the gate's activation: where focus lands if A going inert drops it (see below). */
+  const landFocusRef = useRef<{ vault: string; chat: boolean } | null>(null);
   if (gateRef.current === null) {
     gateRef.current = createRevealGate({
       now: Date.now,
@@ -461,6 +463,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
         // The seamless probe (scripts/verify/tek-kenar-seamless.mjs) sets this list; nothing else does.
         const log = (window as Window & { __dcReveal?: unknown[] }).__dcReveal;
         if (Array.isArray(log)) log.push({ vault: p.vault, why, cold: p.cold, ms: Date.now() - p.startedAt, at: performance.now() });
+        landFocusRef.current = { vault: p.vault, chat: p.target.kind === 'chat' };
         activeRef.current = p.vault;
         setActiveState(p.vault);
       },
@@ -470,6 +473,28 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }
   const gate = gateRef.current;
   useEffect(() => () => gate.dispose(), [gate]);
+  /*
+   * A key-driven move (⌘N, ⌥Tab) leaves focus inside A, which goes inert at activation, so focus
+   * would fall to body. Before paint it moves to B's twin of where it was: B's composer when it
+   * was in A's chat, else B's sidebar row (never into B's chat: ⌘1-9 skip the chat, so the next
+   * ⌘N would stop working). Focus the owner put somewhere live is never taken.
+   */
+  useLayoutEffect(() => {
+    const land = landFocusRef.current;
+    landFocusRef.current = null;
+    if (!land || land.vault !== activeVault) return;
+    const at = document.activeElement;
+    if (at && at !== document.body && !at.closest('.project-instance:not([data-active])')) return;
+    const fromChat = !!at?.closest('.agent-surface');
+    const inst = [...document.querySelectorAll<HTMLElement>('.project-instance[data-active]')]
+      .find((el) => el.dataset.instanceVault === land.vault);
+    const surface = land.chat && fromChat ? inst?.querySelector<HTMLElement>('.agent-surface') : null;
+    const row = (sel: string) => document.querySelector<HTMLElement>(`${sel} .ns-dr-toggle`);
+    const to = surface?.querySelector<HTMLElement>('textarea:not([disabled]), [contenteditable="true"]')
+      ?? row(`[data-row-key="${CSS.escape(`project:${land.vault}`)}"]`)
+      ?? row(`[data-drawer-project="${CSS.escape(land.vault)}"]`);
+    to?.focus({ preventScroll: true });
+  }, [activeVault]);
 
   /** The ONE activation entry. Every path but the gate's own commit cancels a pending prepare
    *  first: a chat row, a link, a start, New project, closing a tab all land where they say. */

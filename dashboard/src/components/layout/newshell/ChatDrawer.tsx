@@ -377,6 +377,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const remember = (el: Element | null, target: string) => {
     const row = el?.closest<HTMLElement>('[data-row-key]');
     if (!row) return;
+    // The clicked row holds focus from the click on: WebKit never focuses a clicked button, so
+    // focus would fall to body when A (where it was) goes inert at activation.
+    const own = row.matches('button') ? row : row.querySelector<HTMLElement>('.ns-dr-toggle');
+    if (own && document.activeElement !== own) own.focus({ preventScroll: true });
     anchor.current = { key: row.dataset.rowKey ?? '', y: row.getBoundingClientRect().top, target, until: Date.now() + 2500 };
   };
   /** Puts the anchored row back under the pointer and focuses it. True once done. */
