@@ -58,6 +58,12 @@ then `## What it does`, `## Screenshots` (at most 3 images in `store/`) and `## 
 | See Shared Apps (shared with you, invitations) | `dreamcontext apps shared` |
 | Look at an app before installing | `dreamcontext apps install <owner/repo|link>` (installing is the owner's click) |
 | Check an installed app for an update | `dreamcontext apps update <slug>` |
+| See or close live links (an app or a board handed to a guest over a tunnel) | `dreamcontext shares list`, `dreamcontext shares close <id|all>` (opening one is the owner's **Canlı link** click; nothing prints the link) |
+
+**Live link is not Share.** Share puts a copy on GitHub; **Canlı link** opens a temporary door to the
+app running on this Mac, over its own Cloudflare tunnel, until the owner closes it or dreamcontext
+quits. The guest uses the app, never the brain; while it is shared the app's agent paths answer
+`shared_live` unless the owner turned the share's AI switch on. Full rules: [cli-reference.md](cli-reference.md#live-links-shares).
 
 **Shared apps.** An app installed from someone else lives in `<project>-apps/installed/<slug>/` and
 runs like the owner's own apps; the install screen says who wrote it. Its settings are on this Mac
