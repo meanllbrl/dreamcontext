@@ -53,7 +53,7 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
-import { emptySuperState, type SuperState, type SuperTeamJob } from '../../src/lib/super/types.js';
+import { emptySuperState, type SuperQueueItem, type SuperState, type SuperTeamJob } from '../../src/lib/super/types.js';
 import { AWAITED_LINE, TEAM_LINE, _resetSuperInbox, heldBlock, markSuperEventTurn, nextBatch, noteHeld, superBatchText, writeSuper } from '../../src/lib/super/inbox.js';
 import { noteTeamFollowUp, setTeamLiveSource, teamJobAnswer, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, teamItemLines, teamJobStatus, teamJobTrailing, teamLiveRows } from '../../src/lib/super/team.js';
 import { noteRunSession, runningSessionFor } from '../../src/lib/automations/run-session.js';
@@ -985,5 +985,96 @@ describe('the route to the record: what the owner sends on a job reaches the sup
       const text = teamItemLines(root, 'V', after, items[0]).join('\n');
       expect(text).toContain('followup=owner'); expect(text).toContain('which step?'); expect(text).toContain('step two'); expect(text).not.toContain('first');
     });
+  });
+});
+
+describe('W3 C15: a finished Super job asks him to rate it, once (rate=ask run=)', () => {
+  const NOW = new Date('2026-10-21T00:00:00.000Z');
+  const KEY = `writer::${RUN}`;
+  beforeEach(() => { createAgent(root, { slug: 'writer', title: 'Writer', prompt: 'You write.' }, { approve: { now: NOW } }); });
+
+  async function finishedJob(jobId: string, opts: { question?: boolean } = {}): Promise<string> {
+    const run = deferred();
+    settle.runs.set(jobId, run.p);
+    const ask = appendThreadEntry(root, 'writer', { runId: RUN, kind: 'user', text: 'draft the weekly note', via: 'super', now: at(1) });
+    say.body = { job: { id: jobId, kind: 'run' }, started: true, runId: RUN, entryId: ask.id };
+    const out = await verb('team-ask', { member: 'writer', text: 'draft the weekly note' });
+    expect(out.status).toBe(200);
+    if (opts.question) createQuestion(root, { slug: 'writer', runFiredAt: RUN, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Which tone?', choices: [] });
+    appendThreadEntry(root, 'writer', { runId: RUN, kind: 'agent', text: 'Weekly note drafted.', via: 'cli', now: at(2) });
+    appendThreadEntry(root, 'writer', { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner', now: at(3) });
+    run.resolve({ status: 'success' });
+    return (out.json.result as { job: string }).job;
+  }
+  const lineOf = async () => {
+    const s = await stored();
+    const item = s.queue.find((q) => q.team && q.kind === 'done')!;
+    return teamItemLines(root, 'acme', s, item)[0];
+  };
+
+  it('an awaited run job that ends done carries rate=ask run=, read back from disk; again after a pure exit; run= only once rated', async () => {
+    await finishedJob('aj-r1');
+    await vi.waitFor(async () => expect((await teamItems()).map((q) => q.kind)).toEqual(['done']));
+    // The record went to disk and came back through sanitizeSuperState.
+    const raw = JSON.parse(readFileSync(join(root, SUPER_STATE_REL), 'utf-8'));
+    const back = sanitizeSuperState(raw);
+    expect(back.queue.find((q) => q.team)?.rateRun).toBe(KEY);
+    expect(back.team[0].rateAsked).toBe(true);
+    expect(await lineOf()).toMatch(new RegExp(` status=done rate=ask run=${KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+    // Delivered again (a pure exit before it was heard): the same line.
+    expect(await lineOf()).toContain(' rate=ask run=');
+    const { rateRun } = await import('../../src/lib/agents/scorecard-ops.js');
+    rateRun(dirname(root), 'writer', { run: KEY, stars: 4, by: 'owner' });
+    const after = await lineOf();
+    expect(after).toContain(` run=${KEY}`);
+    expect(after).not.toContain('rate=ask');
+  });
+
+  it('a follow-up job on the same run is never asked', async () => {
+    const job = await finishedJob('aj-r2');
+    await vi.waitFor(async () => expect((await teamItems()).map((q) => q.kind)).toEqual(['done']));
+    const s = await stored();
+    const first = s.team.find((j) => j.id === job)!;
+    const follow: SuperTeamJob = { ...first, id: 'team-follow', followUpOf: job, told: undefined, rateAsked: undefined, toldEndAt: undefined, awaited: true };
+    s.team.push(follow);
+    expect(noteTeamJobEnd(root, s, 'team-follow', null)).toBe(true);
+    const item = s.queue.filter((q) => q.team === 'team-follow').at(-1)!;
+    expect(item.kind).toBe('done');
+    expect(item.rateRun).toBeUndefined();
+    expect(s.team.find((j) => j.id === 'team-follow')!.rateAsked).toBeUndefined();
+  });
+
+  it('a job he did not await carries run= and no rate=ask', async () => {
+    markSuperEventTurn(SUPER, true);
+    await finishedJob('aj-r3');
+    await vi.waitFor(async () => expect((await teamItems()).map((q) => q.kind)).toEqual(['done']));
+    expect((await teamItems())[0].rateRun).toBeUndefined();
+    const line = await lineOf();
+    expect(line).toContain(` run=${KEY}`);
+    expect(line).not.toContain('rate=ask');
+  });
+
+  it('a job whose run asked him a question carries neither; a stuck job neither', async () => {
+    await finishedJob('aj-r4', { question: true });
+    await vi.waitFor(async () => expect((await teamItems()).length).toBeGreaterThan(0));
+    const s = await stored();
+    for (const q of s.queue.filter((x) => x.team)) {
+      expect(teamItemLines(root, 'acme', s, q)[0]).not.toMatch(/rate=ask| run=/);
+    }
+    const stuck: SuperQueueItem = { id: 'q-stuck', sessionId: SUPER, kind: 'stuck', state: 'pending', createdAt: 1, team: s.team[0].id, rateRun: KEY };
+    expect(teamItemLines(root, 'acme', s, stuck)[0]).not.toMatch(/rate=ask| run=/);
+  });
+
+  it('a gone member and an unreadable card carry no rate=ask', async () => {
+    await finishedJob('aj-r5');
+    await vi.waitFor(async () => expect((await teamItems()).map((q) => q.kind)).toEqual(['done']));
+    const { scopeFor } = await import('../../src/lib/agents/scorecard.js');
+    const scope = scopeFor(dirname(root), 'writer', 'project');
+    mkdirSync(scope.dir, { recursive: true });
+    writeFileSync(scope.file, '{ not json');
+    expect(await lineOf()).not.toContain('rate=ask');
+    rmSync(scope.file);
+    rmSync(join(root, 'agents', 'writer.md'));
+    expect(await lineOf()).not.toContain('rate=ask');
   });
 });

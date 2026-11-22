@@ -100,7 +100,7 @@
     },
     {
       "path": "agents rate",
-      "desc": "Rate one of a member's finished runs, 1-5 stars, with an optional note that becomes a lesson. --last: its newest finished run (with --quote: the newest one that ended before the quoted words were said). From an agent session it needs --quote with the owner's exact words, and one quote rates one run.",
+      "desc": "Rate one of a member's finished runs, 1-5 stars, with an optional note that becomes a lesson. --last: its newest finished run (with --quote: the newest one that ended before the quoted words were said). From an agent session it needs --quote with the owner's exact words, and one quote rates one run. After the Super asked him about a job (its event line said rate=ask run=<key>), --run <key> takes his answer from this conversation since that ask, so a one-word answer (\"Dört.\") is his words. --judged (agent session, with --quote and --run): the stars are your reading of his correction; on a run he rated himself his stars stay (kept_owner_stars). A note from an agent on a run that already has his note is kept beside it as a correction, never in its place.",
       "args": [
         "<member>"
       ],
@@ -171,7 +171,8 @@
         "<member>"
       ],
       "valueFlags": [
-        "--run"
+        "--run",
+        "--slot"
       ]
     },
     {

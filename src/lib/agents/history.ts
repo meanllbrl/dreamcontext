@@ -267,7 +267,12 @@ export function runReadFromDay(runId: string): string | null {
  *  with no member (super-rutin) never asks. */
 function isMemberSource(contextRoot: string, source: string): boolean {
   try { if (getAgent(contextRoot, source)) return true; } catch { /* not an agent */ }
-  try { return !!getAutomation(contextRoot, source)?.agent; } catch { return false; }
+  // A routine's `agent` must BE a member: a Super automation (`target: super`) composes with its own
+  // slug as its agent, and `getAgent` refuses that slug.
+  try {
+    const agent = getAutomation(contextRoot, source)?.agent;
+    return !!agent && !!getAgent(contextRoot, agent);
+  } catch { return false; }
 }
 
 /** E1 + E2 from one run's full thread. Null when the run has no terminal entry yet. */
