@@ -12,7 +12,7 @@
  *  - `/gundem` (the main Super's bot only): ONE message; each line waiting on the owner is one button. A tap turns the same
  *    message into that line in full with **Bitti** (the same `padMove` the Mac's Done calls, no
  *    turn), **Yaz** (the owner's next text carries the Mac's `[About agenda line note=…]` block;
- *    5 minutes) and **Gündeme dön**. Running and finished lines are one quiet line.
+ *    5 minutes) and **Gündeme dön**. Running lines are one quiet line; finished lines are never shown.
  *  - Super off → "Bu projede Super kapalı" + **Super'i aç**: the window's own hand-over adopting
  *    nothing (`hub_command super_handover`); no window → the project is opened and the command
  *    sent once a chat of it mounts.
@@ -43,7 +43,6 @@ export const CMD_LINES = {
   nothingWaiting: 'Seni bekleyen iş yok.',
   waitingCount: (n: number) => `Seni bekleyen ${n} iş`,
   running: (n: number) => `${n} iş sürüyor`,
-  finishedToday: (n: number) => `bugün ${n} iş bitti`,
   justDone: (line: string) => `✓ ${line} bitti`,
   doneBtn: '✓ Bitti',
   writeBtn: '✎ Yaz',
@@ -167,15 +166,14 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
   }
 
   /** The agenda as the owner reads it: only what waits on HIM is a button (one per line, cut);
-   *  the Super's own Now lines and the finished ones are one quiet line. `justDone` = the line
+   *  the Super's own Now lines are one quiet line; finished (Done) lines are never shown (owner 22 Kas). `justDone` = the line
    *  that was just finished (it replaces the quiet line once). */
   function agendaView(s: SuperState, justDone?: string): { html: string; labels: string[][]; lines: AgendaLine[] } {
     const pad = (s.pad ?? []).filter((p) => p.text.trim());
     const waiting = pad.filter((p) => p.section === 'waiting');
     const shown = waiting.slice(0, AGENDA_MAX);
     const running = pad.filter((p) => p.section === 'now').length;
-    const finished = pad.filter((p) => p.section === 'done').length;
-    const quiet = [running ? CMD_LINES.running(running) : '', finished ? CMD_LINES.finishedToday(finished) : ''].filter(Boolean).join(' · ');
+    const quiet = running ? CMD_LINES.running(running) : '';
     const head = waiting.length ? CMD_LINES.waitingCount(waiting.length) : CMD_LINES.nothingWaiting;
     const html = [`<b>${escapeHtml(head)}</b>`, justDone ? `<i>${escapeHtml(CMD_LINES.justDone(cleanTitle(justDone, 40)))}</i>` : quiet ? `<i>${escapeHtml(quiet)}</i>` : '']
       .filter(Boolean).join('\n');
