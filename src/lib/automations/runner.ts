@@ -725,7 +725,7 @@ export async function runPastWork(member: string, projectRoot: string, query: st
     // The fold line names the search that finds what was folded: a global member's owner block
     // spans every project (`--all`); an app's never does.
     const all = !app && memberScope(join(projectRoot, '_dream_context'), member, home ?? homedir()) === 'global';
-    return sel ? renderPastWork(sel.lines, sel.more, member, newTurnNonce(), query, { all }) : '';
+    return sel ? renderPastWork(sel.lines, sel.more, member, newTurnNonce(), query, { all, fold: sel.fold }) : '';
   } catch { return ''; }
 }
 
@@ -3079,7 +3079,8 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         // Whose run this is (D3): the member's own rules ride its hooks, its writes stay in its store.
         ...(runMember ? { [RUN_MEMBER_ENV]: runMember } : {}),
         // An app's run (G2): the CLI inside it reads past work as that app, while the run is live.
-        ...(runAppSlug ? { [RUN_APP_ENV]: runAppSlug } : {}),
+        // Always set: undefined REMOVES a value inherited from an app run that started this one.
+        [RUN_APP_ENV]: runAppSlug ?? undefined,
         // The run-post stamp key (plan Y3, Z3): Claude and Codex runs alike.
         [RUN_POST_STAMP_ENV]: runPostKey,
         // Built from the manifest and the approval entry, never from a caller; empty for

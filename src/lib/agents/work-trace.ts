@@ -287,7 +287,7 @@ interface SegmentWork {
 }
 
 /** A reply that is the API refusing (an error, a limit), never work (D1). One test for chats and runs. */
-const REFUSAL_TEXT_RE = /^\s*API Error\b/;
+const REFUSAL_TEXT_RE = /^\s*(API Error\b|Invalid API key\b|Credit balance is too low\b|Prompt is too long\b)/;
 
 function isRefusal(rec: Rec): boolean {
   if (rec.isApiErrorMessage === true || rec.is_api_error_message === true || rec.error !== undefined) return true;

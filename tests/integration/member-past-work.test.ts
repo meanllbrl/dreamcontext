@@ -277,5 +277,12 @@ describe('the fold line names a search that finds every folded job', () => {
     expect(cmd).toBeTruthy();
     const hits = await searchPastWork(ctx('kestrel'), 'mira', cmd[1]!, { all: cmd[2] === ' --all', home: m.home });
     for (const id of ids) expect(hits.map((h) => h.id)).toContain(id);
+
+    // An ask whose first six words carry no term: the named words are the ones the folded jobs matched.
+    const spoken = await turn('kestrel', 'Can you do this for the Portuguese glossary chapter translation');
+    const named = /`dreamcontext agents history mira --search "([^"]+)"( --all)?`/.exec(spoken!.text)!;
+    expect(named[1]).not.toMatch(/^Can/);
+    const again = await searchPastWork(ctx('kestrel'), 'mira', named[1]!, { all: named[2] === ' --all', home: m.home });
+    for (const id of ids) expect(again.map((h) => h.id)).toContain(id);
   });
 });

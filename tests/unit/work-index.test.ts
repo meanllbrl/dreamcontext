@@ -3,11 +3,11 @@
  * Fictional words only; every file under a fake HOME.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { tokenize } from '../../src/lib/recall.js';
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  MemberWorkIndex, renderPastWork, traceLine, workIndex, localIndex, PAST_WORK_ROOM_CHARS,
-} from '../../src/lib/agents/work-index.js';
+  MemberWorkIndex, renderPastWork, traceLine, workIndex, localIndex, PAST_WORK_ROOM_CHARS, foldWords } from '../../src/lib/agents/work-index.js';
 import { traceId, workRoot, writeTrace, dropMemberWork, type WorkTrace } from '../../src/lib/agents/work-trace.js';
 import { projectKey } from '../../src/lib/local-store.js';
 import { makeMachine, globalMember, projectMember, type Machine } from '../helpers/work-trace-fixtures.js';
@@ -219,4 +219,12 @@ describe('90,000 traces of one member (two years at the measured rate)', () => {
       expect(local.idx.allMatches(`uniq${i}q`, { projectKey: projectKey(m.project('kestrel')), scope: 'global' }, false).map((h) => h.id)).toContain(traceId(`f${i % 900}:j${i}`));
     }
   }, 240_000);
+});
+
+describe('foldWords: the fold line names the words the folded jobs matched', () => {
+  it('keeps the query\'s own words for the matched terms, in order, one per term', () => {
+    expect(foldWords('Hey can you please do the Portuguese glossary translation for lumen', new Set(tokenize('Portuguese glossary lumen')))).toBe('Portuguese glossary lumen');
+    expect(foldWords('glossary glossary lumen', new Set(['glossary', 'lumen']))).toBe('glossary lumen');
+    expect(foldWords('anything', new Set())).toBe('');
+  });
 });
