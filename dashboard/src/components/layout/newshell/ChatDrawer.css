@@ -618,6 +618,40 @@
   .ns-drawer[data-floating="true"] { animation: none; }
 }
 
+/* Docked, it slides in beside Chat and slides away when a page takes its place (owner,
+   2026-11-22). Transform and opacity only: the row is laid out once, at the press, and the
+   leaving drawer is already out of it (`data-leaving`, WindowChrome), over the page's edge. */
+.ns-drawer:not([data-floating]):not([data-leaving]) {
+  animation: ns-drawer-in 0.18s cubic-bezier(0.2, 0, 0, 1) backwards;
+}
+.ns-drawer[data-leaving="true"] {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--space-13);
+  pointer-events: none;
+  animation: ns-drawer-out 0.18s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@media (max-width: 600px) {
+  .ns-drawer[data-leaving="true"] { display: none; }
+}
+@keyframes ns-drawer-in {
+  from { transform: translateX(-12px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes ns-drawer-out {
+  from { transform: none; opacity: 1; }
+  to { transform: translateX(-20px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ns-drawer:not([data-floating]):not([data-leaving]) { animation: none; }
+  .ns-drawer[data-leaving="true"] { display: none; }
+}
+
+/* Light mode moves nothing either: the same gate as `softMotionOff()` (lib/softMotion.ts). */
+:root[data-light='true'] .ns-drawer:not([data-floating]):not([data-leaving]) { animation: none; }
+:root[data-light='true'] .ns-drawer[data-leaving="true"] { display: none; }
+
 /* The floating drawer and its scrim are placed against the body row. */
 .ns-body {
   position: relative;

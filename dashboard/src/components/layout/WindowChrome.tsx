@@ -50,6 +50,8 @@ import type { PickerRow } from './newshell/ProjectPicker';
 import { mergeProjectOrder } from './newshell/projectOrder';
 import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
+import { softMotionOff } from '../../lib/softMotion';
+import { useInstanceHold } from './useInstanceHold';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
   buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
@@ -68,6 +70,9 @@ import { landsOnChat, type DrawerIntent, type PendingDrawerIntent } from '../../
 import './newshell/NewShell.css';
 import './ProjectTabs.css';
 import './Header.css';
+
+/** How long the docked drawer's slide away runs (ChatDrawer.css `ns-drawer-out`, plus a frame). */
+const DRAWER_LEAVE_MS = 200;
 
 /**
  * The window-level shell: everything that belongs to the WINDOW rather than to any one
@@ -530,6 +535,9 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     setActiveOverlayScope(activeInstanceId);
     return () => setActiveOverlayScope(null);
   }, [activeInstanceId]);
+
+  // A project that is still drawing itself arrives behind the one being left (useInstanceHold).
+  useInstanceHold(activeInstanceId, newShell && !isMobile);
 
   const activate = useCallback((vault: string) => {
     const current = openRef.current;
@@ -1060,6 +1068,23 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const docked = !drawerFloats && drawerOpen;
   const drawerVisible = newShell && (docked || (drawerFloats && floatingOpen) || peek);
   const drawerFloating = !docked;
+  // The docked drawer LEAVES instead of vanishing (owner, 2026-11-22: "küt gibi geçiyor"): when
+  // it stops being docked and nothing else shows it, it stays mounted for one short slide, taken
+  // out of the row at once so the page gets its width in the same frame (ChatDrawer.css). Set in
+  // render, so the commit that would have unmounted it is the one that starts the slide.
+  const dockedShown = drawerVisible && docked;
+  const [wasDocked, setWasDocked] = useState(dockedShown);
+  const [drawerLeaving, setDrawerLeaving] = useState(false);
+  if (wasDocked !== dockedShown) {
+    setWasDocked(dockedShown);
+    setDrawerLeaving(wasDocked && !dockedShown && !isMobile && !softMotionOff());
+  }
+  useEffect(() => {
+    if (!drawerLeaving) return undefined;
+    const timer = window.setTimeout(() => setDrawerLeaving(false), DRAWER_LEAVE_MS);
+    return () => window.clearTimeout(timer);
+  }, [drawerLeaving]);
+  const drawerGhost = drawerLeaving && !drawerVisible;
   const peekOnly = peek && !(drawerFloats && floatingOpen);
   const onDrawerHover = useCallback((over: boolean) => {
     clearPeekTimer();
@@ -1551,11 +1576,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {drawerVisible && drawerFloating && !peekOnly && (
               <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
             )}
-            {drawerVisible && (
+            {(drawerVisible || drawerGhost) && (
               <ChatDrawer
                 rows={drawerRows}
                 width={drawerWidth}
-                floating={drawerFloating}
+                floating={drawerVisible && drawerFloating}
+                leaving={drawerGhost}
                 onHover={onDrawerHover}
                 home={drawerHome}
                 onNewProject={() => { closeOverlay(); setNewProjectOpen(true); }}

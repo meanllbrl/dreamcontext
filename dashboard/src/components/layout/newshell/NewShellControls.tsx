@@ -14,6 +14,8 @@ import { SetupStatusChip } from './SetupStatusChip';
 
 interface NewShellControlsProps {
   activePage: Page;
+  /** The picked page is not on screen yet (see `Rail`). */
+  navPending?: boolean;
   onNavigate: (page: Page) => void;
   onOpenSearch: () => void;
   canBack: boolean;
@@ -29,7 +31,7 @@ interface NewShellControlsProps {
  * every one of them is per project. Only the ACTIVE instance renders them (a portal escapes the
  * hidden instance's `inert` shroud).
  */
-export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack, canForward, onBack, onForward }: NewShellControlsProps) {
+export function NewShellControls({ activePage, navPending = false, onNavigate, onOpenSearch, canBack, canForward, onBack, onForward }: NewShellControlsProps) {
   const { isActive } = useVault();
   const slots = useChromeSlots();
   const { t } = useI18n();
@@ -42,7 +44,7 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack
   if (!isActive) return null;
   return (
     <>
-      {slots.rail && createPortal(<Rail activePage={activePage} onNavigate={onNavigate} badges={badges} />, slots.rail)}
+      {slots.rail && createPortal(<Rail activePage={activePage} onNavigate={onNavigate} badges={badges} navPending={navPending} />, slots.rail)}
       {slots.left && createPortal(
         <>
           {!phone && (

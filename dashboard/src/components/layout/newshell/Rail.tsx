@@ -27,6 +27,9 @@ interface RailProps {
   onNavigate: (page: Page) => void;
   /** The project's badges, from `useNavBadges` held by the caller for the project's lifetime. */
   badges: ReturnType<typeof useNavBadges>;
+  /** A page was picked and is still being drawn behind what is on screen (`Shell`): its row
+   *  lights at the press, over an open Chat too, so the click answers before the page lands. */
+  navPending?: boolean;
 }
 
 /**
@@ -35,12 +38,13 @@ interface RailProps {
  * (`chromeSlots.tsx`), because every badge and every click belong to that project. At 600px and
  * below it becomes a bottom bar of five.
  */
-export function Rail({ activePage, onNavigate, badges }: RailProps) {
+export function Rail({ activePage, onNavigate, badges, navPending = false }: RailProps) {
   const { t } = useI18n();
   const { vault, bus } = useVault();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
-  const { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting } = badges;
+  const { agentUnread, learningOff, showChat, chatRollup, appsWaiting } = badges;
+  const chatOpen = badges.chatOpen && !navPending;
   const narrow = useIsNarrowWindow(600);
   const railRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);

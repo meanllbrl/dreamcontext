@@ -534,6 +534,9 @@ function tunnelSettings(raw: AgentSettings): AgentSettings {
   return isMacPhoneSurface() && !s.chatView ? { ...s, chatView: true } : s;
 }
 
+/** The surface's own entrances (AgentTerminal.css): the dock zoom, and the new shell's page-in. */
+const ENTRANCES = new Set(['agent-surface-zoom-in', 'agent-surface-page-in']);
+
 export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /** New shell: the drawer click this project lands on, known from its first render. */
   arrival?: PendingDrawerIntent | null;
@@ -1002,14 +1005,23 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
-  // Bumped on every saved-draft change, so the roster PUT below (which carries each chat tab's
-  // drafts) re-runs: what is typed in a box has to reach disk without waiting for a tab change.
-  const [draftsRev, setDraftsRev] = useState(0);
+  // The roster PUT below, as the function of the newest render, and its one debounce timer. A
+  // saved-draft change (every keystroke) schedules it through these and never through state:
+  // what is typed has to reach disk without waiting for a tab change, but a key must not
+  // re-render this whole surface to get there (measured: scripts/verify/app-smooth.mjs).
+  const saveRosterRef = useRef<() => void>(() => {});
+  const rosterSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRosterSave = useCallback(() => {
+    if (!hydratedRef.current) return;
+    if (rosterSaveTimerRef.current !== null) clearTimeout(rosterSaveTimerRef.current);
+    rosterSaveTimerRef.current = setTimeout(() => { rosterSaveTimerRef.current = null; saveRosterRef.current(); }, 400);
+  }, []);
+  useEffect(() => () => { if (rosterSaveTimerRef.current !== null) clearTimeout(rosterSaveTimerRef.current); }, []);
   // True once a roster GET has answered and its drafts are seeded. Until then a PUT OMITS the
   // map, which the server reads as "keep what is stored": a launch whose GET failed must not
   // overwrite the file's drafts with this run's empty store.
   const draftsLoadedRef = useRef(false);
-  useEffect(() => subscribeAnyDrafts(() => setDraftsRev((n) => n + 1)), []);
+  useEffect(() => subscribeAnyDrafts(scheduleRosterSave), [scheduleRosterSave]);
   // The roster generation the last GET answered (`baseGeneration` of every PUT). A PUT based on
   // an older one is refused (409 `roster_stale`) and this surface re-hydrates instead.
   const rosterGenRef = useRef<number | undefined>(undefined);
@@ -1714,108 +1726,109 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // captured too. `minimized`/`size` are inert defaults kept only for persisted-format
   // compatibility; `pane`/`active`/`activePane` are the live ones that carry the placement.
   // Best-effort: a failed PUT just means this change isn't mirrored.
-  useEffect(() => {
-    if (!hydratedRef.current) return;
+  const saveRoster = () => {
+    if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
     const liveChatLaunch = (id: string): ChatLaunch | null => {
       const live = sessions.current.get(id);
       if (!live || live.kind !== 'chat') return null;
       const chat = live as ChatSession;
       return chatLaunch(modelForSession(chat), effortForSession(chat), chat.accountId);
     };
-    const handle = setTimeout(() => {
-      if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
-      // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
-      // ids are minted per page load and mean nothing tomorrow) and which tab was visible in
-      // it. A session in no pane — minimized — has no placement and defaults to pane 0 on the
-      // way back in, which is where a restored-from-nothing tab has always gone.
-      const paneOf = new Map<string, number>();
-      const activeTabs = new Set<string>();
-      const windowOf = new Map<string, string>();
-      let activePaneIndex = -1;
-      // Sent only once this surface knows the project's windows (the first read seeded them, or
-      // the owner made one): a surface that never read them must not replace the stored names.
-      let windowsOut: SavedWindowMeta[] | undefined;
-      if (windowed) {
-        // Every window's panes, window after window, ONE index across the surface: an app from
-        // before windows still lays each tab out in its own pane (D8).
-        const sp = savePlacement(chatWindows, { panes, activePaneId }, sessionList);
-        sp.placement.forEach((at, sid) => {
-          windowOf.set(sid, at.window);
-          if (at.pane !== undefined) paneOf.set(sid, at.pane);
-          if (at.active) activeTabs.add(sid);
-        });
-        activePaneIndex = sp.activePane ?? -1;
-        if (windowsKnownRef.current) windowsOut = sp.windows;
-      } else {
-        panes.forEach((p, i) => {
-          p.tabs.forEach((t) => paneOf.set(t, i));
-          if (p.active) activeTabs.add(p.active);
-        });
-        activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
-        // Classic hands every tab back to the window it came from, and sends no `windows` at all:
-        // absence keeps the stored list exactly, each window's focused pane included.
-        for (const m of sessionList) windowOf.set(m.id, classicHomeRef.current.get(m.claudeId) ?? chatWindows.list[0]?.id ?? DEFAULT_WINDOW_ID);
-        windowsOut = undefined;
-      }
-      // The window on screen's tabs first: an app from before W3 keeps only the first 20 entries
-      // (its MAX_SESSIONS), so a downgrade past 20 tabs keeps the ones the owner was looking at.
-      const shownFirst = (m: SessionMeta) => (windowOf.get(m.id) === chatWindows.activeId ? 0 : 1);
-      const payload = {
-        // The remembered permission mode rides with the roster: same per-vault, machine-local,
-        // gitignored file, and the same reason for being server-side at all (localStorage dies
-        // with the launch's loopback port). Sent on every roster write, so the value on disk
-        // is always the one this surface is actually running under.
-        chatPermissionMode,
-        // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
-        ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
-        ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
-        ...(windowsOut ? { windows: windowsOut } : {}),
-        sessions: [...[...sessionList].sort((a, b) => shownFirst(a) - shownFirst(b))
-          .filter((m) => m.kind !== 'shell')
-          // The Super Agent is never a tab, so it is never saved as one: a relaunch after
-          // take-back shows no super tab, and a reload while handed over rebinds it by id.
-          .filter((m) => !isSuperSession(m, superStateRef.current?.session))
-          .map((m) => ({
-            title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
-            ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
-            ...(activeTabs.has(m.id) ? { active: true } : {}),
-            ...(windowOf.has(m.id) ? { window: windowOf.get(m.id) } : {}),
-            ...(m.titleByAgent ? { titleByAgent: true } : {}),
-            // Only carried for automation tabs — the server's `coerceMeta` drops it for
-            // every other kind anyway, but there's no reason to send it otherwise.
-            ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
-            // Same rule for the chat mode: it means nothing on a shell or a terminal agent,
-            // and `coerceMeta` keeps it only alongside `kind: 'chat'`. Basic is the absent
-            // state on BOTH sides, so a plain chat tab's payload is unchanged.
-            ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
-            ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
-            ...(chatToolFor(m.claudeId) ? { tool: chatToolFor(m.claudeId) } : {}),
-            // The model, effort and account it runs on, so a relaunch resumes it on them: a
-            // running chat's own, else (dormant, parked) the ones its Resume will use.
-            // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
-            // falls back to the launch's, as its Resume does, so a save never erases them.
-            ...savedChatLaunch(m.kind, liveChatLaunch(m.id), dormantLaunch(m.parked, m.launch)),
-          })),
-          ...carriedUnrestored(unrestoredRef.current, new Set(sessionList.map((m) => m.claudeId)))],
-      };
-      // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
-      // this body; anything else stays best-effort (rosterRehydrate.ts `putOutcome`).
-      const settle = (o: ReturnType<typeof putOutcome>) => {
-        if (o.kind === 'adopt' && o.generation !== undefined) rosterGenRef.current = o.generation;
-        else if (o.kind === 'rehydrate') rehydrateRoster();
-      };
-      void scopedApi.put<unknown>('/agent/sessions', withBaseGeneration(payload, rosterGenRef.current)).then(
-        (body) => settle(putOutcome({ ok: true, body })),
-        (err: unknown) => settle(putOutcome(err instanceof RequestError ? { ok: false, status: err.status, code: err.code } : { ok: false, status: 0, code: '' })),
-      );
-    }, 400);
-    return () => clearTimeout(handle);
+    // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
+    // ids are minted per page load and mean nothing tomorrow) and which tab was visible in
+    // it. A session in no pane — minimized — has no placement and defaults to pane 0 on the
+    // way back in, which is where a restored-from-nothing tab has always gone.
+    const paneOf = new Map<string, number>();
+    const activeTabs = new Set<string>();
+    const windowOf = new Map<string, string>();
+    let activePaneIndex = -1;
+    // Sent only once this surface knows the project's windows (the first read seeded them, or
+    // the owner made one): a surface that never read them must not replace the stored names.
+    let windowsOut: SavedWindowMeta[] | undefined;
+    if (windowed) {
+      // Every window's panes, window after window, ONE index across the surface: an app from
+      // before windows still lays each tab out in its own pane (D8).
+      const sp = savePlacement(chatWindows, { panes, activePaneId }, sessionList);
+      sp.placement.forEach((at, sid) => {
+        windowOf.set(sid, at.window);
+        if (at.pane !== undefined) paneOf.set(sid, at.pane);
+        if (at.active) activeTabs.add(sid);
+      });
+      activePaneIndex = sp.activePane ?? -1;
+      if (windowsKnownRef.current) windowsOut = sp.windows;
+    } else {
+      panes.forEach((p, i) => {
+        p.tabs.forEach((t) => paneOf.set(t, i));
+        if (p.active) activeTabs.add(p.active);
+      });
+      activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
+      // Classic hands every tab back to the window it came from, and sends no `windows` at all:
+      // absence keeps the stored list exactly, each window's focused pane included.
+      for (const m of sessionList) windowOf.set(m.id, classicHomeRef.current.get(m.claudeId) ?? chatWindows.list[0]?.id ?? DEFAULT_WINDOW_ID);
+      windowsOut = undefined;
+    }
+    // The window on screen's tabs first: an app from before W3 keeps only the first 20 entries
+    // (its MAX_SESSIONS), so a downgrade past 20 tabs keeps the ones the owner was looking at.
+    const shownFirst = (m: SessionMeta) => (windowOf.get(m.id) === chatWindows.activeId ? 0 : 1);
+    const payload = {
+      // The remembered permission mode rides with the roster: same per-vault, machine-local,
+      // gitignored file, and the same reason for being server-side at all (localStorage dies
+      // with the launch's loopback port). Sent on every roster write, so the value on disk
+      // is always the one this surface is actually running under.
+      chatPermissionMode,
+      // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
+      ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
+      ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
+      ...(windowsOut ? { windows: windowsOut } : {}),
+      sessions: [...[...sessionList].sort((a, b) => shownFirst(a) - shownFirst(b))
+        .filter((m) => m.kind !== 'shell')
+        // The Super Agent is never a tab, so it is never saved as one: a relaunch after
+        // take-back shows no super tab, and a reload while handed over rebinds it by id.
+        .filter((m) => !isSuperSession(m, superStateRef.current?.session))
+        .map((m) => ({
+          title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
+          ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
+          ...(activeTabs.has(m.id) ? { active: true } : {}),
+          ...(windowOf.has(m.id) ? { window: windowOf.get(m.id) } : {}),
+          ...(m.titleByAgent ? { titleByAgent: true } : {}),
+          // Only carried for automation tabs — the server's `coerceMeta` drops it for
+          // every other kind anyway, but there's no reason to send it otherwise.
+          ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
+          // Same rule for the chat mode: it means nothing on a shell or a terminal agent,
+          // and `coerceMeta` keeps it only alongside `kind: 'chat'`. Basic is the absent
+          // state on BOTH sides, so a plain chat tab's payload is unchanged.
+          ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
+          ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
+          ...(chatToolFor(m.claudeId) ? { tool: chatToolFor(m.claudeId) } : {}),
+          // The model, effort and account it runs on, so a relaunch resumes it on them: a
+          // running chat's own, else (dormant, parked) the ones its Resume will use.
+          // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
+          // falls back to the launch's, as its Resume does, so a save never erases them.
+          ...savedChatLaunch(m.kind, liveChatLaunch(m.id), dormantLaunch(m.parked, m.launch)),
+        })),
+        ...carriedUnrestored(unrestoredRef.current, new Set(sessionList.map((m) => m.claudeId)))],
+    };
+    // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
+    // this body; anything else stays best-effort (rosterRehydrate.ts `putOutcome`).
+    const settle = (o: ReturnType<typeof putOutcome>) => {
+      if (o.kind === 'adopt' && o.generation !== undefined) rosterGenRef.current = o.generation;
+      else if (o.kind === 'rehydrate') rehydrateRoster();
+    };
+    void scopedApi.put<unknown>('/agent/sessions', withBaseGeneration(payload, rosterGenRef.current)).then(
+      (body) => settle(putOutcome({ ok: true, body })),
+      (err: unknown) => settle(putOutcome(err instanceof RequestError ? { ok: false, status: err.status, code: err.code } : { ok: false, status: 0, code: '' })),
+    );
+  };
+  // Committed renders only: a render React throws away never becomes what the timer sends.
+  useLayoutEffect(() => { saveRosterRef.current = saveRoster; });
+  useEffect(() => {
+    scheduleRosterSave();
     // `panes`/`activePaneId`/`chatPermissionMode` join the roster in the deps because they are
     // now part of what is persisted — a split, a tab drag or a permission change has to reach
     // disk, and the 400ms debounce is what keeps a drag from writing once per frame.
     // `modelForSession`/`effortForSession` too: a model or effort picked on a running chat is
-    // part of what a relaunch resumes it on.
-  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession, draftsRev, chatWindows, windowed]);
+    // part of what a relaunch resumes it on. Saved drafts schedule the same save themselves.
+  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession, chatWindows, windowed, scheduleRosterSave]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -5166,7 +5179,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   }, []);
   // The surface's own zoom-in (AgentTerminal.css) while it runs: the page still shows around it.
   const zoomIn = useCallback(() => hostRef.current?.getAnimations?.()
-    .find((a) => (a as CSSAnimation).animationName === 'agent-surface-zoom-in' && a.playState !== 'finished'), []);
+    .find((a) => ENTRANCES.has((a as CSSAnimation).animationName) && a.playState !== 'finished'), []);
   // Opened while handed over (re-open, or a reload: desktop opens it by itself): cover the page
   // once the zoom lands, never under it. No zoom (reduced motion, already open) = at once.
   useLayoutEffect(() => {
@@ -5922,8 +5935,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // This instance's Shell only (it emits on the same bus): navigating in the foreground
   // project must not collapse a backgrounded project's overlay out from under it, so that
   // switching back lands on the agent you left open rather than on its page.
-  useInstanceEvent('dreamcontext-navigate', () => {
+  // Unless Chat was opened after that press (`keepChat`, Shell.tsx `NavigateSignal`): the page
+  // lands under it.
+  useInstanceEvent<{ keepChat?: boolean } | undefined>('dreamcontext-navigate', (signal) => {
     navigatedRef.current = true;
+    if (signal?.keepChat) return;
     setExpanded((cur) => (cur ? false : cur));
   });
 

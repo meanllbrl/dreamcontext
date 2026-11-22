@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Header } from './Header';
+import { fadeIn } from '../../lib/softMotion';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
 import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultContext';
@@ -7,7 +8,7 @@ import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { publishPage } from '../../lib/pageContext';
 import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../lib/projectSwitchPage';
-import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
+import { AGENT_SURFACE_EXPANDED_EVENT, OPEN_AGENT_SURFACE_EVENT, openAgentSurface } from '../../lib/agentSettings';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
@@ -18,6 +19,20 @@ const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
 const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'settings', 'whiteboards', 'relations', 'stats', 'apps'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
+/**
+ * What a landing says on the instance bus. `keepChat`: Chat was opened, or asked for, AFTER the
+ * press that this landing answers, so the landing must not close it. The signal used to go out
+ * at the press, and everything that opens Chat right after navigating (the project-switch carry,
+ * the rail's Chat row pressed while a page is on its way) relied on that order: collapse first,
+ * open second. Now that it goes out when the page is on screen, the order is carried in the
+ * signal instead.
+ */
+export interface NavigateSignal { page: Page | null; keepChat?: boolean }
+
+/** How many times the background render of a picked page may be restarted before it is forced. */
+const LANDING_ATTEMPTS = 3;
+/** The longest a picked page waits behind what is on screen, however the render is going. */
+const LANDING_CAP_MS = 1200;
 
 /**
  * Which page a project was last on — per-project navigation, so it goes through the
@@ -163,20 +178,29 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   // The open page, on the same element, for surfaces outside this tree that step aside on a
   // page: the corner agent dock and Chat button do not sit over a whiteboard's cards
   // (owner, 2026-10-05; AgentTerminal.css).
-  useLayoutEffect(() => {
-    const instanceEl = shellRef.current?.closest('.project-instance');
-    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = activePage;
-  }, [activePage]);
-  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
-  useEffect(() => {
-    publishPage(bus, activePage);
-    return () => publishPage(bus, null);
-  }, [bus, activePage]);
+  // (Both follow the page that is ON SCREEN: see `shownNav` below.)
 
   // The rail's motion — see useRailGlide.ts. Declared after the attribute above, so the
   // slab measures the rail with the overlay's edge already moved.
   const glideRef = useRef<HTMLDivElement | null>(null);
   useRailGlide(shellRef, glideRef, sidebarCollapsed);
+
+  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
+  // it opens, and at any press: they never reopen a chat the owner closed or left.
+  const chatRetriesRef = useRef<number[]>([]);
+  /** Chat was opened or asked for since the last press: that press's landing leaves it open. */
+  const keepChatRef = useRef(false);
+  // The same fact for the rail: a page on its way lights its row over an open Chat (the press
+  // answers at once), but not over a Chat that will still be there when the page lands.
+  const [chatKept, setChatKept] = useState(false);
+  const keepChat = useCallback((keep: boolean) => { keepChatRef.current = keep; setChatKept(keep); }, []);
+  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
+  /**
+   * A press (a page picked, a step through history). It ends the carry's retries HERE, not at
+   * its landing: a retry that fired in between would count as "Chat asked for after the press"
+   * and open Chat over the page the owner just picked. Only what is asked after this counts.
+   */
+  const pressed = useCallback(() => { stopChatRetries(); keepChat(false); }, [stopChatRetries, keepChat]);
 
   const navigate = useCallback((page: Page, id: string | null, from: NavOrigin = 'other') => {
     // A device shell never shows Settings or Project Relations, whoever asks (a chat's link, the
@@ -197,14 +221,12 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
       setHistoryRev((n) => n + 1);
     }
     setFocusId(id);
+    pressed();
+    // The bump is what lands the navigation: `dreamcontext-navigate` goes out when the page it
+    // names is on screen (the landing effect below), never from here.
     setNonce((n) => n + 1);
-    // Tell this instance's Agent overlay (mounted outside this tree, but inside the same
-    // `ProjectInstance`) that the user navigated, so it auto-collapses from fullscreen and
-    // reveals the page they picked. On the instance bus, not `window` — on `window` every
-    // mounted project would hear another project's navigation and react to it.
-    emitInstance(bus, 'dreamcontext-navigate', { page });
     writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
-  }, [bus, vault, newShell]);
+  }, [vault, newShell, pressed]);
 
   // ⌘U opens Stats from anywhere, as in T3 Code.
   useEffect(() => {
@@ -223,12 +245,18 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [chatOpen, setChatOpen] = useState(false);
   const chatOpenRef = useRef(chatOpen);
   chatOpenRef.current = chatOpen;
-  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
-  // it opens, and on any navigation: they never reopen a chat the owner closed or left.
-  const chatRetriesRef = useRef<number[]>([]);
-  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
-  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => { setChatOpen(open === true); if (open === true) stopChatRetries(); });
-  useInstanceEvent('dreamcontext-navigate', stopChatRetries);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => {
+    // Chat came up after the last press, by whatever road (a drawer row, a link, a start).
+    if (open === true && !chatOpenRef.current) keepChat(true);
+    setChatOpen(open === true);
+    if (open === true) stopChatRetries();
+  });
+  // Asked for after the last press (the rail's Chat row, the project-switch carry below, an app):
+  // counted when it is asked, because a surface that is not listening yet opens it later.
+  useInstanceEvent(OPEN_AGENT_SURFACE_EVENT, () => keepChat(true));
+  // A landing that keeps the chat is one the chat was opened AFTER: its retries are still wanted.
+  // (A press already ended the ones before it: `pressed`.)
+  useInstanceEvent<NavigateSignal | undefined>('dreamcontext-navigate', (signal) => { if (!signal?.keepChat) stopChatRetries(); });
   const wasActiveRef = useRef(false);
   useEffect(() => {
     const arrived = isActive && !wasActiveRef.current;
@@ -273,11 +301,11 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     const page = h.stack[at];
     setActivePage(page);
     setFocusId(null);
+    pressed();
     setNonce((n) => n + 1);
     setOrigin('other');
-    emitInstance(bus, 'dreamcontext-navigate', { page });
     writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
-  }, [bus, vault]);
+  }, [vault, pressed]);
   const canBack = historyRef.current.at > 0;
   const canForward = historyRef.current.at < historyRef.current.stack.length - 1;
   void historyRev;
@@ -296,11 +324,82 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     [activePage, focusId, nonce, origin, navigate, clearFocus],
   );
 
+  // ── What is ON SCREEN lags what was picked by exactly one render ────────────────────────
+  //
+  // A page is a big tree (the task board mounts thousands of elements). Rendered at the press it
+  // held the main thread for one long task, during which nothing answered: the click itself, the
+  // chat it was closing, the rail. So the page the children draw is the DEFERRED navigation:
+  // React builds the picked page in the background, in slices, while the screen the owner is
+  // looking at stays whole and live, then swaps the two in one commit. What must answer at the
+  // press (the rail's lit row, the stored page) still reads `activePage`.
+  //
+  // `dreamcontext-navigate` is the landing, not the press: the chat overlay closes in the very
+  // commit the picked page appears, so it never closes onto whatever page happened to be
+  // underneath. A layout effect, so that close lands in the same frame.
+  //
+  // A background render is thrown away and started again by every urgent update in the window (a
+  // streaming chat makes them many times a second), so left alone a page could wait for seconds
+  // behind a busy agent. The landing is therefore FORCED, in one ordinary render like before this
+  // existed, once the background render was restarted `LANDING_ATTEMPTS` times or took
+  // `LANDING_CAP_MS`: a busy window lands as it always did, an idle one lands without a freeze.
+  const deferredNav = useDeferredValue(nav);
+  const [forcedNonce, setForcedNonce] = useState(-1);
+  // What landed last. After a forced landing the deferred value is still one navigation behind
+  // until its own render commits: the screen never steps back to it.
+  const landedNavRef = useRef(nav);
+  const shownNav = forcedNonce === nonce ? nav
+    : deferredNav.nonce < landedNavRef.current.nonce ? landedNavRef.current : deferredNav;
+  const navPending = shownNav.nonce !== nonce;
+  const landedNonceRef = useRef(shownNav.nonce);
+  // Counted in render on purpose: a render React throws away runs no effect, and those thrown
+  // away are exactly what is being counted. Only a ref is written, and only to be compared.
+  const attemptsRef = useRef({ nonce: -1, count: 0 });
+  if (deferredNav.nonce === nonce && landedNonceRef.current !== nonce && forcedNonce !== nonce) {
+    if (attemptsRef.current.nonce !== nonce) attemptsRef.current = { nonce, count: 0 };
+    attemptsRef.current.count += 1;
+    if (attemptsRef.current.count === LANDING_ATTEMPTS + 1) queueMicrotask(() => setForcedNonce(nonce));
+  }
+  useEffect(() => {
+    if (!navPending) return undefined;
+    const timer = window.setTimeout(() => setForcedNonce(nonce), LANDING_CAP_MS);
+    return () => window.clearTimeout(timer);
+  }, [navPending, nonce]);
+  const mainRef = useRef<HTMLElement>(null);
+  const landedPageRef = useRef(shownNav.page);
+  useLayoutEffect(() => {
+    if (shownNav.nonce === landedNonceRef.current) return;
+    landedNonceRef.current = shownNav.nonce;
+    landedNavRef.current = shownNav;
+    // On the instance bus, not `window`: on `window` every mounted project would hear another
+    // project's navigation and react to it. `keepChat`: see `keepChatRef`.
+    emitInstance(bus, 'dreamcontext-navigate', { page: shownNav.page, keepChat: keepChatRef.current } satisfies NavigateSignal);
+    // The page arrives with a short fade of what the frame holds (opacity only: the frame
+    // itself, and anything a page positions against it, stays where it is). A move inside the
+    // same page (a focused item) is not an arrival.
+    if (shownNav.page === landedPageRef.current) return;
+    landedPageRef.current = shownNav.page;
+    for (const el of mainRef.current?.children ?? []) fadeIn(el);
+  }, [bus, shownNav]);
+  // The page on screen, on the instance element, for surfaces outside this tree that step aside
+  // on a page: the corner agent dock and Chat button do not sit over a whiteboard's cards
+  // (owner, 2026-10-05; AgentTerminal.css).
+  const shownPage = shownNav.page;
+  useLayoutEffect(() => {
+    const instanceEl = shellRef.current?.closest('.project-instance');
+    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = shownPage;
+  }, [shownPage]);
+  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
+  useEffect(() => {
+    publishPage(bus, shownPage);
+    return () => publishPage(bus, null);
+  }, [bus, shownPage]);
+
   if (newShell) {
     return (
       <div className="shell" ref={shellRef}>
         <NewShellControls
           activePage={activePage}
+          navPending={navPending && !chatKept}
           onNavigate={(page) => navigate(page, null, 'rail')}
           onOpenSearch={() => setPaletteOpen(true)}
           canBack={canBack}
@@ -309,8 +408,8 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
           onForward={() => stepHistory(1)}
         />
         <div className="shell-body">
-          <main className="shell-main">
-            {children(nav)}
+          <main className="shell-main" ref={mainRef}>
+            {children(shownNav)}
           </main>
         </div>
         <CommandPalette
@@ -334,10 +433,10 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
         onOpenSearch={() => setPaletteOpen(true)}
       />
       <div className="shell-body">
-        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
+        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} navPending={navPending && !chatKept} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
-        <main className="shell-main">
-          {children(nav)}
+        <main className="shell-main" ref={mainRef}>
+          {children(shownNav)}
         </main>
       </div>
       <CommandPalette

@@ -20,6 +20,22 @@
 }
 
 /*
+ * The one, short exception (useInstanceHold.ts): the project just LEFT keeps its paint, over the
+ * arriving one, until that one is drawn (under a second), then fades. It is still `hidden` and
+ * `inert` for everything that asks, and it is laid over the body at the size it already had, so
+ * nothing in it is measured at a new one. `!important` and one more attribute: it has to beat
+ * the rule above, and only that. Above the arriving project's chat overlay (z 20).
+ */
+.project-instance[hidden][data-holding] {
+  display: flex !important;
+  flex-direction: column;
+  position: absolute;
+  inset: 0;
+  z-index: 21;
+  background: var(--color-bg-secondary);
+}
+
+/*
  * The onboarding hand-off's refusal ("Claude couldn't start here."), drawn by
  * `StartIntentBridge` when no agent surface takes a start intent. Floats over the project,
  * never blocks it, and enters on the app's one curve; it stands still under reduced motion.

@@ -8,6 +8,7 @@ import { useAgents } from '../hooks/useAgents';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
+import { LoadingSkeleton } from '../components/common/LoadingSkeleton';
 import { PagePopupProvider } from '../components/whiteboard/PagePopup';
 import { BoardAgentPanel } from '../components/whiteboard/BoardAgentPanel';
 import { setAgentPanelOpen, useAgentPanelOpen, useBoardCards } from '../components/whiteboard/agentPanelState';
@@ -61,7 +62,7 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
     }).then(() => { if (live) setReadFor(prefsKey); });
     return () => { live = false; };
   }, [api, prefsKey, prefsReady]);
-  if (!prefsReady) return <div className="wbp-editor"><div className="wbp-loading">{t('common.loading')}</div></div>;
+  if (!prefsReady) return <div className="wbp-editor"><LoadingSkeleton shape="canvas" label={t('common.loading')} /></div>;
   return <WhiteboardsPageBody key={prefsKey} focus={focus} />;
 }
 
@@ -210,7 +211,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       </div>
     );
   }
-  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<LoadingSkeleton shape="canvas" label={t('common.loading')} /></div>;
   }
 }
 
@@ -284,7 +285,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const heading = <h1 className="wbp-sr-only">{name}</h1>;
 
   if (load.kind === 'loading') {
-    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<LoadingSkeleton shape="canvas" label={t('common.loading')} /></div>;
   }
 
   if (load.kind === 'corrupt' || load.kind === 'missing' || load.kind === 'error') {
@@ -353,7 +354,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
           <div className="wbp-canvas" ref={setCanvasEl}>
-            <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
+            <Suspense fallback={<LoadingSkeleton shape="canvas" label={t('common.loading')} />}>
               <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} region={region} onRegion={setRegion} quickBox={quickBox} />
             </Suspense>
             {controlsAside && <div className="wbp-float-right" data-testid="wbp-controls-aside">{controls}</div>}

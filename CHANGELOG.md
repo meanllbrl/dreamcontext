@@ -4,6 +4,8 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **Smooth app.** Typing in the message box no longer redraws the chat area around it. Moving between pages, leaving Chat, and changing project now glide: the side panel slides away, the new page fades in, and the project you leave stays on screen until the next one is drawn, so no empty card flashes. Boards show an outline while they load instead of a "Loading" line.
+
 ## [0.41.22] - 2026-11-16
 
 Patch on 0.41.21. Local build; not published.

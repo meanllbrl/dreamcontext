@@ -23,6 +23,9 @@ interface SidebarProps {
   onNavigate: (page: Page, id?: string) => void;
   /** Collapsed state, owned by the Shell and toggled from the title bar. */
   collapsed: boolean;
+  /** The picked page is still being drawn behind what is on screen (`Shell`): its row lights
+   *  at the press, over an open Chat too. */
+  navPending?: boolean;
 }
 
 export { PAGE_LABEL_KEY } from '../../lib/pageLabels';
@@ -132,7 +135,7 @@ export const NAV_GROUPS: NavGroup[] = [
 // dismissing it in a synced project must not hide it in one that is still unsynced.
 const GITHUB_SYNC_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.githubSyncSeen';
 
-export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, collapsed, navPending = false }: SidebarProps) {
   // Mac mode's tunnel, phone OR remote computer (hands-free sekmeler W2): Settings and the brain's
   // GitHub sync are the laptop's administration, never drawn there.
   const tunnel = isMacPhoneSurface();
@@ -146,7 +149,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
-  const { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting } = useNavBadges();
+  const { agentUnread, learningOff, showChat, chatRollup, chatOpen: chatIsOpen, appsWaiting } = useNavBadges();
+  const chatOpen = chatIsOpen && !navPending;
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
   // `agents`/`automations` are deep-link aliases now (they open "Üyeleri yönet"): no row lights.

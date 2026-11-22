@@ -3,6 +3,7 @@ import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useTask, useTaskList, useUpdateTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
+import { LoadingSkeleton } from '../common/LoadingSkeleton';
 import { useVault } from '../../context/VaultContext';
 import { publishPageDetail } from '../../lib/pageContext';
 import { fill, openChildrenMessage } from '../../lib/taskObjection';
@@ -260,8 +261,15 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   // The new shell's page frame already draws the card (D11): no second border, and the board
   // fills the frame instead of sizing from the viewport.
   const newShell = useIsNewShell();
+  // One frame for the board and for its outline while it loads: the board lands where the
+  // outline was.
+  const boardFrame: CSSProperties = { height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)', ...(newShell ? NEW_SHELL_BOARD : {}) };
   if (!s.ready || isLoading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
+    return (
+      <div style={boardFrame}>
+        <LoadingSkeleton shape="board" label={t('common.loading')} />
+      </div>
+    );
   }
 
   const activeName = s.activeView?.name ?? 'view';
@@ -270,7 +278,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const isEmpty = filtered.length === 0;
 
   return (
-    <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)', ...(newShell ? NEW_SHELL_BOARD : {}) }}>
+    <div style={boardFrame}>
       <BoardViewTabs
         title={newShell ? t('nav.tasks') : undefined}
         views={s.views}
