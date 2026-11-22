@@ -182,10 +182,10 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
       // No onBoundary: a run's boundary is a plain line. A run is drawn as a Super turn (owner
       // 2026-11-14): its answer, its document, and while it runs the chat's own live steps line.
       runFoot: (meta, ctx) => (
-        <RunFoot meta={meta} onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined} />
+        <RunFoot meta={meta} member={member} onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined} />
       ),
       onDividerScrolled: () => {},
       onPinned: (pinned) => setState((s) => withPinned(s, pinned)),
     };
-  }, [enabled, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen]);
+  }, [enabled, member, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen]);
 }
