@@ -193,6 +193,16 @@ describe('markdown', () => {
       const content = readSection(file, 'Empty Section');
       expect(content).toContain('First entry');
     });
+
+    it('repeated top inserts under a marker keep exactly one blank line (no growing gap)', () => {
+      const file = join(tmpDir, 'task.md');
+      writeFileSync(file, '---\nname: t\n---\n\n## Changelog\n<!-- LIFO: newest entry at top -->\n\n### old\n- first\n');
+      for (let i = 1; i <= 4; i++) insertToSection(file, 'Changelog', `### e${i}\n- n${i}`);
+      const body = readFileSync(file, 'utf-8');
+      expect(body).not.toMatch(/\n\n\n/);
+      expect(body).toContain('<!-- LIFO: newest entry at top -->\n\n### e4\n- n4\n\n### e3');
+      expect(body).toContain('- n1\n\n### old');
+    });
   });
 });
 
