@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import { hasValidDeviceSession } from './handsfree-auth.js';
 import { isLoopbackPeer } from './network-auth.js';
-import { isPhoneSocket } from './phone-origin.js';
+import { isPhoneSocket, isShareSocket } from './phone-origin.js';
 
 /**
  * Shared desktop-gate for server routes.
@@ -28,6 +28,8 @@ export function isAgentHost(): boolean {
  * socket, where cloudflared makes every request loopback, only a live Mac device session counts.
  */
 export function isAgentRequest(req: IncomingMessage): boolean {
+  // A live-link guest never drives an agent surface (shares/listener.ts).
+  if (isShareSocket(req)) return false;
   if (isPhoneSocket(req)) return hasValidDeviceSession(req);
   return isDesktop() && isLoopbackPeer(req);
 }

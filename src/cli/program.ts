@@ -60,6 +60,7 @@ import { registerWhiteboardCommand } from './commands/whiteboard.js';
 import { registerNotifyCommand } from './commands/notify.js';
 import { registerAppsCommand } from './commands/apps.js';
 import { registerHandsfreeCommand } from './commands/handsfree.js';
+import { registerSharesCommand } from './commands/shares.js';
 import { registerT3ChatCommand } from './commands/t3-chat.js';
 import { registerMcpServeCommand } from './commands/mcp-serve.js';
 import { registerInstallToolCommand } from './commands/install-tool.js';
@@ -142,6 +143,7 @@ export function createProgram(): Command {
   registerNotifyCommand(program);
   registerAppsCommand(program);
   registerHandsfreeCommand(program);
+  registerSharesCommand(program);
   registerT3ChatCommand(program);
   registerMcpServeCommand(program);
   registerInstallToolCommand(program);

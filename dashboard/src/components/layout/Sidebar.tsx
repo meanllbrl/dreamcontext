@@ -15,6 +15,7 @@ import { openAgentSurface } from '../../lib/agentSettings';
 import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
+import { LiveSharesPill } from '../shares/LiveSharesPill';
 
 export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'whiteboards' | 'stats' | 'apps';
 
@@ -295,6 +296,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
           on click (label shows live status), the gear opens Settings, and a
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
+        {/* Open live links, always in sight while one exists (tunel-paylasim). */}
+        {!tunnel && <LiveSharesPill variant="sidebar" collapsed={collapsed} />}
         {tunnel ? null : signedIn && hasRemote ? (
           <BrainSyncControl onOpenSettings={openGithubSync} onOpenGitHub={() => onNavigate('settings', 'github')} />
         ) : (

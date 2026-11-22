@@ -16,7 +16,8 @@ import { resetPhoneMediaRoots } from '../lib/handsfree/mac/phone-media-roots.js'
  * session counts.
  *
  * One chokepoint on purpose: `isLoopback` (agent-spawn-shared.ts), `isLoopbackPeer`
- * (network-auth.ts) and `isAgentRequest` (desktop.ts) all route through {@link isPhoneSocket}.
+ * (network-auth.ts) and `isAgentRequest` (desktop.ts) all route through {@link isPhoneSocket},
+ * and through {@link isShareSocket} for a live-link share listener (never loopback either).
  */
 
 const phoneSockets = new WeakSet<object>();
@@ -30,6 +31,28 @@ export function markPhoneSocket(socket: object): void {
 export function isPhoneSocket(req: { socket?: object | null } | null | undefined): boolean {
   const s = req?.socket;
   return !!s && phoneSockets.has(s);
+}
+
+// ─── Live-link share sockets (shares/listener.ts) ───────────────────────────
+
+const shareSockets = new WeakSet<object>();
+
+/** A live-link share listener's `connection` handler: every socket it accepts is a share socket.
+ *  cloudflared dials it from 127.0.0.1, but its client is whoever holds the link. */
+export function markShareSocket(socket: object): void {
+  shareSockets.add(socket);
+}
+
+/** True when the request (or WS upgrade) arrived on a live-link share listener. */
+export function isShareSocket(req: { socket?: object | null } | null | undefined): boolean {
+  const s = req?.socket;
+  return !!s && shareSockets.has(s);
+}
+
+/** A socket whose 127.0.0.1 peer is a tunnel, never this machine: a phone or a share socket.
+ *  Every loopback trust check refuses it. */
+export function isTunnelSocket(req: { socket?: object | null } | null | undefined): boolean {
+  return isPhoneSocket(req) || isShareSocket(req);
 }
 
 export type RequestSurface = 'desktop' | 'tailnet' | 'mac-phone';

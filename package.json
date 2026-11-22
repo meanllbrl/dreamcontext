@@ -41,6 +41,7 @@
     "test:t3": "vitest run -c vitest.t3.config.ts",
     "test:e2e": "playwright test",
     "verify:look": "node scripts/verify/look.mjs",
+    "verify:shares": "node scripts/verify/shares.mjs",
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "verify:tool-codex-chat": "node scripts/verify/tool-codex-chat.mjs",

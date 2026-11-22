@@ -4,16 +4,13 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 - **A slow, busy Mac.** At most 2 type-checks, test runs or browser checks run at once across the whole Mac, short ones included, and only 1 while it is hot or heavily loaded.
 - **No second session after a restart.** A job that was mid-way when the app restarted gets 10 minutes to come back before it is called gone, so it is no longer handed out a second time. A chat is started without a window only once the window has really been closed for 45 seconds.
 - **Fast design jobs.** A one-screen look or copy change can run in a fast lane: one short code read and one screenshot. Anything that touches money, sign-in, analytics or data always takes the full check, and "tam doğrula" turns any fast job into a full one.
 - **Waiting on CI.** `dreamcontext ci wait` waits on every run of one commit and stops before the shell's time limit, in place of `gh run watch`.
-=======
 - **One sidebar on the Mac.** The left sidebar lists every project on every page: on Chat it shows each project's chats, on Whiteboards each project's boards, elsewhere the projects themselves. Clicking another project's row or board opens it in one click, and the window shows it only once it is ready, so nothing flickers. The sidebar is a little wider by default (232 px instead of 200) and can still be resized.
 - **Page tabs.** The page icon strip is gone on the Mac: Chat, Tasks, Insights, Whiteboards and Apps are tabs in the title bar, everything else is under More. The project name in the title bar opens the project picker. The phone and tablet layouts are unchanged.
 - **Where you were.** Back and forward, the palette and the picker work across projects, and each project reopens on the page and item you left.
->>>>>>> super/tek-kenar-cubugu
 
 ## [0.41.23] - 2026-11-19
 

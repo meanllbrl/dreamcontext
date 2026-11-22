@@ -37,10 +37,12 @@ import { claimOwnedPort } from '../owned-ports.js';
 import { HOP, ownCookies, rewriteLocation, rewriteSetCookie, upstreamHeaders } from '../proxy-shared.js';
 import { safeChildPath } from '../safe-path.js';
 import { GATEWAY_SECRET_HEADER, type AppRuntime } from '../../lib/apps/supervisor.js';
-import { narrowPageBody, narrowPageResponse, pageRouteDecision, deniedForEveryone, type RouteMatcher } from '../../lib/apps/page-routes.js';
+import { narrowPageBody, narrowPageResponse, pageRouteDecision, deniedForEveryone, SHARED_BACKEND_WRITES, type RouteMatcher } from '../../lib/apps/page-routes.js';
 import { updateApp } from '../../lib/apps/registry.js';
 import { writeShot, SHOT_MAX_BYTES } from '../../lib/apps/shots.js';
 import { realPath } from '../../lib/real-path.js';
+import { guestRoute } from './guest-routes.js';
+import { appShareKey, closeSharesFor, liveShare, type Share } from '../shares/registry.js';
 
 const ENTER_TTL_MS = 60_000;
 const SNAPSHOT_WAIT_MS = 10_000;
@@ -55,7 +57,50 @@ export function registerGatewayRoute(prefix: string, opts: { cookie: boolean; be
   extraRoutes.set(prefix, { handler, ...opts });
 }
 
-export type Identity = { kind: 'cookie' } | { kind: 'backend' } | { kind: 'runner'; token: string } | { kind: 'none' };
+/** Every `/__dc/*` prefix the gateway answers (built-in and registered): the guest table's drift test. */
+export function registeredGatewayPrefixes(): string[] {
+  return ['/__dc/enter', '/__dc/runner', '/__dc/api', '/__dc/theme', ...extraRoutes.keys()];
+}
+
+/**
+ * Who is calling. `guest` (a live-link visitor, tunel-paylasim C6) is fixed by the share socket
+ * the request arrived on and handed in by {@link AppGateway.serveGuest}; {@link AppGateway.identify}
+ * never returns it, so no header or cookie can become a guest, and a guest's headers can never
+ * become `backend`, `runner` or `cookie`.
+ */
+export type Identity =
+  | { kind: 'cookie' }
+  | { kind: 'backend' }
+  | { kind: 'runner'; token: string }
+  | { kind: 'guest'; shareId: string; origin: string }
+  | { kind: 'none' };
+
+const SHARED_LIVE = { error: 'shared_live', message: 'This app is shared over a live link right now: its AI features and brain writes are off until the link is closed.' };
+
+/** Headers a guest's request must never carry to the backend (tunnel, proxy and identity headers). */
+function guestDropped(name: string): boolean {
+  return name.startsWith('cf-') || name.startsWith('x-forwarded-') || name.startsWith('x-dc-')
+    || name === 'cdn-loop' || name === 'authorization' || name === 'forwarded' || name === 'true-client-ip' || name === 'x-real-ip';
+}
+
+/**
+ * A guest's request headers as the backend sees them (C6): only the share's own prefixed cookies
+ * (never `__Host-dcs` or the door ticket), no Cloudflare, forwarding or `x-dc-*` header, no
+ * Authorization; `x-dc-guest: 1` and the gateway secret added here only.
+ */
+export function guestUpstreamHeaders(headers: http.IncomingHttpHeaders, share: { origin: string; cookiePrefix: string }, port: number, secret: string): Record<string, string | string[]> {
+  const out = upstreamHeaders(headers, share.origin, '127.0.0.1', port, { identity: false, prefix: share.cookiePrefix });
+  for (const k of Object.keys(out)) if (guestDropped(k.toLowerCase())) delete out[k];
+  out['x-dc-guest'] = '1';
+  out[GATEWAY_SECRET_HEADER] = secret;
+  return out;
+}
+
+/** Track an upstream socket in every set that must be able to cut it (the gateway's, the share's). */
+function track(sets: ReadonlyArray<Set<Socket | Duplex>>, s: Socket | Duplex): void {
+  for (const set of sets) set.add(s);
+  s.once('close', () => { for (const set of sets) set.delete(s); });
+}
 
 interface GatewayEnv {
   home: string;
@@ -272,9 +317,21 @@ export class AppGateway {
   /** The Origin rule: cookie writes and upgrades need our exact origin; Bearer needs none. */
   originOk(req: IncomingMessage, ident: Identity, isWriteOrUpgrade: boolean): boolean {
     const origin = req.headers.origin;
-    if (ident.kind === 'backend' || ident.kind === 'runner') return origin === undefined;
-    if (ident.kind === 'cookie' && isWriteOrUpgrade) return origin === this.origin;
-    return true;
+    switch (ident.kind) {
+      case 'backend':
+      case 'runner':
+        return origin === undefined;
+      case 'cookie':
+        return !isWriteOrUpgrade || origin === this.origin;
+      case 'guest':
+        return !isWriteOrUpgrade || origin === ident.origin;
+      case 'none':
+        return false;
+      default: {
+        const never: never = ident;
+        return never;
+      }
+    }
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -417,22 +474,50 @@ export class AppGateway {
     if (deniedForEveryone(apiPath)) { req.resume(); send(res, 403, { error: 'forbidden', message: 'Apps cannot speak for the owner or drive other apps.' }); return; }
     let body: Buffer | null = null;
     let pageKey: string | null = null;
-    if (ident.kind === 'cookie') {
-      const d = pageRouteDecision(env.router, method, apiPath);
-      if (!d.ok) { req.resume(); send(res, d.status, { error: d.error, message: d.message }); return; }
-      pageKey = d.key;
-      if (method !== 'GET' && method !== 'HEAD') {
-        const raw = await readBody(req, MAX_BODY);
-        if (!raw) { send(res, 413, { error: 'too_large' }); return; }
-        const nb = narrowPageBody(d.key, raw.toString('utf-8'));
-        if (!nb.ok) { send(res, nb.status, { error: nb.error, message: nb.message }); return; }
-        body = Buffer.from(nb.body ?? '', 'utf-8');
+    const write = method !== 'GET' && method !== 'HEAD';
+    switch (ident.kind) {
+      case 'cookie': {
+        const d = pageRouteDecision(env.router, method, apiPath);
+        if (!d.ok) { req.resume(); send(res, d.status, { error: d.error, message: d.message }); return; }
+        pageKey = d.key;
+        if (write) {
+          const raw = await readBody(req, MAX_BODY);
+          if (!raw) { send(res, 413, { error: 'too_large' }); return; }
+          const nb = narrowPageBody(d.key, raw.toString('utf-8'));
+          if (!nb.ok) { send(res, nb.status, { error: nb.error, message: nb.message }); return; }
+          body = Buffer.from(nb.body ?? '', 'utf-8');
+        }
+        break;
       }
-    } else {
-      try { env.router.match(method, apiPath); } catch { req.resume(); send(res, 400, { error: 'bad_path' }); return; }
-      if (method !== 'GET' && method !== 'HEAD') {
-        body = await readBody(req, 8 * MAX_BODY);
-        if (!body) { send(res, 413, { error: 'too_large' }); return; }
+      case 'backend': {
+        let m: { method: string; path: string } | null;
+        try { m = env.router.match(method, apiPath); } catch { req.resume(); send(res, 400, { error: 'bad_path' }); return; }
+        // C10: while this app has a live link (and its AI switch is off), the backend's dashboard
+        // writes narrow to the closed allow-list, matched BEFORE the body is read.
+        const live = write ? liveShare(appShareKey(this.runtime.hash)) : null;
+        if (live && !live.ai) {
+          const key = m ? `${m.method} ${m.path}` : null;
+          if (!key || !SHARED_BACKEND_WRITES.has(key)) { req.resume(); send(res, 409, SHARED_LIVE); return; }
+          const raw = await readBody(req, MAX_BODY);
+          if (!raw) { send(res, 413, { error: 'too_large' }); return; }
+          const nb = narrowPageBody(key, raw.toString('utf-8'));
+          if (!nb.ok) { send(res, nb.status, { error: nb.error, message: nb.message }); return; }
+          body = Buffer.from(nb.body ?? '', 'utf-8');
+        } else if (write) {
+          body = await readBody(req, 8 * MAX_BODY);
+          if (!body) { send(res, 413, { error: 'too_large' }); return; }
+        }
+        break;
+      }
+      case 'guest':
+      case 'runner':
+      case 'none':
+        req.resume();
+        send(res, 403, { error: 'forbidden' });
+        return;
+      default: {
+        const never: never = ident;
+        return never;
       }
     }
     // Origin is ALWAYS dropped (never rewritten to the dashboard's): the owner-only gates
@@ -470,39 +555,147 @@ export class AppGateway {
     return `dcapp${this.runtime.hash}.`;
   }
 
-  private async toApp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  /** The owner stopped the app: a guest reads "Durduruldu" (C9: `stoppedByOwner` wins over the lease). */
+  private stoppedPage(res: ServerResponse): void {
+    errorPage(res, 503, 'Durduruldu', 'Bu app\'i sahibi durdurdu. / The owner stopped this app.');
+  }
+
+  /**
+   * To the app (its backend, else `public/`). `guest` = a live-link visitor (C6): its share's
+   * origin, cookie prefix and filtered headers, redirects back to the share origin, its upstream
+   * sockets tracked in the share so a close cuts them, and no error detail.
+   */
+  private async toApp(req: IncomingMessage, res: ServerResponse, guest: Share | null = null): Promise<void> {
     const rt = this.runtime;
+    if (guest && rt.rec.stoppedByOwner) { req.resume(); this.stoppedPage(res); return; }
     if (!rt.manifest?.backend && rt.state !== 'stopped') { this.serveStatic(req, res); return; }
     if (rt.state === 'starting' || rt.state === 'stopped') {
-      if (rt.rec.stoppedByOwner) { errorPage(res, 503, 'Stopped', 'The app was stopped from dreamcontext.'); return; }
+      if (rt.rec.stoppedByOwner) {
+        req.resume();
+        if (guest) this.stoppedPage(res); else errorPage(res, 503, 'Stopped', 'The app was stopped from dreamcontext.');
+        return;
+      }
       await rt.ensureRunning();
     }
     if (!rt.manifest?.backend) { this.serveStatic(req, res); return; }
     const b = rt.backend;
     if (!b) {
       this.runtime.log.push('[gateway] request while the backend is down');
-      errorPage(res, 503, 'The app backend is not running', rt.lastError ? rt.scrub(rt.lastError) : 'It may be restarting.');
+      req.resume();
+      errorPage(res, 503, 'The app backend is not running', guest ? 'It may be restarting.' : rt.lastError ? rt.scrub(rt.lastError) : 'It may be restarting.');
       return;
     }
-    const headers = upstreamHeaders(req.headers, this.origin, '127.0.0.1', b.port, { identity: false, prefix: this.backendPrefix() });
-    delete headers.authorization;
-    headers[GATEWAY_SECRET_HEADER] = rt.gatewaySecret;
+    const origin = guest?.origin ?? this.origin;
+    const prefix = guest ? guest.cookiePrefix : this.backendPrefix();
+    let headers: Record<string, string | string[]>;
+    if (guest) {
+      headers = guestUpstreamHeaders(req.headers, { origin, cookiePrefix: prefix }, b.port, rt.gatewaySecret);
+    } else {
+      headers = upstreamHeaders(req.headers, this.origin, '127.0.0.1', b.port, { identity: false, prefix });
+      delete headers.authorization;
+      headers[GATEWAY_SECRET_HEADER] = rt.gatewaySecret;
+    }
     const reqPath = (req.url ?? '/').split('?')[0];
     const up = http.request({ host: '127.0.0.1', port: b.port, method: req.method, path: req.url, headers, agent: false }, (ur) => {
       const out: Record<string, string | string[]> = {};
       for (const [k, v] of Object.entries(ur.headers)) {
         if (v === undefined || HOP.has(k)) continue;
-        if (k === 'location' && typeof v === 'string') { out[k] = rewriteLocation(v, this.origin, b.port); continue; }
-        if (k === 'set-cookie') { out[k] = (Array.isArray(v) ? v : [v]).map((l) => rewriteSetCookie(l, reqPath, this.backendPrefix()).line); continue; }
+        if (k === 'location' && typeof v === 'string') {
+          let loc = rewriteLocation(v, origin, b.port);
+          // A guest never learns the gateway's own loopback address either.
+          if (guest) loc = rewriteLocation(loc, origin, this.port);
+          out[k] = loc;
+          continue;
+        }
+        if (k === 'set-cookie') { out[k] = (Array.isArray(v) ? v : [v]).map((l) => rewriteSetCookie(l, reqPath, prefix).line); continue; }
         out[k] = v;
       }
       res.writeHead(ur.statusCode ?? 502, ur.statusMessage, out);
       ur.pipe(res);
       res.on('close', () => { if (!res.writableFinished) ur.destroy(); });
     });
+    if (guest) up.once('socket', (s) => track([this.sockets, guest.upstream], s));
     res.on('close', () => { if (!res.writableFinished) up.destroy(); });
-    up.on('error', () => errorPage(res, 502, 'The app backend is not answering', rt.lastError ? rt.scrub(rt.lastError) : ''));
+    up.on('error', () => errorPage(res, 502, 'The app backend is not answering', guest ? '' : rt.lastError ? rt.scrub(rt.lastError) : ''));
     req.pipe(up);
+  }
+
+  /**
+   * A live-link guest's request (C6), handed in by the share listener with a live session already
+   * checked. The identity is fixed here, never read from a header; every gateway path it reaches
+   * passes the closed guest table; it never goes through {@link handle}.
+   */
+  async serveGuest(req: IncomingMessage, res: ServerResponse, share: Share): Promise<void> {
+    if (!share.origin) { req.resume(); send(res, 503, { error: 'not_ready' }); return; }
+    const ident: Identity = { kind: 'guest', shareId: share.id, origin: share.origin };
+    let url: URL;
+    try { url = new URL(req.url ?? '/', share.origin); } catch { req.resume(); send(res, 400, { error: 'bad_url' }); return; }
+    const path = url.pathname;
+    const method = (req.method ?? 'GET').toUpperCase();
+    if (!this.originOk(req, ident, method !== 'GET' && method !== 'HEAD')) { req.resume(); send(res, 403, { error: 'bad_origin' }); return; }
+    if (this.runtime.pullHeld()) { req.resume(); pausedForSync(req, res, path); return; }
+    delete req.headers[GATEWAY_SECRET_HEADER];
+    const d = guestRoute(path);
+    switch (d.kind) {
+      case 'deny':
+        req.resume();
+        send(res, 403, { error: 'guest_unavailable', message: 'This part of the app is not available over a live link.' });
+        return;
+      case 'theme':
+        req.resume();
+        send(res, 200, { theme: env.theme() });
+        return;
+      case 'gateway': {
+        const r = extraRoutes.get(d.prefix);
+        if (!r) { req.resume(); send(res, 403, { error: 'guest_unavailable' }); return; }
+        await r.handler(this, req, res, ident, url);
+        return;
+      }
+      case 'app':
+        await this.toApp(req, res, share);
+        return;
+      default: {
+        const never: never = d;
+        return never;
+      }
+    }
+  }
+
+  /** A guest's WebSocket upgrade (the listener checked the session and the share's Origin). */
+  upgradeGuest(req: IncomingMessage, sock: Duplex, head: Buffer, share: Share): void {
+    const deny = (code: number, text: string) => { try { sock.write(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); } catch { /* gone */ } sock.destroy(); };
+    sock.on('error', () => { /* the guest went away */ });
+    if (!share.origin) { deny(503, 'Service Unavailable'); return; }
+    const ident: Identity = { kind: 'guest', shareId: share.id, origin: share.origin };
+    if (!this.originOk(req, ident, true)) { deny(403, 'Forbidden'); return; }
+    if ((req.url ?? '').startsWith('/__dc')) { deny(404, 'Not Found'); return; }
+    if (this.runtime.pullHeld() || this.runtime.rec.stoppedByOwner) { deny(503, 'Service Unavailable'); return; }
+    const b = this.runtime.backend;
+    if (!b) { deny(503, 'Service Unavailable'); return; }
+    delete req.headers[GATEWAY_SECRET_HEADER];
+    const headers = guestUpstreamHeaders(req.headers, { origin: share.origin, cookiePrefix: share.cookiePrefix }, b.port, this.runtime.gatewaySecret);
+    this.pipeUpgrade(req, sock, head, b.port, headers, [this.sockets, share.upstream], deny);
+  }
+
+  /** Open the upstream socket of an upgrade and pipe both ways; every set in `sets` can cut it. */
+  private pipeUpgrade(req: IncomingMessage, sock: Duplex, head: Buffer, port: number, headers: Record<string, string | string[]>, sets: ReadonlyArray<Set<Socket | Duplex>>, deny: (code: number, text: string) => void): void {
+    headers.connection = 'Upgrade';
+    headers.upgrade = String(req.headers.upgrade ?? 'websocket');
+    const lines = [`${req.method ?? 'GET'} ${req.url ?? '/'} HTTP/1.1`];
+    for (const [k, v] of Object.entries(headers)) for (const one of Array.isArray(v) ? v : [v]) lines.push(`${k}: ${one}`);
+    this.sockets.add(sock);
+    sock.once('close', () => this.sockets.delete(sock));
+    const u = connect({ host: '127.0.0.1', port });
+    track(sets, u);
+    u.once('connect', () => {
+      u.once('close', () => sock.destroy());
+      u.write(`${lines.join('\r\n')}\r\n\r\n`);
+      if (head.length) u.write(head);
+      u.pipe(sock);
+      sock.pipe(u);
+    });
+    u.on('error', () => deny(502, 'Bad Gateway'));
+    sock.once('close', () => u.destroy());
   }
 
   private serveStatic(req: IncomingMessage, res: ServerResponse): void {
@@ -544,23 +737,7 @@ export class AppGateway {
     const headers = upstreamHeaders(req.headers, this.origin, '127.0.0.1', b.port, { identity: false, prefix: this.backendPrefix() });
     delete headers.authorization;
     headers[GATEWAY_SECRET_HEADER] = this.runtime.gatewaySecret;
-    headers.connection = 'Upgrade';
-    headers.upgrade = String(req.headers.upgrade ?? 'websocket');
-    const lines = [`${req.method ?? 'GET'} ${req.url ?? '/'} HTTP/1.1`];
-    for (const [k, v] of Object.entries(headers)) for (const one of Array.isArray(v) ? v : [v]) lines.push(`${k}: ${one}`);
-    this.sockets.add(sock);
-    sock.once('close', () => this.sockets.delete(sock));
-    const u = connect({ host: '127.0.0.1', port: b.port });
-    u.once('connect', () => {
-      this.sockets.add(u);
-      u.once('close', () => { this.sockets.delete(u); sock.destroy(); });
-      u.write(`${lines.join('\r\n')}\r\n\r\n`);
-      if (head.length) u.write(head);
-      u.pipe(sock);
-      sock.pipe(u);
-    });
-    u.on('error', () => deny(502, 'Bad Gateway'));
-    sock.once('close', () => u.destroy());
+    this.pipeUpgrade(req, sock, head, b.port, headers, [this.sockets], deny);
   }
 }
 
@@ -586,6 +763,9 @@ export async function existingGateway(hash: string): Promise<AppGateway | null> 
 }
 
 export async function closeGateway(hash: string): Promise<void> {
+  // Every live link of the app closes first (C5 `removed`): no guest request may reach a
+  // gateway that is going away. The removal routes already did this as their first line.
+  void closeSharesFor(appShareKey(hash), 'removed');
   const g = gateways.get(hash);
   gateways.delete(hash);
   if (g) { try { await (await g).close(); } catch { /* never listened */ } }

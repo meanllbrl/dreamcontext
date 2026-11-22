@@ -64,6 +64,7 @@ const VOICE = 'laptop-only: this Mac\'s microphone, speaker and voice setup';
 const DESKTOP = 'laptop-only: acts on the Mac\'s desktop (Finder, Terminal, Downloads, macOS banners, file grants)';
 const BRAIN_WRITE = 'laptop-only: brain sync writes (git remote, fetch, sync) run from the laptop';
 const ONBOARDING = 'laptop-only: first-run setup of this Mac';
+const LIVE_LINK = 'laptop-only: live links (a public link to one app or board) are opened, listed and closed on the laptop';
 
 // ─── Allow reasons ──────────────────────────────────────────────────────────
 
@@ -95,6 +96,12 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'DELETE /api/handsfree/mac/tunnel/fixed': deny(MAC_ADMIN),
   'POST /api/handsfree/mac/uninstall': deny(MAC_ADMIN),
   'POST /api/admin/shutdown': deny(SERVER_ADMIN),
+  // Live links: opening a public link is the owner's own click on the laptop; the list, the
+  // reveal and the close stay there too (shares are this Mac's, never the phone's).
+  'GET /api/shares': deny(LIVE_LINK),
+  'POST /api/shares': deny(LIVE_LINK),
+  'POST /api/shares/:id/reveal': deny(SECRET),
+  'POST /api/shares/:id/close': deny(LIVE_LINK),
 
   // Tasks
   'GET /api/tasks': allow(READ),

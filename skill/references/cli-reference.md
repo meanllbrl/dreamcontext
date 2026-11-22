@@ -357,6 +357,18 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 
 ---
 
+## Live links (`shares`)
+
+A **live link** (the app's **Canlı link** / Live link button) hands ONE app or ONE whiteboard to someone outside over its own Cloudflare quick tunnel: `https://<random>.trycloudflare.com/k/<token>`. An app guest **uses** the app (its page and its own backend, never the brain, `/__dc/api`, embeds, notify or schedules); a board guest sees the board **live and read-only**, widget cards by title only. A password is optional (at least 10 characters, 5 wrong tries per minute per IP). Links live in memory only: closing one, or dreamcontext quitting, ends it ("Bu paylaşım kapandı"); the Mac stays awake while one is open. While an app is shared its agent paths answer `shared_live` unless the owner turned on the share's AI switch (off by default); its automations and learning always pause.
+
+- **Opening a link and reading it back is the owner's own click** (the app's Canlı link sheet). Agents cannot open one, and nothing (the list, the CLI, the API) ever prints a link, token or password.
+- `dreamcontext shares list [--json]`: what is shared, its state, people connected, password yes/no.
+- `dreamcontext shares close <id|all>`: close now. Closing only narrows exposure, so any local caller may.
+
+Different from **Share** on an app (a GitHub copy for a team or the public) and from hands-free Mac mode's tunnel ([hands-free.md](hands-free.md)), which this never touches.
+
+---
+
 ## Whiteboard
 
 Editable Excalidraw boards carrying live widgets (`insight`, `knowledge` (a page), `task`, `todo`, `note`, `html`, `web`, `wiki` (a card with its own list of pages), `lab-card` (one Lab board card, `<board>/<card-id>`), `agent` (an automation agent's card, `--ref <agent-slug>`)), stored at `_dream_context/whiteboards/<slug>/<slug>.excalidraw.md`. The dashboard's **Whiteboard** rail entry is the user's side (it opens the default board Control Panel, `control-panel`, creating it on first open); this command is yours. Every write locks the board, merges per element, and writes atomically. Format, widget payloads, sandbox rules and recipes: [whiteboards.md](../../draw/references/whiteboards.md).
