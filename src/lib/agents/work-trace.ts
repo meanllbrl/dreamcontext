@@ -287,7 +287,9 @@ interface SegmentWork {
 }
 
 /** A reply that is the API refusing (an error, a limit), never work (D1). One test for chats and runs. */
-const REFUSAL_TEXT_RE = /^\s*(API Error\b|Invalid API key\b|Credit balance is too low\b|Prompt is too long\b)/;
+const REFUSAL_TEXT_RE = /^\s*API Error\b/;
+/** A RUN's result that is the CLI's own banner (an error envelope's text, never a chat reply a member wrote). */
+const RUN_REFUSAL_TEXT_RE = /^\s*(API Error\b|Invalid API key\b|Credit balance is too low\b|Prompt is too long\b)/;
 
 function isRefusal(rec: Rec): boolean {
   if (rec.isApiErrorMessage === true || rec.is_api_error_message === true || rec.error !== undefined) return true;
@@ -1034,7 +1036,7 @@ export function buildRunTrace(input: RunTraceInput): WorkTrace | null {
     }
   }
   // A refusal is never work (D1): its text is no `did`; with no file written it leaves no trace.
-  const refused = input.refused === true || (input.result !== null && REFUSAL_TEXT_RE.test(input.result));
+  const refused = input.refused === true || (input.result !== null && RUN_REFUSAL_TEXT_RE.test(input.result));
   const did = input.result && !refused ? headTail(input.result, DID_MAX_CHARS) : '';
   const boundedFiles = boundFiles(files);
   if (!did && boundedFiles.length === 0) return null;

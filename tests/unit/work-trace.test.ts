@@ -152,6 +152,11 @@ describe('deriveJobs: one job = one trace (criterion 2)', () => {
     expect(traces[3]!.asks[0]!.by).toBe('super');
   });
 
+  it('a member\'s own reply that starts like a CLI banner is still its work (only a run\'s result is read as a banner)', () => {
+    const { traces } = derive(new Tx().user('why does the lumen checkout fail').say('Invalid API key on the Stripe test account: the key in the secret card was rotated.'));
+    expect(traces[0]!.did).toContain('Stripe test account');
+  });
+
   it('an Allow turn, a resubmit after a refusal, a continue text, receipts and a Stop hook turn join the asking job', () => {
     const tx = new Tx()
       .user('deploy the kestrel staging').toolCut()
@@ -518,6 +523,7 @@ describe('a run\'s trace (C4 runner)', () => {
     };
     expect(buildRunTrace({ ...base, result: 'You have hit your usage limit. It resets at 3pm.', refused: true })).toBeNull();
     expect(buildRunTrace({ ...base, result: 'API Error: 529 overloaded' })).toBeNull();
+    expect(buildRunTrace({ ...base, result: 'Invalid API key · Please run /login' })).toBeNull();
     // A failure with a real reason is still work.
     expect(buildRunTrace({ ...base, result: 'The pricing page moved; I could not read vexa this week.', document: null })?.did).toContain('pricing page moved');
   });
