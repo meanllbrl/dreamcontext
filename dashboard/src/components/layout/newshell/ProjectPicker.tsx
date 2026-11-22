@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
 import { routeSwitcherKey } from '../../../lib/switcherKeys';
+import { shortcutFor, visiblePickerRows } from '../../../lib/pickerRows';
 
 export interface PickerRow {
   name: string;
@@ -13,6 +14,8 @@ export interface PickerRow {
   asleep: boolean;
   /** Held by another OS window: a pick brings that window forward. */
   otherWindow: boolean;
+  /** In the drawer's Hidden group: not listed, no ⌘ number; a typed name still finds it. */
+  hidden?: boolean;
 }
 
 interface ProjectPickerProps {
@@ -36,9 +39,10 @@ export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewPro
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const needle = q.trim().toLowerCase();
-  // Typing filters; the keyboard hint (⌘N) stays the project's place in the FULL order.
-  const rows = needle ? allRows.filter((r) => r.name.toLowerCase().includes(needle)) : allRows;
-  const [focused, setFocused] = useState(() => Math.max(0, allRows.findIndex((r) => r.active)));
+  // Typing filters (a typed name finds a hidden project too); the keyboard hint (⌘N) stays the
+  // project's place among the shown ones.
+  const rows = visiblePickerRows(allRows, needle);
+  const [focused, setFocused] = useState(() => Math.max(0, rows.findIndex((r) => r.active)));
 
   useLayoutEffect(() => {
     const menu = ref.current;
@@ -132,6 +136,7 @@ export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewPro
             aria-selected={r.active}
             className="ns-menu-row"
             data-on={r.active ? 'true' : undefined}
+            data-hidden-project={r.hidden ? 'true' : undefined}
             data-focus={i === focused ? 'true' : undefined}
             data-testid={`ns-picker-${r.name}`}
             data-move={r.active ? undefined : 'true'}
@@ -142,7 +147,7 @@ export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewPro
             <span className="ns-menu-label">{r.name}</span>
             {r.otherWindow && <span className="ns-menu-note">{t('shell.picker.otherWindow')}</span>}
             {!r.otherWindow && r.asleep && <span className="ns-menu-note">{t('shell.picker.asleep')}</span>}
-            {allRows.indexOf(r) < 9 && <kbd className="ns-menu-kbd">⌘{allRows.indexOf(r) + 1}</kbd>}
+            {shortcutFor(allRows, r.name) !== null && <kbd className="ns-menu-kbd">⌘{shortcutFor(allRows, r.name)}</kbd>}
           </button>
         ))}
       </div>
