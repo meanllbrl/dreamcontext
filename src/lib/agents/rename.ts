@@ -1,3 +1,4 @@
+import { renameScorecardMember } from './scorecard.js';
 import { renameOrForgetAgentTaskJobs } from './task-jobs.js';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
@@ -154,6 +155,8 @@ export function renameAgentLocal(contextRoot: string, from: string, to: string, 
   const projectRoot = gitCwd;
   renameApprovals(projectRoot, from, to, kind === 'agent' ? 'agent' : 'automation', opts.home);
   renameAgentStage(projectRoot, from, to, opts.home);
+  // The scorecard: the member's card moves, and its runs' keys follow the routine's new name.
+  renameScorecardMember(projectRoot, from, to, kind === 'agent' ? 'agent' : 'routine', opts.home);
   renameOrForgetAssignmentsSafe(projectRoot, from, to, opts.home);
   renameOrForgetThreadLedger(contextRoot, from, to, opts.home);
   // The created-here sets, the ids watched for replacement and the adopted pattern follow too, so

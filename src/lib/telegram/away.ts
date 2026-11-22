@@ -22,8 +22,10 @@ import { dirname, join } from 'node:path';
 import { readMacState, readTelegramEnded, telegramEndedPathOf } from '../handsfree/mac/session.js';
 import * as power from '../handsfree/mac/power.js';
 import { isOurCloudflared } from '../handsfree/mac/tunnel.js';
-import { POLL_RING_SIZE } from './contract.js';
-import { bindingDir, listBindings, readBinding, readPollState, writePollState } from './config.js';
+import { POLL_RING_SIZE, RATE_CALLBACK_RE } from './contract.js';
+import { bindingDir, listBindings, readBinding, readPollState, scopeOfContextRoot, writePollState } from './config.js';
+import { listVaults } from '../vaults.js';
+import { RATE_ASK_TTL_MS, globalMemberSlugs, readAllCards, scopeFor } from '../agents/scorecard.js';
 import { isAuthorized, type TgUpdateLike } from './auth.js';
 import { escapeHtml } from './format.js';
 import { TelegramPoller } from './poller.js';
@@ -31,6 +33,30 @@ import { TelegramTransport, type FetchLike } from './transport.js';
 
 export const AWAY_LINE = "Mac'e şu an ulaşılamıyor (uygulama kapalı ya da Mac uyuyor). Bu mesaj işlenmeyecek; Mac açılınca yeniden yaz.";
 export const AWAY_ENDED_LINE = 'Hands-free kapandı: uygulama kapandı. Mac uyuyabilir.';
+/** W3 E6: a star or "Not ekle" tap while the Mac is away, and one past its run's window. */
+export const AWAY_RATE_LINE = "Puanın kaydedilmedi: Mac'e şu an ulaşılamıyor. Mac açılınca yıldıza yeniden dokun.";
+export const AWAY_RATE_EXPIRED_LINE = 'Bu işin puanlama süresi doldu.';
+
+/** The end time of the request a tap names, read from the cards this binding's requests sit in;
+ *  null when it cannot be read (he hears the "yeniden dokun" line). */
+export function awayAskEndedAt(home: string, scope: string, target: string, askId: string): string | null {
+  try {
+    const scopes = [];
+    if (scope === 'global') {
+      if (target !== 'super') scopes.push(scopeFor('/', target, 'global', home));
+    } else {
+      const v = listVaults(home).find((x) => scopeOfContextRoot(join(x.path, '_dream_context')) === scope);
+      if (!v) return null;
+      scopes.push(scopeFor(v.path, 'x', 'project', home), ...globalMemberSlugs(home).map((g) => scopeFor(v.path, g, 'global', home)));
+    }
+    for (const sc of scopes) {
+      for (const card of Object.values(readAllCards(sc).members)) {
+        for (const ask of Object.values(card.telegramAsks)) if (ask.askId === askId) return ask.endedAt;
+      }
+    }
+  } catch { /* unreadable */ }
+  return null;
+}
 
 export interface AwayDeps {
   home?: string;
@@ -82,6 +108,16 @@ async function noticeAway(home: string, scope: string, target: string, b: { toke
       if (!u.message && !u.callback_query) continue;
       if (!isAuthorized(u as unknown as TgUpdateLike, b)) continue;
       notified.push(id);
+      const cb = u.callback_query as { id?: unknown; data?: unknown } | undefined;
+      const rate = cb ? RATE_CALLBACK_RE.exec(typeof cb.data === 'string' ? cb.data : '') : null;
+      if (rate) {
+        // E6: never silence. The spinner stopped if Telegram still takes the answer.
+        if (typeof cb!.id === 'string') await transport.answerCallbackQuery(cb!.id).catch(() => {});
+        const ended = Date.parse(awayAskEndedAt(home, scope, target, rate[1]) ?? '');
+        const expired = Number.isFinite(ended) && Date.now() >= ended + RATE_ASK_TTL_MS;
+        await transport.sendMessage(b.chatId, escapeHtml(expired ? AWAY_RATE_EXPIRED_LINE : AWAY_RATE_LINE)).catch(() => {});
+        continue;
+      }
       await transport.sendMessage(b.chatId, escapeHtml(AWAY_LINE)).catch(() => {});
     }
     if (notified.length !== state.notifiedIds.length) writePollState(dir, { ...readPollState(dir, home), notifiedIds: notified.slice(-POLL_RING_SIZE) }, home);

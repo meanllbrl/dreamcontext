@@ -12,6 +12,7 @@ import { AutomationDialog } from '../../agents/AutomationDialog';
 import { AgentIdentityDialog } from '../../agents/AgentIdentityDialog';
 import type { MemberCardRef } from '../../../lib/superTypes';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
+import { ScorecardCard } from './ScorecardCard';
 import './MemberCardBody.css';
 
 /**
@@ -53,7 +54,11 @@ export function MemberCardBody(props: MemberCardBodyProps) {
     return () => window.clearTimeout(t);
   }, [note]);
   const p: CardProps = { ...props, onToast: setNote };
-  const body = p.cardRef === 'routines' ? <RoutinesCard {...p} /> : p.cardRef === 'instructions' ? <InstructionsCard {...p} /> : <SettingsCard {...p} />;
+  // Each ref its own branch: an unknown one never falls through to Settings.
+  const body = p.cardRef === 'routines' ? <RoutinesCard {...p} />
+    : p.cardRef === 'instructions' ? <InstructionsCard {...p} />
+      : p.cardRef === 'scorecard' ? <ScorecardCard slug={p.slug} variant={p.variant} phone={p.phone} />
+        : p.cardRef === 'settings' ? <SettingsCard {...p} /> : null;
   return (
     <>
       {body}

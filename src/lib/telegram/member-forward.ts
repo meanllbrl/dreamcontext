@@ -36,6 +36,7 @@ import { formatAskQuestionHtml } from './ask-format.js';
 import { escapeHtml, redactSecrets, toTelegramMessages, wouldRedact } from './format.js';
 import { readOutbound, refusalLine, type OutboundFile } from './files.js';
 import { TelegramTransport, type FetchLike } from './transport.js';
+import { RATE_PROMPT_LINE, rateKeyboard } from './contract.js';
 
 /** The env var the runner hands its child (Claude and Codex alike: Codex's default
  *  `shell_environment_policy` drops names containing KEY, Z3). */
@@ -203,6 +204,9 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
 
   const messages: string[] = [];
   const files: OutboundFile[] = [];
+  // W3 C11: an `ok` result of a member's run carries its stars on its last part. The body is split
+  // twice (with and without the line), so a refused ask sends exactly what it sent before.
+  let rated: { plain: string[]; asking: string[]; at: number } | null = null;
   if (wait) {
     const head = `⏳ <b>${escapeHtml(title)}</b>: çalışmadı`;
     messages.push(wait.kind === 'none-open'
@@ -235,7 +239,9 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
       for (const row of p.summary ?? []) body.push(`- ${row.key}: ${row.value}`);
     }
     if (result) body.push(`_${result}_`);
-    messages.push(...toTelegramMessages(body.join('\n\n'), { codeFences: 'mac', fold: true }));
+    const plain = toTelegramMessages(body.join('\n\n'), { codeFences: 'mac', fold: true });
+    if (input.agent) rated = { plain, asking: toTelegramMessages([...body, RATE_PROMPT_LINE].join('\n\n'), { codeFences: 'mac', fold: true }), at: messages.length };
+    messages.push(...plain);
     const projectRoot = dirname(input.contextRoot);
     const paths = posts.flatMap((p) => p.files ?? []).slice(0, 4);
     for (const rel of paths) {
@@ -257,22 +263,53 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
     const t = new TelegramTransport({ token: binding.token, fetchImpl: input.fetchImpl, timeoutMs: REQUEST_MS });
     const started = Date.now();
     const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => { const h = setTimeout(r, ms); h.unref?.(); }));
+    let last: unknown = null;
     const attempt = async (fn: () => Promise<unknown>): Promise<boolean> => {
       for (let i = 0; i <= BACKOFF.length; i++) {
         if (Date.now() - started > BUDGET_MS) return false;
-        try { await fn(); return true; } catch (err) {
+        try { last = await fn(); return true; } catch (err) {
           if (i === BACKOFF.length) { input.log?.(`telegram forward ${input.slug}: ${line((err as Error).message, 200)}`); return false; }
           await sleep(BACKOFF[i]);
         }
       }
       return false;
     };
-    for (const html of messages) if (!(await attempt(() => t.sendMessage(binding.chatId, html)))) return;
+    // The request is read here: the run's terminal entry is written before this deferred send.
+    const ask = rated && input.agent ? await attachAsk(input, binding, home) : null;
+    const out = ask && rated ? [...messages.slice(0, rated.at), ...rated.asking, ...messages.slice(rated.at + rated.plain.length)] : messages;
+    const starsAt = ask && rated ? rated.at + rated.asking.length - 1 : -1;
+    for (let i = 0; i < out.length; i++) {
+      const extra = i === starsAt ? { reply_markup: { inline_keyboard: rateKeyboard(ask!.askId, null) } } : {};
+      if (!(await attempt(() => t.sendMessage(binding.chatId, out[i], extra)))) return;
+      if (i === starsAt) {
+        const mid = Number((last as { message_id?: unknown } | null)?.message_id);
+        if (Number.isSafeInteger(mid)) {
+          const stars = await markSent(input, ask!.runKey, mid, home);
+          // Rated on the Mac before this landed: drawn now.
+          if (stars !== null) await t.editMessageReplyMarkup(binding.chatId, mid, rateKeyboard(ask!.askId, stars)).catch(() => {});
+        }
+      }
+    }
     for (const f of files) {
       const upload = { name: f.name, data: f.data };
       await attempt(() => (MEDIA.test(f.name) ? t.sendPhoto(binding.chatId, upload) : VIDEO.test(f.name) ? t.sendVideo(binding.chatId, upload) : t.sendDocument(binding.chatId, upload)));
     }
   };
+}
+
+/** W3 C10 through a dynamic import: the scorecard store loads only for a result that may ask. */
+async function attachAsk(input: ForwardInput, binding: { botId: number; chatId: number }, home: string): Promise<{ askId: string; runKey: string } | null> {
+  try {
+    const { attachTelegramAsk } = await import('../agents/scorecard-ops.js');
+    return attachTelegramAsk(dirname(input.contextRoot), input.agent!, `${input.slug}::${input.runId}`, { botId: binding.botId, chatId: binding.chatId }, { home });
+  } catch { return null; }
+}
+
+async function markSent(input: ForwardInput, runKey: string, messageId: number, home: string): Promise<number | null> {
+  try {
+    const { setTelegramMessage } = await import('../agents/scorecard-ops.js');
+    return setTelegramMessage(dirname(input.contextRoot), input.agent!, runKey, messageId, home);
+  } catch { return null; }
 }
 
 /** Where a test or the server can find a binding's forward list. */

@@ -25,7 +25,7 @@ import { SCHEDULE_LINE, fireClock, quotedJob, scheduleDataLines, scheduleJob } f
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
-import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamJobProgress, teamJobStatusNow, teamLiveRows } from './team.js';
+import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamJobProgress, teamJobStatusNow, teamLiveRows, type TeamRenderPass } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
 import { MAX_OWNER_MARKS_BLOCK, OWNER_MARKS_RULE, dropCarriedMarks, markHead } from './owner-marks.js';
 import { superRestoreHold } from './restore.js';
@@ -60,7 +60,7 @@ import {
 } from './store.js';
 import {
   CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, READOPT_RESUME_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
-  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
+  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS, missingMemberCards,
   MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
   ROUTINE_FACT_RE, SAFETY_REWRITE_REASON, isSafetyRefusal, type GrantOffer, type GrantSize, type RefusalFact,
@@ -270,14 +270,13 @@ export function ensureAgendaCard(s: SuperState, opts: { first?: boolean; bring?:
 export function ensureMemberCards(s: SuperState, id: SuperId): string[] {
   if (id === 'main') return [];
   const added: string[] = [];
-  for (const ref of MEMBER_CARD_REFS) {
-    const cid = containerIdFor('member', ref);
-    if (s.containers.some((c) => c.id === cid)) continue;
+  // One rule for the record and the window (plan uye-karnesi C7): the missing ones at their
+  // defaults, a default `float` card in Others once the stage floats MAX_FLOAT items.
+  for (const card of missingMemberCards(s)) {
     if (s.containers.length >= MAX_CONTAINERS) makeRoom(s, 1, added);
     if (s.containers.length >= MAX_CONTAINERS) break;
-    const d = MEMBER_CARD_DEFAULTS[ref];
-    s.containers.push({ id: cid, kind: 'member', ref, shape: 'square', ...(d.size !== 'small' ? { size: d.size } : {}), place: d.place });
-    added.push(cid);
+    s.containers.push(card);
+    added.push(card.id);
   }
   return added;
 }
@@ -1672,9 +1671,10 @@ export const heldLastLine = (): string => `These came in while the owner had a q
  *  a moved-on line (the child went on, the question was answered elsewhere, the item closed). */
 function heldLines(root: string, vault: string, s: SuperState, now: number): string[] {
   const out: string[] = [];
+  const pass: TeamRenderPass = {};
   for (const h of s.held ?? []) {
     const q = s.queue.find((x) => x.id === h.item);
-    if (q && q.state === 'pending' && !staleItem(s, q, root)) { out.push(...itemLines(root, vault, s, q, now)); continue; }
+    if (q && q.state === 'pending' && !staleItem(s, q, root)) { out.push(...itemLines(root, vault, s, q, now, pass)); continue; }
     if (q?.team) { out.push(`- item=${h.item} team=${q.team} event=${h.kind} moved-on`); continue; }
     out.push(`- item=${h.item} child=${h.child} event=${h.kind} moved-on`);
     const brief = s.children[h.child]?.brief;
@@ -2251,9 +2251,9 @@ export function memberPoolLine(state: Pick<SuperState, 'member' | 'pool'>): stri
 }
 
 /** One event inside a batch: the server's line, then the child's text fenced. */
-function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueItem, now: number): string[] {
+function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueItem, now: number, pass: TeamRenderPass = {}): string[] {
   if (item.team) {
-    const lines = teamItemLines(rootOf(root), vault, s, item);
+    const lines = teamItemLines(rootOf(root), vault, s, item, pass);
     // A result he waits on names the ref its section opens with, like a child's.
     if (lines.length && awaitedItem(s, item)) lines[0] = `${lines[0]} ref=${itemRef(s, item)}`;
     return lines;
@@ -2332,9 +2332,10 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
 /** The text of a `[super events]` turn carrying `items`. Exported for tests. */
 export function superBatchText(contextRoot: string, state: SuperState, items: readonly SuperQueueItem[], batch: string, now = Date.now(), held: { text: string; items: string[] } | null = null): string {
   const vault = superVaultName(contextRoot);
+  const pass: TeamRenderPass = {};
   return [
     `[super events] batch=${batch} items=${items.length + (held?.items.length ?? 0)}`,
-    ...items.flatMap((it) => itemLines(contextRoot, vault, state, it, now)),
+    ...items.flatMap((it) => itemLines(contextRoot, vault, state, it, now, pass)),
     ...(items.some((it) => awaitedItem(state, it)) ? [AWAITED_LINE] : []),
     ...(items.some((it) => itemSent(state, it).length > 0) ? [SENT_LINE] : []),
     ...(items.some((it) => it.kind === 'done' && awaitedItem(state, it) && planQuestion(state, it.sessionId)) ? [PLAN_DONE_LINE] : []),

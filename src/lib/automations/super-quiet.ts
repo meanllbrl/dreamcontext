@@ -60,6 +60,34 @@ function readRecord(contextRoot: string): SuperRecord | null {
   }
 }
 
+/**
+ * When the Super asked the owner to rate this run (W3 C16's asked window), from the main record:
+ * the job that carried `rateAsked` (its `toldEndAt`), else the `done` item that carried `rateRun`
+ * (its `createdAt`). Null when neither is left, or there is no record of this folder: D16 applies.
+ */
+export function rateAskAnchor(contextRoot: string, member: string, runId: string): number | null {
+  try {
+    const path = superRecordPath(contextRoot, 'main');
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
+    const text = readFileSync(path, 'utf-8');
+    const raw = JSON.parse(text) as { team?: unknown; queue?: unknown };
+    if (bindingVerdict(raw, text, contextRoot, path) === 'foreign') return null;
+    const team = Array.isArray(raw.team) ? raw.team as Array<Record<string, unknown>> : [];
+    const job = team.find((j) => j && j.member === member && j.runId === runId && j.rateAsked === true);
+    if (job) {
+      const at = typeof job.toldEndAt === 'number' ? job.toldEndAt : typeof job.startedAt === 'number' ? job.startedAt : null;
+      if (at !== null && Number.isFinite(at)) return at;
+    }
+    const key = `${member}::${runId}`;
+    const queue = Array.isArray(raw.queue) ? raw.queue as Array<Record<string, unknown>> : [];
+    const item = queue.find((q) => q && q.kind === 'done' && q.rateRun === key && typeof q.createdAt === 'number');
+    return item ? item.createdAt as number : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Is `run` a question's run? By its id, or by time: a resumed turn's question carries a fire time
  *  of its own, never the thread's run id. */
 function askedDuring(q: AutomationQuestion, ordered: readonly ThreadEntry[]): boolean {

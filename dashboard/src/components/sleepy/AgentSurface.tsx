@@ -105,7 +105,7 @@ import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { MAX_FILMSTRIP, groupPresentCards, readSuperStateView, type MemberCardRef, type PadStatus, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
-import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
+import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, withMissingMemberCards, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberHeldSessions, useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
@@ -4042,7 +4042,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (!base || placeholderPatches.slug !== slug) return base;
     return placeholderPatches.patches.reduce<SuperStateView>((st, patch) => applyLayoutPatch(st, patch), base);
   }, [activeSuperId, vault, memberSaved, placeholderPatches]);
-  const stageView = superState ?? memberPlaceholder;
+  // A member's live record lacking a card a newer build added draws it at its default (C7).
+  const memberStageState = useMemo(() => withMissingMemberCards(superState, memberOf(activeSuperId) !== null), [superState, activeSuperId]);
+  const stageView = memberStageState ?? memberPlaceholder;
   const handedOver = superView === 'super' && !!stageView && !isMobile;
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
   // here: the view stays as the hand-over and take-back left it (T1).

@@ -7,6 +7,9 @@ import type { AutomationQuestion, ThreadEntry } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, trimTeamJobs, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
 import { runChatSession } from '../automations/run-chat.js';
+import { superJobReader, type SuperJobReader } from '../automations/super-quiet.js';
+import { ratingExists } from '../agents/scorecard.js';
+import { dirname } from 'node:path';
 import { countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
 import { owedClock } from './owed.js';
@@ -571,9 +574,15 @@ export function noteTeamJobEnd(
   if (end.kind !== 'question') { delete job.open; job.toldEndAt = now; }
   // An answer already queued stays: it says something the ending does not repeat.
   for (const q of s.queue) if (q.team === jobId && q.state === 'pending' && !q.partial) q.state = 'done';
+  // W3 C15: an awaited run job that finished asks him to rate it, decided once here; a follow-up
+  // on the same run is never asked again.
+  const rate = end.kind === 'done' && job.jobKind === 'run' && job.awaited === true
+    && !s.team.some((j) => j.member === job.member && j.runId === job.runId && j.rateAsked);
+  if (rate) job.rateAsked = true;
   s.queue.push({
     id: newQueueId(), sessionId: s.session, kind: end.kind, state: 'pending', createdAt: now, team: jobId,
     ...(end.kind === 'question' ? {} : { posts: claimPosts(contextRoot, s, job) }),
+    ...(rate ? { rateRun: `${job.member}::${job.runId}` } : {}),
   });
   countEvent(s);
   return true;
@@ -680,8 +689,26 @@ export function awaitedTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem):
   return (q.kind === 'done' || q.kind === 'stuck') && s.team.find((j) => j.id === q.team)?.awaited === true;
 }
 
+/** What one render of a batch (or the held block) shares across its items: one Super-job reader. */
+export interface TeamRenderPass { isSuperJob?: SuperJobReader }
+
+/**
+ * W3 C15: what a finished Super job's `done` line adds. ` run=<member>::<runId>` on every finished
+ * run job the Super handed the member, and ` rate=ask` before it while the item asked to rate it and
+ * the card holds no rating for it. Empty for anything else (a run that asked him a question is no
+ * Super job: it asks through its own row).
+ */
+function rateFields(contextRoot: string, job: SuperTeamJob, q: SuperQueueItem, status: string, pass: TeamRenderPass): string {
+  if (q.kind !== 'done' || q.partial || job.jobKind !== 'run' || status !== 'done') return '';
+  const reader = pass.isSuperJob ??= superJobReader(contextRoot);
+  if (!reader(job.member, jobThread(contextRoot, job).ordered)) return '';
+  const key = `${job.member}::${job.runId}`;
+  const ask = !!q.rateRun && ratingExists(dirname(contextRoot), job.member, key) === false;
+  return `${ask ? ' rate=ask' : ''} run=${key}`;
+}
+
 /** One team item inside a `[super events]` batch: the server's line, then the member's text fenced. */
-export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, q: SuperQueueItem): string[] {
+export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, q: SuperQueueItem, pass: TeamRenderPass = {}): string[] {
   const job = s.team.find((j) => j.id === q.team);
   if (!job) return [`- item=${q.id} team=${q.team} event=${q.kind} moved-on`];
   if (job.request) return requestJobLines(contextRoot, vault, s, job, q);
@@ -689,7 +716,7 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status = q.kind === 'question' ? 'asking' : row.status;
-  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}${q.kind === 'stuck' && row.lastLine.includes(BOARD_LIMIT_MARK) ? ' reason=board-limit' : ''}`];
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}${q.kind === 'stuck' && row.lastLine.includes(BOARD_LIMIT_MARK) ? ' reason=board-limit' : ''}${rateFields(contextRoot, job, q, status, pass)}`];
   if (job.followUpOf && job.by !== 'super') {
     const asked = jobThread(contextRoot, job).ordered.find((e) => e.id === job.entryId)?.text ?? job.brief;
     lines.push(wrapUntrusted(vault, `The owner wrote to the member: ${asked.slice(0, TEAM_ANSWER_EXCERPT)}`));

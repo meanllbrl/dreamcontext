@@ -85,6 +85,7 @@ import {
 import { sessionMember } from '../../lib/agents/session-member.js';
 import { HOOK_OUTPUT_MAX_CHARS } from '../../lib/snapshot-budget.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
+import { stripOwnerBlocks } from '../../lib/agents/owner-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -4073,7 +4074,7 @@ export function registerHookCommand(program: Command): void {
       // line is what stops the agent recomputing what an installed app already answers.
       if (!isBackgroundAutoSleep()) {
         try {
-          const prompt = stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')));
+          const prompt = stripOwnerBlocks(stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? ''))));
           const block = appToolsBlock(prompt, root, homedir());
           if (block) console.log(block);
         } catch (appErr) {

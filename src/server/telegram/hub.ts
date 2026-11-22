@@ -506,6 +506,7 @@ export class TelegramHub implements TelegramHubApi {
       contextRoot: project?.contextRoot ?? null, projectName: project?.name ?? '',
     };
     this.active.set(key, ab);
+    this.rateHook?.activated(ab);
     this.recoverJournal(ab);
     let reported = false;
     ab.poller = new TelegramPoller({
@@ -903,6 +904,8 @@ export class TelegramHub implements TelegramHubApi {
     if (cb) { await this.onCallback(ab, cb); return 'accepted'; }
     const msg = obj(u.message);
     if (!msg) return 'accepted';
+    // A reply to a rating prompt is his note (W3 E7): taken before any run or session lookup.
+    if (this.rateHook && await this.rateHook.onReply(ab, Number(u.update_id), msg)) return 'accepted';
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
     // A reply to a live run's output goes to that run's stdin before anything else (W4, H6).
     if (this.messageHook && await this.messageHook(ab, msg)) return 'accepted';
@@ -1180,6 +1183,24 @@ export class TelegramHub implements TelegramHubApi {
     if (session) telegramReactionNotes.add(`super:${session}`, r.messageId, r.emojis, quote, this.now());
   }
 
+  /** The journal, for a branch outside the hub (the rating note, rate.ts). */
+  editJournal(ab: ActiveBinding, fn: (pending: JournalEntry[]) => JournalEntry[]): void {
+    this.journal(ab, fn);
+  }
+
+  /**
+   * A voice note of his saved and transcribed with the retry ladder, for a branch outside a Super
+   * turn (the rating note). Null when the message holds no voice note.
+   */
+  async hearVoice(ab: ActiveBinding, msg: Obj, contextRoot: string): Promise<{ ok: true; text: string } | { ok: false } | null> {
+    const media = pickInboundMedia(msg);
+    if (!media || (media.kind !== 'voice' && media.kind !== 'audio')) return null;
+    const saved = await saveInbound({ transport: ab.transport, contextRoot, media, now: this.now() });
+    if (!saved.ok) return { ok: false };
+    const heard = await this.transcribeVoiceNote(ab, saved.path, true);
+    return heard.ok ? heard : { ok: false };
+  }
+
   private journal(ab: ActiveBinding, fn: (pending: JournalEntry[]) => JournalEntry[]): void {
     const io = this.pollIO(ab.scope, ab.target);
     const s = io.read();
@@ -1198,8 +1219,11 @@ export class TelegramHub implements TelegramHubApi {
     const s = io.read();
     if (!s.pending.length) return;
     const replay = s.pending.filter((e) => this.replayable(ab, e));
-    const lines = s.pending.filter((e) => !replay.includes(e)).map((e) => (e.written ? LINES.writtenNotDone : LINES.notWritten));
-    io.write({ ...s, pending: replay });
+    // A note to a rating prompt has its own rule (W3 E7): replayed within its run's window.
+    const notes = this.rateHook ? s.pending.filter((e) => e.kind === 'rate-note') : [];
+    const lines = s.pending.filter((e) => !replay.includes(e) && !notes.includes(e)).map((e) => (e.written ? LINES.writtenNotDone : LINES.notWritten));
+    io.write({ ...s, pending: [...replay, ...notes] });
+    for (const e of notes) this.rateHook!.replay(ab, e);
     void (async () => { for (const l of new Set(lines)) await this.notice(ab, 'warn', l, true); })();
     if (!replay.length) return;
     void this.notice(ab, 'info', LINES.replaying(replay.length));
@@ -2355,6 +2379,8 @@ export class TelegramHub implements TelegramHubApi {
 
   /** A tap: every binding checked, consumed on first use (single-use records). */
   private async onCallback(ab: ActiveBinding, cb: Obj): Promise<void> {
+    // A star or "Not ekle" under a run's result (W3 C12): never an `a:` record.
+    if (this.rateHook && this.rateHook.isRateTap(typeof cb.data === 'string' ? cb.data : '')) { await this.rateHook.onTap(ab, cb); return; }
     const id = typeof cb.id === 'string' ? cb.id : '';
     const m = CALLBACK_DATA_RE.exec(typeof cb.data === 'string' ? cb.data : '');
     const rec = m ? this.buttons.get(m[1]) : undefined;
@@ -2443,6 +2469,14 @@ export class TelegramHub implements TelegramHubApi {
   extraButton: ((ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number) => Promise<string | null>) | null = null;
   /** W4 (runs.ts): an owner message the run cards take (a reply into a live run). True = handled. */
   messageHook: ((ab: ActiveBinding, msg: Obj) => Promise<boolean>) | null = null;
+  /** W3 (rate.ts): a run's stars, his note to their prompt, its replay, a binding brought up. */
+  rateHook: {
+    isRateTap: (data: string) => boolean;
+    onTap: (ab: ActiveBinding, cb: Obj) => Promise<void>;
+    onReply: (ab: ActiveBinding, updateId: number, msg: Obj) => Promise<boolean>;
+    replay: (ab: ActiveBinding, e: JournalEntry) => void;
+    activated: (ab: ActiveBinding) => void;
+  } | null = null;
 
   /** The Super chat's own pending prompt as buttons (permission: allow once / deny only). */
   private async sendPrompt(ab: ActiveBinding, sessionId: string, q: PendingQuestion): Promise<void> {

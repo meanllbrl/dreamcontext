@@ -6,7 +6,7 @@ import { threadEntriesHere } from './agent-sync.js';
 import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { getAutomation, listAutomations, readAutomationCache } from '../automations/store.js';
 import { readMachineIdentity } from '../machine-id.js';
-import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
+import { isThreadDayFile, parseDayFile, threadDateStamp, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
 import {
   feedCutoffDay, openQuestionsByRun, readRunHead, runDocumentPath, runInUnreadWindow, runWindowUnread, toBrainRelative,
 } from '../automations/feed.js';
@@ -84,7 +84,20 @@ export interface HistorySession {
   elsewhere?: true;
   truncated?: true;
   missing?: true;
+  /** A run's rating request facts (plan uye-karnesi W3 C9): present once it has a first terminal
+   *  entry, whatever its live status (a reply turn in flight included). */
+  request?: RequestFacts;
   rows: HistoryRow[];
+}
+
+/** W3 E1/E2: whether a run asks to be rated, and when its 72-hour window starts. Both come from the
+ *  run's full thread; later turns never move them. */
+export interface RequestFacts {
+  eligible: boolean;
+  /** The first terminal entry's time. */
+  endedAt: string;
+  /** The status that first terminal entry maps to (a rating's snapshot, never a live `running`). */
+  status: NonNullable<HistorySession['status']>;
 }
 
 export interface HistoryPage {
@@ -156,12 +169,14 @@ const dayCache = new Map<string, { mtimeMs: number; size: number; entries: Threa
 /** Every entry of a source, by id, and the day file each entry came from: its name says which
  *  machine wrote it, also for a shared routine whose threads sync with agent sync off. Which runs
  *  count as unread is `runInUnreadWindow`'s word, the feed's own rule, never a day file's. */
-function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; fileOf: Map<string, string> } {
+function readSource(contextRoot: string, source: string, fromDay?: string): { entries: ThreadEntry[]; fileOf: Map<string, string> } {
   let dir: string;
   try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], fileOf: new Map() }; }
-  let names: string[];
-  try { names = readdirSync(dir).filter(isThreadDayFile).sort(); } catch { names = []; }
-  const present = new Set(names.map((n) => join(dir, n)));
+  let all: string[];
+  try { all = readdirSync(dir).filter(isThreadDayFile).sort(); } catch { all = []; }
+  const present = new Set(all.map((n) => join(dir, n)));
+  // A run-scoped read (W3 C9): day files from `fromDay` on (names open with their local date).
+  const names = fromDay ? all.filter((n) => n.slice(0, 10) >= fromDay) : all;
   // A day file retention deleted leaves the cache with its folder's listing.
   for (const p of [...dayCache.keys()]) if (p.startsWith(dir + sep) && !present.has(p)) dayCache.delete(p);
   const byId = new Map<string, ThreadEntry>();
@@ -231,6 +246,116 @@ const terminalOf = (entries: readonly ThreadEntry[]): ThreadEntry | undefined =>
 function writtenElsewhere(entry: ThreadEntry, fileOf: ReadonlyMap<string, string>, home: string): boolean {
   const file = fileOf.get(entry.id) ?? '';
   return /-[0-9a-f]{12}\.md$/.test(file) && !file.endsWith(`-${readMachineIdentity(home).id}.md`);
+}
+
+// ─── Rating requests (plan uye-karnesi W3, C9) ──────────────────────────────────────
+
+/** A system line task delivery writes (`fanOutDelivered`): only system entries and no `started`.
+ *  Never rateable, never a request. */
+export function isDeliveryNoteEntries(entries: readonly ThreadEntry[]): boolean {
+  return entries.length > 0 && entries.every((e) => e.kind === 'system') && !entries.some((e) => e.event === 'started');
+}
+
+/** The day a run-scoped read starts: one local day before the run id's own (day files are named by
+ *  local date, run ids are UTC). Null when the run id is no time: read every file. */
+export function runReadFromDay(runId: string): string | null {
+  const t = Date.parse(runId);
+  return Number.isFinite(t) ? threadDateStamp(new Date(t - 86_400_000)) : null;
+}
+
+/** Is `source` a member's conversation (the member itself, or a routine with a member)? A routine
+ *  with no member (super-rutin) never asks. */
+function isMemberSource(contextRoot: string, source: string): boolean {
+  try { if (getAgent(contextRoot, source)) return true; } catch { /* not an agent */ }
+  // A routine's `agent` must BE a member: a Super automation (`target: super`) composes with its own
+  // slug as its agent, and `getAgent` refuses that slug.
+  try {
+    const agent = getAutomation(contextRoot, source)?.agent;
+    return !!agent && !!getAgent(contextRoot, agent);
+  } catch { return false; }
+}
+
+/** E1 + E2 from one run's full thread. Null when the run has no terminal entry yet. */
+function requestFactsOf(
+  contextRoot: string, source: string, run: readonly ThreadEntry[], fileOf: ReadonlyMap<string, string>, home: string,
+  isSuperJob: (source: string, run: readonly ThreadEntry[]) => boolean,
+): RequestFacts | null {
+  const end = terminalOf(run);
+  if (!end) return null;
+  const started = run.find((e) => e.kind === 'system' && e.event === 'started');
+  const eligible = end.event === 'ok'
+    && !!started
+    && !isDeliveryNoteEntries(run)
+    && !writtenElsewhere(started, fileOf, home)
+    && !writtenElsewhere(end, fileOf, home)
+    && isMemberSource(contextRoot, source)
+    && !isSuperJob(source, run);
+  return { eligible, endedAt: end.at, status: TERMINAL[end.event!] ?? 'ok' };
+}
+
+/** One run's request facts, read from its own thread (from a day before the run id's day). */
+export function requestFacts(contextRoot: string, source: string, runId: string, home: string = homedir()): RequestFacts | null {
+  const { entries, fileOf } = readSource(contextRoot, source, runReadFromDay(runId) ?? undefined);
+  const run = entries.filter((e) => e.runId === runId);
+  if (run.length === 0) return null;
+  return requestFactsOf(contextRoot, source, run, fileOf, home, superJobReader(contextRoot));
+}
+
+/**
+ * A job the main Super handed this member (W3 E9, C16), read from its own run: the Super's ask
+ * opened it (`superJobReader`) and its first terminal entry is the raw `ok`. Its title is the ask's
+ * first line. Null for anything else (a failed Super job is not one: D2 rates it from history).
+ */
+export function superJobSession(contextRoot: string, member: string, sessionKey: string, home: string = homedir()): HistorySession | null {
+  const at = sessionKey.indexOf('::');
+  if (at <= 0) return null;
+  const source = sessionKey.slice(0, at);
+  const runId = sessionKey.slice(at + 2);
+  if (source !== member) return null;
+  const { entries, fileOf } = readSource(contextRoot, source, runReadFromDay(runId) ?? undefined);
+  const run = entries.filter((e) => e.runId === runId);
+  if (run.length === 0) return null;
+  const isSuperJob = superJobReader(contextRoot);
+  if (!isSuperJob(source, run)) return null;
+  const end = terminalOf(run);
+  // Still going: found, not yet rateable (`run_not_rateable`).
+  if (end && end.event !== 'ok') return null;
+  const ask = run.find((e) => e.kind === 'user');
+  const title = (ask?.text ?? '').split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 200) || source;
+  const request = requestFactsOf(contextRoot, source, run, fileOf, home, isSuperJob);
+  return {
+    key: sessionKey, kind: 'run', source, title,
+    startedAt: run[0].at, lastAt: run[run.length - 1].at, status: end ? 'ok' : 'running',
+    durationMs: threadDuration(run), hasDocument: false, newestId: run[run.length - 1].id, unread: false,
+    ...(request ? { request } : {}),
+    rows: [],
+  };
+}
+
+/** Every run of this member whose run id (its fire time) falls in the last `days`, with its facts:
+ *  each one's whole thread is read, so an old run with a fresh reply is never a candidate. */
+export function recentRunFacts(
+  contextRoot: string, member: string, nowMs: number, days: number, home: string = homedir(),
+): Array<{ key: string; source: string; runId: string; facts: RequestFacts }> {
+  const out: Array<{ key: string; source: string; runId: string; facts: RequestFacts }> = [];
+  const isSuperJob = superJobReader(contextRoot);
+  const fromMs = nowMs - days * 86_400_000;
+  const fromDay = threadDateStamp(new Date(fromMs - 86_400_000));
+  for (const source of agentConversationSlugs(contextRoot, member)) {
+    const { entries, fileOf } = readSource(contextRoot, source, fromDay);
+    const byRun = new Map<string, ThreadEntry[]>();
+    for (const e of entries) {
+      const t = Date.parse(e.runId);
+      if (!Number.isFinite(t) || t < fromMs) continue;
+      const list = byRun.get(e.runId);
+      if (list) list.push(e); else byRun.set(e.runId, [e]);
+    }
+    for (const [runId, run] of byRun) {
+      const facts = requestFactsOf(contextRoot, source, run, fileOf, home, isSuperJob);
+      if (facts) out.push({ key: `${source}::${runId}`, source, runId, facts });
+    }
+  }
+  return out;
 }
 
 function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null, f: RunFacts): HistorySession['status'] {
@@ -326,6 +451,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   let unreadCount = 0;
   const quietOf = ownerQuietReader(contextRoot);
   const isSuperJob = opts.runsOnly ? superJobReader(contextRoot) : null;
+  const superJobOf = isSuperJob ?? superJobReader(contextRoot);
   const nowMs = (opts.now ?? new Date()).getTime();
   const cutoffDay = feedCutoffDay(opts.now);
   const openRuns = openQuestionsByRun(contextRoot);
@@ -398,6 +524,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
           const docPath = runDocumentPath(contextRoot, run);
           const docHead = docPath ? readRunHead(contextRoot, run) : null;
           const first = runEntries.find((e) => e.kind === 'system' && e.event === 'started') ?? runEntries[0];
+          const request = requestFactsOf(contextRoot, source, runEntries, fileOf, home, superJobOf);
           return {
             key, kind: 'run', source, title,
             startedAt: runEntries[0].at,
@@ -410,6 +537,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             ...(docPath ? { document: { path: toBrainRelative(contextRoot, docPath), name: basename(docPath), ...(docHead ? { head: docHead } : {}) } } : {}),
             ...(chat ? { claudeId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {}),
             ...(opts.audience === 'owner' && writtenElsewhere(first, fileOf, home) ? { elsewhere: true as const } : {}),
+            ...(request ? { request } : {}),
             rows,
           };
         },

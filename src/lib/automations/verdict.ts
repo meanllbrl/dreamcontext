@@ -40,6 +40,7 @@ import { linkedWritableRoots } from '../t3-bridge/roots.js';
 import { homedir } from 'node:os';
 import { win32PowerShell } from '../proc.js';
 import { effectivePattern } from '../agents/agent-sync.js';
+import { buildOwnerBlock, type OwnerRef } from '../agents/owner-block.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
@@ -1117,12 +1118,16 @@ export function buildThreadMessagePreamble(
   m?: Pick<AutomationManifest, 'slug' | 'review'> & Partial<Pick<AutomationManifest, 'pattern' | 'learning' | 'agent'>>,
   /** This turn's nonce and board material. The resume always passes one; a test may not. */
   turn?: TurnBoardContext | null,
+  /** Whose owner block rides beside the notes (plan uye-karnesi D8). Absent ⇒ none. */
+  owner?: OwnerRef | null,
 ): string {
   const n = markerNonce(turn?.nonce);
   // ORDER IS LOAD-BEARING, the same rule as a run's prompt: framing and instructions, then
   // DATA (board, references, the agent's own notes), then the HUMAN'S MESSAGE, last, fenced
   // with this turn's nonce, so nothing a teammate or an earlier run wrote can follow it.
   const pattern = m ? buildPatternBlock({ learning: m.learning ?? false, pattern: m.pattern ?? '' }, turn?.nonce) : '';
+  // The member resolved as `agent || slug`: `m` is a Pick where `agent` is optional.
+  const owned = m && owner ? buildOwnerBlock({ ...owner, member: m.agent || m.slug }, turn?.nonce) : '';
   const learning = m ? buildTurnLearningDirective(m) : '';
   return [
     'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT',
@@ -1141,6 +1146,7 @@ export function buildThreadMessagePreamble(
     ...(m ? [routineClause(m)] : []),
     ...(turn ? boardParts(turn) : []),
     ...(pattern ? ['', pattern] : []),
+    ...(owned ? ['', owned] : []),
     ...(learning ? ['', learning] : []),
     '',
     `--- THE HUMAN'S MESSAGE (verbatim)${n} ---`,
@@ -1255,6 +1261,7 @@ export async function resumeWithMessage(
           // The agent's notes as THIS machine adopted them (B1-6), never a synced edit from elsewhere.
           { ...envelope.manifest, pattern: effectivePattern(contextRoot, envelope.manifest.agent || slug, envelope.manifest.pattern ?? '') },
           turn ?? { nonce: newTurnNonce(), board: '', refs: '' },
+          { projectRoot: dirname(contextRoot), member: envelope.manifest.agent || slug, home: opts.home },
         )
         : buildMessagePreamble(messageText, turn),
       opts,

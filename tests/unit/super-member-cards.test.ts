@@ -18,7 +18,7 @@ import { readSuperState, resetSuperIndex, superRecordPath, SUPER_STATE_REL } fro
 import { _resetSuperInbox, containerIdFor, ensureMemberAgenda, ensureMemberCards, writeSuper } from '../../src/lib/super/inbox.js';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
-import { AGENDA_REF, MAX_CONTAINERS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { AGENDA_REF, MAX_CONTAINERS, MEMBER_CARD_IDS, MEMBER_CARD_REFS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { makeRoom, retirable } from '../../src/lib/super/room.js';
 import { SUPER_OWNER_HANDLERS, SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 
@@ -28,6 +28,7 @@ const M = 'm:rota' as const;
 const R = containerIdFor('member', 'routines');
 const I = containerIdFor('member', 'instructions');
 const U = containerIdFor('member', 'settings');
+const K = containerIdFor('member', 'scorecard');
 const A = containerIdFor('agenda', AGENDA_REF);
 const savedDesktop = process.env.DREAMCONTEXT_DESKTOP;
 
@@ -80,7 +81,7 @@ describe('a member stage\'s own cards', () => {
     makeMember({ enabled: false });
     const s = await writeSuper(root, M, () => {});
     expect(memberCards(s).map((c) => [c.id, c.ref, c.size ?? 'small', c.place])).toEqual([
-      [R, 'routines', 'large', 'float'], [I, 'instructions', 'small', 'float'], [U, 'settings', 'small', 'others'],
+      [R, 'routines', 'large', 'float'], [I, 'instructions', 'small', 'float'], [U, 'settings', 'small', 'others'], [K, 'scorecard', 'medium', 'float'],
     ]);
     const main = await writeSuper(root, () => {});
     expect(memberCards(main)).toEqual([]);
@@ -113,7 +114,7 @@ describe('a member stage\'s own cards', () => {
     const open = await verb('open', { kind: 'member', ref: 'routines' });
     expect(open.status).toBe(400);
     const s = await readSuperState(root, M);
-    expect(memberCards(s).map((c) => [c.id, c.size ?? 'small', c.place])).toEqual([[R, 'large', 'float'], [I, 'small', 'float'], [U, 'small', 'others']]);
+    expect(memberCards(s).map((c) => [c.id, c.size ?? 'small', c.place])).toEqual([[R, 'large', 'float'], [I, 'small', 'float'], [U, 'small', 'others'], [K, 'medium', 'float']]);
   });
 
   it('a group close skips them; the owner\'s close is ignored; a missing one comes back at its default', async () => {
@@ -127,7 +128,7 @@ describe('a member stage\'s own cards', () => {
     expect(out.skipped).toEqual(expect.arrayContaining([R, I]));
     // The owner's own close is ignored for them.
     await layout({ closed: [U] });
-    expect(memberCards(await readSuperState(root, M))).toHaveLength(3);
+    expect(memberCards(await readSuperState(root, M))).toHaveLength(4);
     // Gone by a hand edit: back at its default with the next write.
     await writeSuper(root, M, (s) => { s.containers = s.containers.filter((c) => c.id !== I); });
     const back = (await readSuperState(root, M)).containers.find((c) => c.id === I);
@@ -148,13 +149,15 @@ describe('a member stage\'s own cards', () => {
   });
 
   it('count in the cap but are never retired; ensure makes room for a missing one', async () => {
+    // The precomputed ids are the container ids the store would mint (the window draws a missing card with them).
+    for (const ref of MEMBER_CARD_REFS) expect([ref, MEMBER_CARD_IDS[ref]]).toEqual([ref, containerIdFor('member', ref)]);
     const s = { ...emptySuperState(), session: 'x', enabled: true } as SuperState;
     ensureMemberCards(s, M);
     for (const c of memberCards(s)) expect(retirable(s, { ...c, place: 'others' }, () => false)).toBe(false);
     // A full record of retirable cards: the missing member card still comes back.
     const full = { ...emptySuperState(), session: 'x', enabled: true } as SuperState;
     full.containers = Array.from({ length: MAX_CONTAINERS }, (_, i) => ({ id: `insight-${i}`, kind: 'insight' as const, ref: `i${i}`, shape: 'square' as const, place: 'others' as const }));
-    expect(ensureMemberCards(full, M)).toHaveLength(3);
+    expect(ensureMemberCards(full, M)).toHaveLength(4);
     expect(full.containers.length).toBeLessThanOrEqual(MAX_CONTAINERS);
     expect(ensureMemberCards({ ...emptySuperState() } as SuperState, 'main')).toEqual([]);
   });
