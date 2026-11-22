@@ -27,6 +27,7 @@ const now = new Date(Date.now() - 4 * 60_000).toISOString();
 const row = (over) => ({ id: 'sh_app', kind: 'app', vault: 'proj', slug: 'funnel', name: 'Funnel Masası', state: 'open', stage: null, people: 2, password: true, ai: false, openedAt: now, ...over });
 const FACES = {
   form: [],
+  download: [row({ state: 'starting', stage: 'download', people: 0 })],
   starting: [row({ state: 'starting', stage: 'tunnel', people: 0 })],
   open: [row({})],
   broken: [row({ state: 'broken', people: 0, error: 'cloudflared stopped' })],
@@ -36,7 +37,9 @@ const REVEAL = { link: 'https://kuzey-limon-ornek.trycloudflare.com/k/6f1c2a9e0b
 
 // What makes the page believe it is in the Mac app (dashboard/src/lib/desktop.ts): the app page draws its buttons only there.
 const DESKTOP_FLAG = `window.__TAURI_INTERNALS__ = { invoke: async () => null, transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
-const theme = (t, extra = '') => () => `localStorage.setItem('dreamcontext-theme', '${t}');${extra}${DESKTOP_FLAG}`;
+const theme = (t, extra = '', after = '') => () => `localStorage.setItem('dreamcontext-theme', '${t}');${extra}${DESKTOP_FLAG}${after}`;
+/** The Mac app's native calls, recorded (a copy is the clipboard plugin's write with the text). */
+const RECORD_INVOKES = `window.__TAURI_INTERNALS__.invoke = async (cmd, args) => { (window.__dcInvokes = window.__dcInvokes || []).push([cmd, args]); return null; };`;
 
 /** Answer the live-link routes with `rows` (the sheet shows a live share's face instead of the form). */
 async function fixRows(page, rows) {
@@ -77,7 +80,7 @@ async function expectText(page, where, text) {
 /** Run one step; a stuck step is a finding and the page is still shot as it stands. */
 const step = (where, fn) => async (page, w) => { try { await fn(page, w); } catch (err) { app.findings.push(`${where}@${w.name}: ${err instanceof Error ? err.message.split("\n")[0] : err}`); } };
 
-const SAYS = { form: 'Open link', starting: 'Getting the link ready', open: 'Copy', broken: 'Try again' };
+const SAYS = { form: 'Open link', download: 'downloading the tunnel tool (1/3)', starting: 'opening the tunnel (2/3)', open: 'Copy', broken: 'Try again' };
 
 try {
   for (const t of ['light', 'dark']) {
@@ -97,7 +100,7 @@ try {
         await fixRows(page, face === 'form' ? [] : [boardRow({})]);
         await goBoard(page, w);
         const btn = page.locator('[data-testid="live-share-board"]').first();
-        if (!(await btn.count())) { app.findings.push(`board-${face}-${t}@${w.name}: no Live link button on the board`); return; }
+        if (!(await btn.waitFor({ timeout: 15_000 }).then(() => true, () => false))) { app.findings.push(`board-${face}-${t}@${w.name}: no Live link button on the board`); return; }
         await btn.click({ timeout: 10_000 });
         await page.waitForTimeout(1200);
         await expectText(page, `board-${face}-${t}@${w.name}`, SAYS[face]);
@@ -134,6 +137,44 @@ try {
         await expectText(page, `pill-${shell}-${t}@${w.name}`, 'Close all');
       }), { name: `pill-${shell}-${t}`, init: theme(t, `localStorage.setItem('dreamcontext.dashboard.sidebarCollapsed', '${collapsed}');`) });
     }
+  }
+  for (const t of ['light', 'dark']) {
+    await app.look('/?vault=proj', step(`pill-actions-${t}`, async (page, w) => {
+      let rows = [row({}), boardRow({ people: 0 })];
+      const calls = [];
+      await page.route('**/api/shares', (route) => route.fulfill({ json: { shares: rows } }));
+      await page.route('**/api/shares/*/reveal', (route) => { calls.push(`reveal ${route.request().url().split('/').at(-2)}`); return route.fulfill({ json: REVEAL }); });
+      await page.route('**/api/shares/*/close', (route) => {
+        const id = route.request().url().split('/').at(-2);
+        calls.push(`close ${id}`);
+        rows = id === 'all' ? [] : rows.filter((r) => r.id !== id);
+        return route.fulfill({ json: { ok: true } });
+      });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      const where = `pill-actions-${t}@${w.name}`;
+      const pill = page.locator('[data-testid="live-shares-pill"]').first();
+      if (!(await pill.isVisible().catch(() => false))) { if (w.width > 600) app.findings.push(`${where}: the pill is not visible`); return; }
+      await pill.click();
+      const pop = page.locator('.live-pop');
+      // Copy: the link is revealed and lands on the clipboard; the row says Copied.
+      await pop.locator('.live-pop__row', { hasText: 'Funnel Masası' }).getByRole('button', { name: 'Copy' }).click();
+      await expectText(page, where, 'Copied');
+      const handed = await page.evaluate(() => JSON.stringify(window.__dcInvokes ?? []));
+      if (!handed.includes(REVEAL.link) || !/clipboard/.test(handed)) app.findings.push(`${where}: Copy did not hand the link to the Mac clipboard: ${handed.slice(0, 300)}`);
+      await page.screenshot({ path: join(app.shots, `pill-actions-${t}-copied-${w.name}.png`) });
+      // Close: that row's link closes and leaves the list.
+      await pop.locator('.live-pop__row', { hasText: 'Control Panel' }).getByRole('button', { name: 'Close' }).click();
+      const boardGone = await pop.locator('.live-pop__row', { hasText: 'Control Panel' }).waitFor({ state: 'detached', timeout: 5_000 }).then(() => true, () => false);
+      if (!boardGone) app.findings.push(`${where}: the closed board row is still listed`);
+      await page.screenshot({ path: join(app.shots, `pill-actions-${t}-closed-one-${w.name}.png`) });
+      // Close all: every link closes and the pill goes away.
+      await pop.getByRole('button', { name: 'Close all' }).click();
+      const pillGone = await pill.waitFor({ state: 'hidden', timeout: 5_000 }).then(() => true, () => false);
+      if (!pillGone) app.findings.push(`${where}: the pill is still shown after Close all`);
+      const want = ['reveal sh_app', 'close sh_board', 'close all'];
+      if (JSON.stringify(calls) !== JSON.stringify(want)) app.findings.push(`${where}: calls ${JSON.stringify(calls)}, wanted ${JSON.stringify(want)}`);
+    }), { name: `pill-actions-${t}`, init: theme(t, "localStorage.setItem('dreamcontext.dashboard.sidebarCollapsed', '0');", RECORD_INVOKES) });
   }
 } catch (err) {
   app.findings.push(`script: ${err instanceof Error ? err.message.split('\n')[0] : err}`);

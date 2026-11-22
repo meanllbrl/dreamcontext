@@ -59,6 +59,7 @@ const dc = (...args) => {
 };
 
 const findings = [];
+const timings = {};
 const check = (ok, what) => { if (!ok) findings.push(what); return ok; };
 const step = (s) => process.stdout.write(`step: ${s}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -74,11 +75,19 @@ let count = 0;
 const page = '<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Funnel Masası</title>'
   + '<body style="font:16px system-ui;margin:24px"><h1>Funnel Masası</h1><p>Son 7 gün</p><p id="n">…</p><button id="b">Kaydet</button>'
   + '<script>const n=document.getElementById("n");fetch("/api/count").then(r=>r.json()).then(j=>{n.textContent="Kayıt: "+j.count});'
-  + 'document.getElementById("b").onclick=()=>fetch("/api/count",{method:"POST"}).then(r=>r.json()).then(j=>{n.textContent="Kayıt: "+j.count});</script></body></html>';
+  + 'document.getElementById("b").onclick=()=>fetch("/api/count",{method:"POST"}).then(r=>r.json()).then(j=>{n.textContent="Kayıt: "+j.count+(j.data===200?"":" veri: "+j.data)});</script></body></html>';
 http.createServer((req, res) => {
   if (req.headers['x-dc-gateway-secret'] !== process.env.DC_GATEWAY_SECRET) { res.writeHead(401); res.end(); return; }
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
-  if (req.url === '/api/count') { if (req.method === 'POST') count++; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ count, guest: req.headers['x-dc-guest'] === '1' })); return; }
+  if (req.url === '/api/count') {
+    const done = (data) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ count, data, guest: req.headers['x-dc-guest'] === '1' })); };
+    if (req.method !== 'POST') { done(null); return; }
+    count++;
+    // The app's own data write (K2): the backend's /__dc/data, as a real app saves.
+    fetch(process.env.DC_URL + '/__dc/data/write', { method: 'POST', headers: { authorization: 'Bearer ' + process.env.DC_TOKEN, 'content-type': 'application/json' }, body: JSON.stringify({ path: 'kayit.json', content: JSON.stringify({ count }) }) })
+      .then((r) => done(r.status), (e) => done('error ' + e.message));
+    return;
+  }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(page);
 }).listen(Number(process.env.PORT), process.env.HOST);
 `);
@@ -89,6 +98,9 @@ const board = dc('whiteboard', 'create', 'Lansman akışı', '--json');
 const boardSlug = (() => { try { return JSON.parse(board.out.slice(board.out.indexOf('{'))).slug; } catch { return 'lansman-akisi'; } })();
 check(dc('whiteboard', 'add', boardSlug, 'note', '--title', 'Reklam', '--text', 'Reklam metni').ok, 'board note');
 check(dc('whiteboard', 'add', boardSlug, 'web', '--title', 'Paywall testi', '--url', 'https://example.com/gizli-adres').ok, 'board web card');
+const picture = join(proj, 'kapak.png');
+copyFileSync(join(REPO, 'dashboard', 'public', 'icons', 'icon-192.png'), picture);
+check(dc('whiteboard', 'add', boardSlug, 'image', '--file', picture).ok, 'board picture');
 
 // ─── the server, as the Mac app's own (owner key on stdin) ──────────────────
 const apiPort = await freePort();
@@ -150,10 +162,14 @@ try {
   check(revealNoKey.status === 403, `reveal without the key: ${revealNoKey.status}`);
 
   step('K11: caffeinate holds the Mac while a link is open');
+  const serverPid = Number(spawnSync('lsof', ['-nP', `-iTCP:${apiPort}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf-8' }).stdout.trim().split('\n')[0]);
+  check(serverPid > 0, 'K11: the server pid (listening on the API port) was not found');
+  const serverCaff = () => spawnSync('pgrep', ['-P', String(serverPid), 'caffeinate'], { encoding: 'utf-8' }).stdout.trim().split('\n').filter(Boolean).map(Number);
   const assertions = spawnSync('pmset', ['-g', 'assertions'], { encoding: 'utf-8' }).stdout;
-  const caff = spawnSync('pgrep', ['-P', String(api.pid), 'caffeinate'], { encoding: 'utf-8' }).stdout.trim()
-    || spawnSync('pgrep', ['-f', `caffeinate.*-w`], { encoding: 'utf-8' }).stdout.trim();
-  check(/caffeinate/.test(assertions) && !!caff, 'no caffeinate assertion while open');
+  const caff = serverCaff();
+  check(caff.length > 0 && caff.some((p) => new RegExp(`pid ${p}\\(caffeinate\\)`).test(assertions)), `K11: no caffeinate child of the server (pid ${serverPid}) holding an assertion while open`);
+  timings.k11ServerPid = serverPid;
+  timings.k11Caffeinate = caff;
 
   step('K5 + K3: password page, the 6th wrong try, the right one, then the closed rooms');
   const door = await fetch(app.link, { redirect: 'manual' });
@@ -189,6 +205,8 @@ try {
     const before = Number((await page.locator('#n').textContent())?.match(/\d+/)?.[0] ?? -1);
     await page.getByRole('button', { name: 'Kaydet' }).click();
     await page.waitForFunction((b) => Number(document.getElementById('n')?.textContent?.match(/\d+/)?.[0] ?? -1) === b + 1, before, { timeout: 10_000 }).catch(() => check(false, `K2 @${w.name}: the write did not land`));
+    const saved = (await page.locator('#n').textContent()) ?? '';
+    check(!/veri:/.test(saved), `K2 @${w.name}: the app's /__dc/data write failed: ${saved}`);
     await page.screenshot({ path: join(SHOTS, `guest-app-${w.name}.png`) });
     if (w.name === 'desktop') {
       const cookie = (await ctx.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
@@ -208,6 +226,7 @@ try {
         if (!closedSeen) await sleep(100);
       }
       check(closedSeen, 'K6: the link did not say "Bu paylaşım kapandı" within 1 s');
+      timings.k6ClosedPageMs = Date.now() - t0;
       await page.reload({ waitUntil: 'domcontentloaded' });
       check(await page.getByText('Bu paylaşım kapandı').first().isVisible(), 'K6: the guest page after close is not the closed page');
       await page.screenshot({ path: join(SHOTS, `guest-closed-${w.name}.png`) });
@@ -226,6 +245,8 @@ try {
     page.on('pageerror', (e) => errs.push(`crash: ${e.message.slice(0, 160)}`));
     const scene = [];
     page.on('response', async (r) => { if (r.url().includes('/__share/board')) scene.push(await r.text().catch(() => '')); });
+    const pictures = [];
+    page.on('response', (r) => { const u = new URL(r.url()); if (u.origin === brd.origin && u.pathname.startsWith('/__share/files')) pictures.push(r.status()); });
     // The viewer's own assets (fonts above all) must answer 200 from the share: a miss sends Excalidraw to its CDN fallback.
     page.on('response', (r) => { const u = new URL(r.url()); if (u.origin === brd.origin && u.pathname.startsWith('/excalidraw-assets/') && r.status() !== 200) errs.push(`asset ${r.status()} ${u.pathname}`); });
     page.on('requestfailed', (r) => { const u = new URL(r.url()); if (u.origin === brd.origin) errs.push(`request failed ${u.pathname}: ${r.failure()?.errorText ?? ''}`); });
@@ -233,19 +254,36 @@ try {
     await page.waitForTimeout(4_000);
     check(scene.some((s) => s.includes('Paywall testi')) && !scene.some((s) => s.includes('gizli-adres')), `K7 @${w.name}: the scene is missing the card title or leaks its url`);
     if (w.name === 'desktop') {
-      const t0 = Date.now();
-      dc('whiteboard', 'add', boardSlug, 'note', '--title', 'Funnel', '--text', 'Yeni not');
-      let seen = false;
-      while (Date.now() - t0 < 12_000 && !seen) { seen = scene.some((s) => s.includes('Yeni not')); if (!seen) await sleep(250); }
-      check(seen, 'K7: the owner edit did not reach the guest within 12 s');
-      step(`K7: owner edit reached the guest in ${Date.now() - t0} ms`);
+      // The edit runs WITHOUT blocking this loop (a sync spawn would hide when the guest got it), and
+      // the edit lands on disk somewhere between the CLI's start and its exit: arrival minus exit is
+      // the latency's floor, arrival minus start its ceiling. The ceiling must be within 5 s once the
+      // CLI's own start-up (npx tsx) is taken out, i.e. arrival minus exit within 5 s.
+      let arrivedAt = 0;
+      page.on('response', async (r) => { if (!arrivedAt && r.url().includes('/__share/board') && (await r.text().catch(() => '')).includes('Yeni not')) arrivedAt = Date.now(); });
+      const started = Date.now();
+      const code = await new Promise((done) => {
+        const p = spawn(TSX[0], [...TSX[1], 'whiteboard', 'add', boardSlug, 'note', '--title', 'Funnel', '--text', 'Yeni not'], { cwd: proj, env: baseEnv, stdio: 'ignore' });
+        p.on('exit', done);
+      });
+      const exited = Date.now();
+      check(code === 0, `K7: the owner edit failed (exit ${code})`);
+      while (Date.now() - exited < 15_000 && !arrivedAt) await sleep(100);
+      timings.k7OwnerEdit = { cliMs: exited - started, afterCliExitMs: arrivedAt ? arrivedAt - exited : null, afterCliStartMs: arrivedAt ? arrivedAt - started : null };
+      check(!!arrivedAt && arrivedAt - exited <= 5_000, `K7: the owner edit did not reach the guest within 5 s (${JSON.stringify(timings.k7OwnerEdit)})`);
+      step(`K7: owner edit reached the guest ${timings.k7OwnerEdit.afterCliExitMs} ms after the CLI exited (${timings.k7OwnerEdit.afterCliStartMs} ms after it started)`);
     }
+    await page.waitForTimeout(500);
+    const drawn = await page.evaluate(() => [...document.querySelectorAll('img, canvas')].length);
+    check(scene.some((s) => s.includes('"image"')) && pictures.includes(200), `K7 @${w.name}: the picture did not load (scene image: ${scene.some((s) => s.includes('"image"'))}, /__share/files answers ${JSON.stringify(pictures)})`);
     await page.screenshot({ path: join(SHOTS, `guest-board-${w.name}.png`) });
+    timings[`k7Pictures_${w.name}`] = { responses: pictures, elements: drawn };
     for (const e of errs) findings.push(`K7 console @${w.name}: ${e}`);
     if (w.name === 'desktop') {
+      const tc = Date.now();
       await fetch(`${local}/api/shares/${brd.id}/close`, { method: 'POST', headers: plain, body: '{}' });
-      const shown = await page.getByText('Bu paylaşım kapandı').first().waitFor({ timeout: 8_000 }).then(() => true, () => false);
-      check(shown, 'K7: the open viewer did not say "Bu paylaşım kapandı" within 8 s');
+      const shown = await page.getByText('Bu paylaşım kapandı').first().waitFor({ timeout: 5_000 }).then(() => true, () => false);
+      timings.k7ClosedFaceMs = Date.now() - tc;
+      check(shown, `K7: the open viewer did not say "Bu paylaşım kapandı" within 5 s (${timings.k7ClosedFaceMs} ms)`);
       await page.screenshot({ path: join(SHOTS, `guest-board-closed-${w.name}.png`) });
     }
     await ctx.close();
@@ -253,23 +291,46 @@ try {
 
   step('K6: cloudflared and the share dir go within 70 s of the close');
   const t1 = Date.now();
-  while (Date.now() - t1 < 75_000 && (cloudflareds().length || readdirSync(join(home, '.dreamcontext', 'shares'), { withFileTypes: true }).some((d) => d.isDirectory()))) await sleep(1_000);
+  const shareDirs = () => existsSync(join(home, '.dreamcontext', 'shares')) && readdirSync(join(home, '.dreamcontext', 'shares'), { withFileTypes: true }).some((d) => d.isDirectory());
+  while (Date.now() - t1 < 70_000 && (cloudflareds().length || shareDirs() || serverCaff().length)) await sleep(500);
+  timings.k6TeardownMs = Date.now() - t1;
   check(cloudflareds().length === 0, `K6: cloudflared still running ${Math.round((Date.now() - t1) / 1000)} s after the close`);
   const leftDirs = existsSync(join(home, '.dreamcontext', 'shares')) ? readdirSync(join(home, '.dreamcontext', 'shares'), { withFileTypes: true }).filter((d) => d.isDirectory()) : [];
   check(leftDirs.length === 0, `K6: share dirs left: ${leftDirs.map((d) => d.name).join(', ')}`);
-  const caffAfter = spawnSync('pgrep', ['-P', String(api.pid), 'caffeinate'], { encoding: 'utf-8' }).stdout.trim();
-  check(!caffAfter, 'K11: caffeinate still held after the last close');
+  check(serverCaff().length === 0, `K11: the server's caffeinate still held 70 s after the last close`);
 
   step('K12: shares list prints no secret');
   const third = await openAndReveal({ kind: 'board', vault: 'proj', slug: boardSlug }, 'board again');
   const listed = dc('shares', 'list');
   check(listed.ok && !/trycloudflare|\/k\//.test(listed.out) && (!third?.password || !listed.out.includes(third.password)), `shares list: ${listed.out.slice(-300)}`);
 
-  step('K10: quitting dreamcontext kills every cloudflared within 5 s');
-  check(cloudflareds().length > 0, 'K10: no cloudflared to kill (the third link did not start one)');
+  step('K12: dreamcontext shares close <id> closes one');
+  const closedByCli = dc('shares', 'close', third?.id ?? 'none');
+  check(closedByCli.ok, `K12: shares close failed: ${closedByCli.out.slice(-300)}`);
+  const afterCli = (await listShares()).find((x) => x.id === third?.id);
+  check(!afterCli || afterCli.state === 'closing', `K12: after shares close the row is ${JSON.stringify(afterCli)}`);
+  const thirdPage = await (await fetch(third.link, { headers: { accept: 'text/html' } })).text();
+  check(/Bu paylaşım kapandı/.test(thirdPage), 'K12: the link closed from the CLI does not say "Bu paylaşım kapandı"');
+
+  step('Owner 1: the app link without a password opens the app itself');
+  const open4 = await openAndReveal({ kind: 'app', vault: 'proj', slug: 'funnel' }, 'app without password');
+  check(!open4?.password, 'the app link without a password revealed a password');
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    await page.goto(open4.link, { waitUntil: 'domcontentloaded' });
+    const inApp = await page.getByText(/Kayıt: \d+/).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    check(inApp && !(await page.locator('input[type=password]').count()), 'the app link without a password did not open the app directly');
+    await page.screenshot({ path: join(SHOTS, 'guest-app-nopassword-phone.png') });
+    await ctx.close();
+  }
+
+  step('K10: quitting dreamcontext kills every cloudflared (one open, one in its grace) within 5 s');
+  check(cloudflareds().length >= 2, `K10: expected two cloudflared (open + grace), found ${cloudflareds().length}`);
   process.kill(-api.pid, 'SIGTERM');
   const t2 = Date.now();
   while (Date.now() - t2 < 5_000 && cloudflareds().length) await sleep(200);
+  timings.k10QuitMs = Date.now() - t2;
   check(cloudflareds().length === 0, 'K10: cloudflared survived the quit by 5 s');
 } catch (e) {
   findings.push(`crashed: ${e?.stack ?? e}`);
@@ -279,7 +340,7 @@ try {
   for (const pid of cloudflareds()) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
 }
 
-writeFileSync(join(SHOTS, 'report.json'), `${JSON.stringify({ findings }, null, 1)}\n`);
+writeFileSync(join(SHOTS, 'report.json'), `${JSON.stringify({ findings, timings }, null, 1)}\n`);
 for (const f of readdirSync(SHOTS).filter((n) => n.endsWith('.png'))) process.stdout.write(`screenshot: ${join(SHOTS, f)}\n`);
 for (const f of findings) process.stdout.write(`FINDING: ${f}\n`);
 process.stdout.write(`${findings.length === 0 ? 'CLEAN' : `${findings.length} finding(s)`}: read the screenshots yourself (${SHOTS})\n`);
