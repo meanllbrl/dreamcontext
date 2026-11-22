@@ -83,9 +83,15 @@ async function open(width, height, theme) {
   await markAnnouncementsSeen(context, app.base);
   const page = await context.newPage();
   const where = `${width}x${height} ${theme}`;
-  page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket/.test(m.text())) app.findings.push(`${where} console: ${m.text().slice(0, 200)}`); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket|^Failed to load resource/.test(m.text())) app.findings.push(`${where} console: ${m.text().slice(0, 200)}`); });
   page.on('pageerror', (e) => app.findings.push(`${where} crash: ${String(e.message).slice(0, 200)}`));
-  page.on('response', (r) => { if (r.status() >= 400) console.log(`HTTP ${r.status()} ${r.request().method()} ${r.url().replace(app.base, '')}`); });
+  page.on('response', (r) => {
+    if (r.status() < 400) return;
+    const u = r.url().replace(app.base, '');
+    console.log(`HTTP ${r.status()} ${r.request().method()} ${u}`);
+    // The one failed load allowed: the owner-key read a headless scratch window never has.
+    if (!(r.status() === 403 && /^\/api\/super\/first-read/.test(u))) app.findings.push(`${where} HTTP ${r.status()} ${r.request().method()} ${u}`);
+  });
   await page.goto(`${app.base}/?vault=${BIG}`, { waitUntil: 'domcontentloaded' });
   await page.getByTestId('ns-titlebar').waitFor({ timeout: 60_000 });
   await page.waitForTimeout(1500);
@@ -426,8 +432,9 @@ try {
       return route.fulfill({ response: res, json: v === 'orbit' ? { ...body, superAsking: true } : { ...body, superOn: true, superWorking: 1 } });
     });
     const page = await context.newPage();
-    page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket/.test(m.text())) app.findings.push(`L5 console: ${m.text().slice(0, 200)}`); });
+    page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket|^Failed to load resource/.test(m.text())) app.findings.push(`L5 console: ${m.text().slice(0, 200)}`); });
     page.on('pageerror', (e) => app.findings.push(`L5 crash: ${String(e.message).slice(0, 200)}`));
+    page.on('response', (r) => { const u = r.url().replace(app.base, ''); if (r.status() >= 400 && !(r.status() === 403 && /^\/api\/super\/first-read/.test(u))) app.findings.push(`L5 HTTP ${r.status()} ${u}`); });
     await page.goto(`${app.base}/?vault=${BIG}`, { waitUntil: 'domcontentloaded' });
     await page.getByTestId('ns-titlebar').waitFor({ timeout: 60_000 });
     await page.waitForTimeout(1500);
