@@ -108,19 +108,15 @@ const MERGE_WORD_RE = /(?<![\w-])merge(?![\w-])/;
 const MERGE_VERB_RE = /(?<![a-z0-9])(?:birlestir\w*|merge\w*|mergele\w*)(?![a-z0-9])/;
 /** A merge said NOT to happen (folded): "do not merge", "merge etme", "birleştirme", "mergeleme". */
 const MERGE_NEG_RE = /(?<![a-z0-9])(?:(?:do not|don't|dont|never|no)\s+merge\w*|merge\s+(?:etme|yapma)\w*|mergeleme\w*|birlestirme(?:yin|yiniz)?)(?![a-z0-9])/g;
-/** A rule clause that forbids (folded). */
-const RULE_NEG_RE = /(?<![a-z0-9])(?:asla|hicbir zaman|never|don't|dont|do not|etme|etmeyin|yapma|atma|gonderme|dokunma)(?![a-z0-9])/;
-/** A rule's clauses: "staging'e push et, main'e asla" is an allowing clause and a forbidding one. */
-const RULE_CLAUSE_SPLIT_RE = /[,.;!\n]|\s(?:ama|but|fakat|ancak|and|ve|then|sonra)\s/;
 /** Production or live as a token, a hyphenated name too (`acme-prod`, `--prod`), folded. */
 const PROD_TOKEN_RE = /(?<![a-z0-9])(?:production|prod|live|canli\w*)(?![a-z0-9])/;
 /** The default branch in any spelling a push destination takes. */
 const DEFAULT_BRANCH_RE = /^(?:refs\/heads\/|refs\/remotes\/[^/]+\/|origin\/)?(?:main|master)$/i;
+/** Shell substitution, which runs a command inside any argument, even a double-quoted one. */
+const SUBST_RE = /[`$]|<\(|>\(/;
 
-// ─── Reading a step as commands (S2: the step's own targets decide, never a word in it) ──────────
+// ─── Reading a step as commands, for the default-branch and local-merge checks ──────────────────
 
-/** Quoted text is one opaque word: a PR title that says "push", "live" or "main" is never a target. */
-const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"|`[^`]*`/g;
 /** Simple commands: joined by `&&`, `||`, `;`, `|`, `&`, a line, parentheses. */
 const CMD_SPLIT_RE = /&&|\|\||[;|&\n()]/;
 /** Prose pieces inside one command: ", ", ", then", " and ", " ve ", " sonra ". */
@@ -132,9 +128,10 @@ const GIT_GLOBAL_VALUE: readonly string[] = ['-C', '-c', '--git-dir', '--work-tr
 /** `git push` options that take a value. */
 const PUSH_VALUE_FLAGS = new Set(['-o', '--push-option', '--repo', '--exec', '--receive-pack']);
 
-/** Every command piece of a step, as words, quoted text replaced by one opaque word. */
+/** Every command piece of a step, as words. Quotes are removed, as the shell removes them, so
+ *  `git push origin "main"` reads as the push onto main it is. */
 function pieces(step: string): string[][] {
-  return step.replace(QUOTED_RE, ' __q__ ').split(CMD_SPLIT_RE)
+  return step.replace(/["']/g, '').split(CMD_SPLIT_RE)
     .flatMap((seg) => seg.split(PROSE_SPLIT_RE))
     .map((seg) => seg.trim().split(/\s+/).filter(Boolean))
     .filter((t) => t.length > 0);
@@ -183,8 +180,8 @@ const refDest = (r: string): string => { const x = r.replace(/^\+/, ''); const i
 /**
  * S2: does the step push onto (or delete, mirror, push all onto) the default branch? The push's own
  * refspecs decide, whatever git options come first; another command in the line never counts
- * (`gh pr create --base main` is no push). A piece that says "push" in prose without a git command
- * counts when it names main or master in any spelling.
+ * (`gh pr create --base main` is no push). A piece that says "push" without a git command (prose,
+ * `sh -c git push …`) counts when it names main or master in any spelling.
  */
 export function pushesDefault(step: string): boolean {
   for (const t of pieces(step)) {
@@ -196,78 +193,69 @@ export function pushesDefault(step: string): boolean {
     }
     if (gitSub(t)) continue;
     const c = t.join(' ').toLowerCase();
-    if (/(?<![\w-])push\w*/.test(c) && !/\bgh\s+pr\b/.test(c) && /(?:^|[\s:'"(])(?:refs\/heads\/|origin\/)?(?:main|master)(?![\w/-])/.test(c)) return true;
+    if (/(?<![\w-])push\w*/.test(c) && !/\bgh\s+pr\b/.test(c) && /(?:^|[\s:(])(?:refs\/heads\/|origin\/)?(?:main|master)(?![\w/-])/.test(c)) return true;
   }
   return false;
 }
 
-/** Never in any grant: a force, --admin, --auto, a +refspec (read off the unquoted step), a local merge, a push onto the default branch. */
+/** Never in any grant: shell substitution, a force, --admin, --auto, a +refspec, a local merge, a push onto the default branch. */
 function neverStep(step: string): boolean {
-  if (NEVER_RE.test(fold(step.replace(QUOTED_RE, ' __q__ ')))) return true;
+  if (SUBST_RE.test(step)) return true;
+  if (NEVER_RE.test(fold(step.replace(/["']/g, '')))) return true;
   if (pieces(step).some((t) => gitSub(t)?.sub === 'merge')) return true;
   return pushesDefault(step);
 }
 
-/** A target value naming staging: the ops card's staging host, or a `staging` token (`acme-staging`). */
-const namesStagingValue = (v: string, host: string | null): boolean => {
-  const x = v.toLowerCase();
-  return (!!host && (x === host || x.includes(host))) || x.split(/[^a-z0-9]+/).includes('staging');
+// ─── A rule grant: exact shapes only (owner, 22 Nov: "sabit kalıpla") ───────────────────────────
+
+/** A name a shape may hold: letters, digits, `.`, `_`, `/`, `-`, never starting with `-`. */
+const NAME = String.raw`[A-Za-z0-9._][A-Za-z0-9._/-]*`;
+/** The commands a standing rule may grant, whole (plan iyilesme-360 D5, r3 owner pick): a staging
+ *  push, a PR into staging, a deploy to a staging project or the ops card's staging site, and a
+ *  build before it. No quotes, no substitution, no other flag: anything else is his message. */
+const RULE_PUSH_RE = new RegExp(String.raw`^git push (?:-u |--set-upstream )?([A-Za-z][A-Za-z0-9_-]*) (${NAME}):(?:refs/heads/)?staging$`);
+const RULE_PR_RE = new RegExp(String.raw`^gh pr create --base staging(?: --fill| --draft| --head ${NAME})*$`);
+const RULE_DEPLOY_RE = /^(?:npx )?firebase deploy(?: --only [A-Za-z0-9,:_-]+)? (?:-P|--project) ([A-Za-z0-9-]+)(?: --only [A-Za-z0-9,:_-]+)?$/;
+const RULE_CHANNEL_RE = /^(?:npx )?firebase hosting:channel:deploy [A-Za-z0-9_-]+ (?:--site|-s) ([A-Za-z0-9-]+)$/;
+const RULE_NEUTRAL_RE = new RegExp(String.raw`^(?:(?:npm|pnpm|yarn) (?:ci|install|run (?:build|test|lint|typecheck)(?::[A-Za-z0-9_-]+)?)|cd ${NAME})$`);
+
+type RuleKind = 'push' | 'pr' | 'deploy';
+
+/** One command of a rule step: its kind, 'neutral', or null (not an allowed shape). */
+function rulePiece(cmd: string, host: string | null): RuleKind | 'neutral' | null {
+  if (RULE_PUSH_RE.test(cmd)) return 'push';
+  if (RULE_PR_RE.test(cmd)) return 'pr';
+  const d = RULE_DEPLOY_RE.exec(cmd) ?? RULE_CHANNEL_RE.exec(cmd);
+  if (d) {
+    const target = d[1].toLowerCase();
+    return (host && target === host) || target.split('-').includes('staging') ? 'deploy' : null;
+  }
+  return RULE_NEUTRAL_RE.test(cmd) ? 'neutral' : null;
+}
+
+/** The words of each kind in his rule (folded). */
+const KIND_WORDS: Record<RuleKind, RegExp> = {
+  push: /(?<![a-z0-9])(?:push\w*|gonder\w*)/,
+  pr: /(?<![a-z0-9])(?:pr|pull request)(?![a-z0-9])/,
+  deploy: /(?<![a-z0-9])(?:deploy\w*|yayinla\w*)/,
 };
-
-const GH_PR_VALUE = new Set(['--base', '-B', '--head', '-H', '--title', '-t', '--body', '-b', '--body-file', '-F', '--label', '-l', '--reviewer', '-r', '--assignee', '-a', '--milestone', '-m', '--project', '-p', '--repo', '-R']);
-const GH_PR_BOOL = new Set(['--fill', '--fill-first', '--fill-verbose', '--draft', '-d', '--no-maintainer-edit', '--dry-run']);
-const DEPLOY_TARGET = new Set(['--project', '-P', '--site', '-s', '--alias', '-a', '--target', '--env', '--environment', '-e']);
-const NEUTRAL_SCRIPT_RE = /^(?:build|test|lint|typecheck|check)(?::[\w-]+)?$/;
-
-type PieceKind = 'outward' | 'neutral' | null;
+/** A clause that forbids (folded): a "never" word, or a kind verb's negative suffix ("pushlama", "yayınlama", "gönderme"). */
+const RULE_NEG_RE = /(?<![a-z0-9])(?:asla|hicbir zaman|never|don't|dont|do not|etme(?:yin|yiniz|z)?|yapma(?:yin|yiniz|z)?|atma|dokunma)(?![a-z0-9])|(?:push|gonder|yayinla|deploy)\w*?m[ae](?:yin|yiniz|z)?(?![a-z0-9])/;
+/** Another target a forbidding clause may name instead of staging ("main'e asla push etme"). */
+const OTHER_TARGET_RE = /(?<![a-z0-9])(?:main|master|canli\w*|prod\w*|production|live)/;
+/** A rule's clauses. "ve"/"and" between two nouns ("staging ve main'e asla") is no boundary. */
+const RULE_CLAUSE_SPLIT_RE = /[,.;!\n]|\s(?:ama|but|fakat|ancak|sonra|then|yalniz|sadece|only)\s/;
 
 /**
- * One piece of a rule-granted step, by allowlist: a staging push, a PR into staging, a deploy whose
- * every target flag names staging, or a neutral build/test/cd. Anything else (`gh api`, `curl`, a
- * push the parser cannot read, a deploy with no staging target) is null and refuses the step.
+ * May his rule's words grant this kind? One clause must name the kind and not forbid it; a clause
+ * that forbids the kind cancels it unless it names another target and not staging ("main'e asla
+ * push etme" leaves "staging'e push edebilirsin" standing).
  */
-function stagingPiece(t: readonly string[], host: string | null): PieceKind {
-  const b = binOf(t);
-  if (!b) return null;
-  if (b.bin === 'git') {
-    const p = gitPushOf(t);
-    if (!p) return null;
-    if (p.flags.some((f) => f !== '-u' && f !== '--set-upstream') || !p.remote || p.refspecs.length !== 1) return null;
-    const r = p.refspecs[0];
-    if (r.startsWith(':') || r.startsWith('+') || refDest(r).replace(/^refs\/heads\//, '').toLowerCase() !== 'staging') return null;
-    return 'outward';
-  }
-  if (b.bin === 'gh') {
-    if (b.rest[0] !== 'pr' || b.rest[1] !== 'create') return null;
-    const bases: string[] = [];
-    const a = b.rest.slice(2);
-    for (let i = 0; i < a.length; i++) {
-      const [flag, inline] = a[i].includes('=') ? [a[i].slice(0, a[i].indexOf('=')), a[i].slice(a[i].indexOf('=') + 1)] : [a[i], undefined];
-      if (GH_PR_BOOL.has(flag) && inline === undefined) continue;
-      if (!GH_PR_VALUE.has(flag)) return null;
-      const v = inline ?? a[++i];
-      if (v === undefined) return null;
-      if (flag === '--base' || flag === '-B') bases.push(v);
-    }
-    return bases.length > 0 && bases.every((v) => v.toLowerCase() === 'staging') ? 'outward' : null;
-  }
-  if (b.rest.some((w) => w.toLowerCase() === 'deploy' || w.toLowerCase().endsWith(':deploy'))) {
-    const targets: string[] = [];
-    for (let i = 0; i < b.rest.length; i++) {
-      const w = b.rest[i];
-      const [flag, inline] = w.includes('=') ? [w.slice(0, w.indexOf('=')), w.slice(w.indexOf('=') + 1)] : [w, undefined];
-      if (DEPLOY_TARGET.has(flag)) { const v = inline ?? b.rest[++i]; if (v === undefined) return null; targets.push(v); }
-    }
-    return targets.length > 0 && targets.every((v) => namesStagingValue(v, host)) ? 'outward' : null;
-  }
-  if (b.bin === 'cd' && b.rest.length === 1) return 'neutral';
-  if (['npm', 'pnpm', 'yarn'].includes(b.bin)) {
-    const [x, y, ...more] = b.rest;
-    if (['ci', 'install', 'i'].includes(x ?? '') && y === undefined) return 'neutral';
-    if (x === 'run' && y && NEUTRAL_SCRIPT_RE.test(y) && more.length === 0) return 'neutral';
-    if (x && NEUTRAL_SCRIPT_RE.test(x) && y === undefined) return 'neutral';
-  }
-  return null;
+function ruleAllowsKind(words: string, kind: RuleKind): boolean {
+  const cs = words.split(RULE_CLAUSE_SPLIT_RE);
+  const names = (c: string) => KIND_WORDS[kind].test(c);
+  const cancels = cs.some((c) => names(c) && RULE_NEG_RE.test(c) && (/staging/.test(c) || !OTHER_TARGET_RE.test(c)));
+  return !cancels && cs.some((c) => names(c) && !RULE_NEG_RE.test(c));
 }
 
 /** His words with every merge said not to happen taken out. */
@@ -280,13 +268,14 @@ export function ruleCovers(step: string, ruleWords: string, stagingHost: string 
   const out = (why: string): GrantVerdict => ({ ok: false, error: 'outward_out_of_scope', message: `a standing rule allows only a staging push, PR or deploy: ${why}; anything else is his word in a message, or \`super ask\` him` });
   const rw = fold(ruleWords);
   if (!RULE_KIND_RE.test(rw)) return out('this rule\'s words name no push, PR, deploy or staging');
-  // One clause must allow: a clause that forbids something else ("main'e asla") never cancels it.
-  if (!rw.split(RULE_CLAUSE_SPLIT_RE).some((c) => RULE_KIND_RE.test(c) && !RULE_NEG_RE.test(c))) return out('this rule\'s words forbid, they do not allow');
-  const f = fold(step.replace(QUOTED_RE, ' __q__ '));
-  if (OUT_OF_SCOPE_RE.test(f) || PROD_TOKEN_RE.test(f) || neverStep(step)) return out('the step names production, live, a release, a publish, a merge, a force or the default branch');
+  const f = fold(step);
+  if (OUT_OF_SCOPE_RE.test(f) || PROD_TOKEN_RE.test(f) || neverStep(step)) return out('the step names production, live, a release, a publish, a merge, a force, the default branch or a shell substitution');
   const host = stagingHost ? stagingHost.toLowerCase() : null;
-  const kinds = pieces(step).map((t) => stagingPiece(t, host));
-  if (kinds.includes(null) || !kinds.includes('outward')) return out('every command must be a staging push (`git push <remote> <branch>:staging`), a PR `--base staging`, a deploy whose target flag names staging, or a build/test');
+  const kinds = step.trim().split(/ && /).map((c) => rulePiece(c.trim(), host));
+  const used = kinds.filter((k): k is RuleKind => k !== 'neutral' && k !== null);
+  if (kinds.includes(null) || used.length === 0) return out('a rule grants only these exact commands, joined by ` && `: `git push [-u] <remote> <branch>:staging`, `gh pr create --base staging [--fill] [--draft]`, `firebase deploy [--only <x>] -P <staging project>`, a build');
+  const forbidden = [...new Set(used)].find((k) => !ruleAllowsKind(rw, k));
+  if (forbidden) return out(`this rule's words do not allow a ${forbidden === 'pr' ? 'PR' : forbidden} (or forbid it)`);
   return { ok: true };
 }
 

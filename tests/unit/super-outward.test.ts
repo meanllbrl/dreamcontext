@@ -222,7 +222,7 @@ describe('the lines the child is born with', () => {
 });
 
 describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
-  const RULE = 'staging\'e kendin push et ve deploy et';
+  const RULE = 'staging\'e kendin push et, PR aç ve deploy et';
   it('a staging push, PR into staging or deploy to the staging host is covered', () => {
     expect(ruleCovers('git push origin feature/x:staging', RULE, null).ok).toBe(true);
     expect(ruleCovers('gh pr create --base staging --fill', RULE, null).ok).toBe(true);
@@ -258,18 +258,45 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
       'gh pr create --base staging --base main', 'git -C ../wt merge staging']) {
       expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
     }
-    for (const step of ['git -C ../wt push -u origin super/x:staging', 'gh pr create --base staging --title "live chat fix" --fill',
-      'npx firebase deploy --only hosting -P acme-staging', 'cd ../wt && git push origin HEAD:refs/heads/staging']) {
+    for (const step of ['npx firebase deploy --only hosting -P acme-staging', 'cd ../wt && git push origin HEAD:refs/heads/staging',
+      'git push -u main super/x:staging', 'gh pr create --base staging --draft --fill']) {
       expect(ruleCovers(step, RULE, null).ok, step).toBe(true);
+    }
+    // r3 (owner: exact shapes only): git options, quotes, a title, substitution, a shell or any program "deploy" never pass.
+    for (const step of ['git -C ../wt push -u origin super/x:staging', 'gh pr create --base staging --title "live chat fix" --fill',
+      'sh -c "git push origin HEAD:main" deploy -P staging', 'bash -c "gh pr merge 41 --admin --squash" deploy --project acme-staging',
+      'cd "$(gh pr merge 41 --squash --admin)" && git push -u origin super/x:staging', 'cd `git push origin HEAD:main` && git push -u origin super/x:staging',
+      'gh pr create --base staging --title "$(gh pr merge 41 --squash)" --fill', 'firebase deploy -P acme-staging --only "$(git push origin HEAD:main)"',
+      'npm run deploy -- --env staging', 'rm -rf build deploy -P staging', 'git -c core.hooksPath=/tmp/h push origin super/x:staging',
+      'git push https://example.invalid/r.git super/x:staging', 'git add -A && git push origin x:staging']) {
+      expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
     }
     expect(messageCovers('git -C ../wt push origin HEAD:refs/heads/main', 'push it').ok).toBe(false);
     expect(messageCovers('git -C ../wt merge feature', 'push it').ok).toBe(false);
   });
   // r2 edge-cases-2: a rule that states its own limit still allows what it allows.
   it('a rule that allows staging and forbids something else still grants the staging step', () => {
-    for (const words of ["staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", 'staging serbest, canlıya dokunma']) {
+    for (const words of ["staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", "staging'e push serbest, canlıya dokunma",
+      "staging'e push etmeden önce testleri koş"]) {
       expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(true);
     }
+  });
+  // r3 edge-cases-2: the allowing clause names the step's own kind; a clause forbidding that kind for staging refuses it.
+  it('a rule that forbids the step\'s own kind for staging, or never names it, grants no such step', () => {
+    for (const words of ["PR açabilirsin ama staging'e push etme", "staging'e push etme, sadece PR aç", "staging ve main'e asla push etme",
+      "staging'e ve canlıya push etme", "staging'e pushlama", "PR açabilirsin"]) {
+      expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(false);
+    }
+    expect(ruleCovers('gh pr create --base staging --fill', "PR açabilirsin ama staging'e push etme", null).ok).toBe(true);
+    expect(ruleCovers('npx firebase deploy -P acme-staging', "staging'i yayınlama", null).ok).toBe(false);
+  });
+  // r3 edge-cases-1: quotes are removed before the message path reads a push, as the shell removes them.
+  it('a quoted main, refspec, force or +refspec is refused on the message path; substitution too', () => {
+    for (const step of ['git push origin "main"', "git push origin 'HEAD:refs/heads/main'", 'git push origin super/x "--force"', 'git push origin "+super/x:feature"',
+      'cd "$(git push --force origin HEAD:main)" && git push -u origin super/x', 'git push origin $(echo main)']) {
+      expect(messageCovers(step, 'pushla ve PR aç').ok, step).toBe(false);
+    }
+    expect(messageCovers('git push -u origin super/x && gh pr create --base main --title "push to main fix"', 'pushla ve PR aç').ok).toBe(true);
   });
   it('a rule that forbids grants nothing', () => {
     expect(ruleCovers('git push origin x:staging', "staging'e asla push etme", null).ok).toBe(false);
