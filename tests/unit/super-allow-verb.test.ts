@@ -257,7 +257,9 @@ describe('no window answers: ONE server fallback for allow, answer and send (fie
     answerWith = { ok: false, error: 'no_window' };
     const r = await answer(token(vaultA, 'sess-a', 'super'), { choices: ['Made up'] });
     p.off();
-    expect(r.status).toBe(409);
+    // Refused by name before any window or fallback, never read as `no_window` (field 2026-11-22).
+    expect(r.status).toBe(400);
+    expect(r.json.error).toBe('unknown_choice');
     expect(p.written).toEqual([]);
   });
 
@@ -272,6 +274,27 @@ describe('no window answers: ONE server fallback for allow, answer and send (fie
     expect(r.json.result).toMatchObject({ child: CHILD, delivered: 'sent', via: 'server' });
     expect(p.turns).toEqual(['Read the brief']);
     expect(typeof frames.find((f) => f.frame.verb === 'send')?.frame.args.deadline).toBe('number');
+  });
+
+  it('super send behind an open question, then super answer: queued, and the question still answers (field 2026-11-22)', async () => {
+    const h = askQuestion();
+    // The real crew handle writes the turn through the chat, which the registry hears as userSent.
+    const off = registerCrewHandle(CHILD, {
+      sendServerTurn: (text) => { h.userSent(text, { server: true }); return true; },
+      answerRequest: (requestId, respond) => {
+        const r = requestId === 'q-1' ? respond({ toolName: 'AskUserQuestion', input: { questions: [QUESTION] } }) : null;
+        if (r) h.answered(requestId);
+        return !!r;
+      },
+    });
+    answerWith = { ok: false, error: 'no_window' };
+    const s = res();
+    await handleSuperVerb(req({ headers: H(token(vaultA, 'sess-a', 'super')), body: { child: CHILD, text: 'Finish the plan' } }), s, { verb: 'send' });
+    expect(s.json.result).toMatchObject({ delivered: 'queued', via: 'server' });
+    const r = await answer(token(vaultA, 'sess-a', 'super'), { choices: ['ISO'] });
+    off();
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.json.result).toMatchObject({ answered: true, via: 'server' });
   });
 });
 

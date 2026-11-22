@@ -106,8 +106,8 @@ import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWh
 import { noteDismissed } from '../../lib/super/proactive.js';
 import { RECORD_FULL_MESSAGE, cardCounts, cardOutcome, makeRoom, noCardWarnings, roomPossible } from '../../lib/super/room.js';
 import { childIsLive, isLiveChatCard } from '../../lib/super/live.js';
-import { activityOf, crewHandle, dropOwnerWait, getChat, onChatChange, pendingRequest } from '../../lib/assistant/chat-registry.js';
-import { permissionResponse, questionResponse, type OpenRequest, type RequestResponse } from '../../lib/super/request-answer.js';
+import { activityOf, crewHandle, dropOwnerWait, getChat, onChatChange, pendingRequest, pendingRequestIds } from '../../lib/assistant/chat-registry.js';
+import { permissionResponse, questionResponse, superAnswerPicks, type OpenRequest, type RequestResponse } from '../../lib/super/request-answer.js';
 import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
@@ -2605,6 +2605,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       : [];
     const text = typeof b.text === 'string' && b.text.trim() ? b.text.slice(0, MAX_OWNER_TEXT) : undefined;
     if (!choices.length && !text) { refuse(res, 400, 'invalid_args', 'give an option label or --text'); return; }
+    // A label the card does not offer is refused HERE, by name, before any window or the server's
+    // fallback (field 2026-11-22: "Devam" for "Devam (önerilen)" came back as `no_window`, so the
+    // Super read a delivery failure and went on to `super send`).
+    const picks = pq.questions ? superAnswerPicks(pq.questions, choices, text) : null;
+    if (picks && !picks.ok) {
+      const labels = pq.questions!.map((q, i) => `${pq.questions!.length > 1 ? `question ${i + 1}: ` : ''}${q.options.map((o) => `"${o.label}"`).join(' | ')}`).join('; ');
+      // The labels are the child's own text: fenced (D10), cut BEFORE the fence so it stays whole.
+      refuse(res, 400, picks.error, `that answer does not fit the card; give the option label exactly as it reads, or --text for words of your own. The card's options: ${wrapUntrusted(vaultNameOf(c.who.contextRoot), labels.slice(0, 1500))}`);
+      return;
+    }
     const r = await sendSuperCommand(c.token, 'answer', { child, requestId, choices, ...(text ? { text } : {}), deadline: windowDeadline() });
     // No window answered: the server answers the card itself, built as the window builds it.
     const byServer = serverDelivers(r, () => answerByServer(child, requestId, (req) => questionResponse(req, choices, text)));
@@ -2716,10 +2726,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const byServer = serverDelivers(r, () => isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text));
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
-    // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent'.
-    const how = r.ok ? (r.result as { delivered?: unknown } | undefined)?.delivered : 'sent';
+    // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent', or
+    // 'queued' when the child holds a request open: the CLI reads it only after that request.
+    const how = r.ok ? (r.result as { delivered?: unknown } | undefined)?.delivered
+      : pendingRequestIds(getChat(child)).length ? 'queued' : 'sent';
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
-    if (how === 'queued') await addToOutbox(superKey(c.who.contextRoot, c.superId), child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
+    // The server's own turn is already in the CLI's stdin: kept nowhere else, or it goes in twice.
+    if (how === 'queued' && r.ok) await addToOutbox(superKey(c.who.contextRoot, c.superId), child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
     // The job moved on: the pictures shown for it before now go to Others (tidy.ts).
     const sentAt = Date.now();
     // The message already went in: a stamp that could not be written must not refuse (and resend) it.
