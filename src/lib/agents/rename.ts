@@ -13,6 +13,7 @@ import { brainPrefix, createdLocally, moveFileAcross, recordCreatedLocally, rena
 import { currentLogin, ownedBy } from './owner.js';
 import { isSafeAutomationSlug, parseManifestFrontmatter } from './slot.js';
 import { isGlobalAgentHere } from './scope.js';
+import { renameMemberWork } from './work-trace.js';
 import { AGENTS_DIR } from './types.js';
 import { realPath } from '../real-path.js';
 
@@ -154,6 +155,8 @@ export function renameAgentLocal(contextRoot: string, from: string, to: string, 
   const projectRoot = gitCwd;
   renameApprovals(projectRoot, from, to, kind === 'agent' ? 'agent' : 'automation', opts.home);
   renameAgentStage(projectRoot, from, to, opts.home);
+  // Its past work (uye-gecmis-is C7): a renamed project member keeps its traces.
+  renameMemberWork(from, to, projectRoot, opts.home);
   renameOrForgetAssignmentsSafe(projectRoot, from, to, opts.home);
   renameOrForgetThreadLedger(contextRoot, from, to, opts.home);
   // The created-here sets, the ids watched for replacement and the adopted pattern follow too, so

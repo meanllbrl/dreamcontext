@@ -19,6 +19,10 @@ import {
   listAgentSessions, markSessionHadTurns, pruneAgentSessions, type AgentSessionEntry,
 } from '../local-store.js';
 import { newTalkLookup, readTalkRawLower, readTalkRows, TALK_MAX_ROWS, transcriptMtime } from './talks.js';
+import { request as httpRequest } from 'node:http';
+import { projectKey } from '../local-store.js';
+import { listTraceFiles, readTraceFile, workRoot, type WorkTrace } from './work-trace.js';
+import { localIndex, WORK_SELECT_PATH, workServerPort } from './work-index.js';
 
 /**
  * An agent's HISTORY: every run of its routines and every talk the owner had with it, as one list
@@ -577,4 +581,71 @@ export function searchAgentHistory(
     }
   }
   return { hits, nextBefore: null };
+}
+
+
+// ─── Past work (plan uye-gecmis-is D12) ─────────────────────────────────
+
+export interface TraceHit { id: string; line: string; at: number; projectKey: string }
+
+/**
+ * A member's past-work traces matching `query`, best first: through the running app's warm index,
+ * else by reading the files here (slower, never wrong). `all`: every project for a global member.
+ */
+export async function searchPastWork(
+  contextRoot: string,
+  slug: string,
+  query: string,
+  opts: { all?: boolean; home?: string; viaServer?: boolean } = {},
+): Promise<TraceHit[]> {
+  const projectRoot = dirname(contextRoot);
+  if (!query.trim()) return [];
+  if (opts.viaServer !== false) {
+    const remote = await searchViaServer(slug, projectRoot, query, opts.all === true, workServerPort(process.env, opts.home ?? homedir()));
+    if (remote) return remote;
+  }
+  const local = localIndex(slug, projectRoot, opts.home ?? homedir());
+  if (!local) return [];
+  return local.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: local.scope }, opts.all === true);
+}
+
+function searchViaServer(member: string, root: string, query: string, all: boolean, port: number): Promise<TraceHit[] | null> {
+  const payload = JSON.stringify({ member, root, query, audience: 'owner', mode: 'search', all });
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v: TraceHit[] | null) => { if (settled) return; settled = true; clearTimeout(timer); resolve(v); };
+    const timer = setTimeout(() => { req.destroy(); done(null); }, 10_000);
+    const req = httpRequest({ host: '127.0.0.1', port, path: WORK_SELECT_PATH, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } }, (res) => {
+      let data = '';
+      res.setEncoding('utf-8');
+      res.on('data', (c: string) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return done(null);
+        try {
+          const p = JSON.parse(data) as { hits?: unknown };
+          done(Array.isArray(p.hits) ? (p.hits as TraceHit[]).filter((h) => typeof h?.id === 'string' && typeof h?.line === 'string') : null);
+        } catch { done(null); }
+      });
+      res.on('error', () => done(null));
+    });
+    req.on('error', () => done(null));
+    req.end(payload);
+  });
+}
+
+/** One whole trace by its id or its `w_<id8>` handle, among this project's members (and global ones). */
+export function findTrace(contextRoot: string, handle: string, members: readonly string[], home?: string): WorkTrace | null {
+  const want = handle.replace(/^w_/, '').toLowerCase();
+  if (!/^[0-9a-f]{8,32}$/.test(want)) return null;
+  const projectRoot = dirname(contextRoot);
+  for (const slug of members) {
+    const root = workRoot(slug, projectRoot, home ?? homedir());
+    if (!root) continue;
+    for (const f of listTraceFiles(root)) {
+      if (!f.name.startsWith(want)) continue;
+      const t = readTraceFile(root, join(root, f.month, f.name));
+      if (t) return t;
+    }
+  }
+  return null;
 }

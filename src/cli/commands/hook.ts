@@ -17,7 +17,7 @@ import {
   readFileSync, existsSync, statSync, lstatSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
 } from 'node:fs';
 import { format as formatArgs } from 'node:util';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
@@ -27,7 +27,7 @@ import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../
 import {
   enterHookProject, firstActInSession, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
-  markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn,
+  markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn, markSessionWork, sessionWork,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
 } from '../../lib/hook-delivery.js';
 import { judgedRecall, type JudgedHit, type JudgedRecall } from '../../lib/recall-judged.js';
@@ -83,6 +83,8 @@ import {
   actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, newSinceLines, promptSurface, stampSession,
 } from '../../lib/rules-delivery.js';
 import { sessionMember } from '../../lib/agents/session-member.js';
+import { hookQueryOf, workRoot } from '../../lib/agents/work-trace.js';
+import { renderPastWork, selectViaServer } from '../../lib/agents/work-index.js';
 import { HOOK_OUTPUT_MAX_CHARS } from '../../lib/snapshot-budget.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
@@ -943,6 +945,45 @@ export const RECALL_VIA_SERVER_TIMEOUT_MS = 1500;
  * miss (no server, a server for another vault, an older server without the route, a timeout,
  * a malformed answer): the caller then recalls in-process. Never throws.
  */
+/**
+ * A member chat turn's past-work block (D8, D10), or null: only in a member's CHAT session (its
+ * Chat tab or its own Super stage), never in a run, a crew child or an app's chat; only when the
+ * prompt has something to search on (`hookQueryOf`) and the member has a work folder at all; asked
+ * of the running app's warm index. No server, a late answer or an error is no block (G3).
+ */
+export async function pastWorkForTurn(
+  root: string,
+  rawPrompt: string,
+  input: Record<string, unknown>,
+  deps: { env?: NodeJS.ProcessEnv; home?: string; select?: typeof selectViaServer } = {},
+): Promise<{ text: string; ids: string[]; sessionId: string } | null> {
+  const env = deps.env ?? process.env;
+  const home = deps.home ?? homedir();
+  const chat = (env.DREAMCONTEXT_AGENT_CHAT ?? '').trim();
+  if (!chat || chat.startsWith('app-')) return null;
+  if (env.DREAMCONTEXT_AGENT_SELF !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined
+    || env.DREAMCONTEXT_AUTOMATION_SLUG || env.DREAMCONTEXT_MEMBER_CREW || env.DREAMCONTEXT_RUN_MEMBER) return null;
+  if (isAutomationFirePrompt(rawPrompt)) return null;
+  const member = sessionMember(env, root, home);
+  if (!member || member.slug !== chat) return null;
+  const query = hookQueryOf(rawPrompt);
+  if (!query) return null;
+  const projectRoot = dirname(root);
+  const workDir = workRoot(member.slug, projectRoot, home, member.scope);
+  if (!workDir || !existsSync(workDir)) return null;
+  const sid = typeof input.session_id === 'string' ? input.session_id : '';
+  const seen = sessionWork(sid, home);
+  let vault: string | null = null;
+  try { vault = listVaults(home).find((v) => resolve(v.path) === resolve(projectRoot))?.name ?? null; } catch { vault = null; }
+  const sel = await (deps.select ?? selectViaServer)(
+    { member: member.slug, root: projectRoot, query, audience: 'owner', exclude: { ids: seen.ids, conversation: sid || null, since: seen.since ?? 0 } },
+    { port: resolveRecallServerPort(env, home), vault },
+  );
+  if (!sel || sel.lines.length === 0) return null;
+  const text = renderPastWork(sel.lines, sel.more, member.slug, randomBytes(3).toString('hex'), query);
+  return text ? { text: `\n${text}`, ids: sel.lines.map((l) => l.id), sessionId: sid } : null;
+}
+
 export function recallViaDashboard(
   prompt: string,
   root: string,
@@ -3834,6 +3875,9 @@ export function registerHookCommand(program: Command): void {
       let hadRecallHits = false;
       let gatedSkills = false;
 
+      // ── A member's past work (uye-gecmis-is D8): asked now, in parallel with recall, printed after it.
+      const pastWork = pastWorkForTurn(root, rawPrompt, input as Record<string, unknown>);
+
       // Memory recall injection — single Haiku call sees corpus index + prompt,
       // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
       // Mode via the shared resolver so the hook, `memory recall`, and /api/recall
@@ -3946,6 +3990,14 @@ export function registerHookCommand(program: Command): void {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] error:', (recallErr as Error).message ?? recallErr);
         }
       }
+
+      try {
+        const pw = await pastWork;
+        if (pw) {
+          emitPromptBlock('pastwork', pw.text);
+          markSessionWork(pw.sessionId, pw.ids);
+        }
+      } catch { /* no block: the member can still search its history */ }
 
       // ── The AI Team member line (task super-agent-isi-bolerken-…) ──────────
       // An app chat only (`DREAMCONTEXT_TEAM_ROUTE` super|offer, never a nested hook): when the

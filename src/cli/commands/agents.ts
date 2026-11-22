@@ -29,7 +29,8 @@ import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../li
 import { writeActiveHere } from '../../lib/agents/active.js';
 import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js';
 import { listInboxRows } from '../../lib/owner-inbox.js';
-import { listAgentHistory, searchAgentHistory } from '../../lib/agents/history.js';
+import { findTrace, listAgentHistory, searchAgentHistory, searchPastWork } from '../../lib/agents/history.js';
+import { isAppRunSession } from '../../lib/automations/history.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
 import { effectiveEnvelopeLine } from '../../lib/automations/board-scope.js';
 import { levelChatMode } from '../../lib/agents/permission.js';
@@ -779,14 +780,32 @@ export function registerAgentsCommand(program: Command): void {
     });
 
   agents
-    .command('history <slug>')
-    .description('An agent\'s past runs and conversations, newest first (what the agent itself reads to remember)')
-    .option('--search <words>', 'Only lines containing these words (case-insensitive), newest first, at most 50')
+    .command('history <slug> [trace]')
+    .description('An agent\'s past runs and conversations, newest first (what the agent itself reads to remember); `history show <w_id>` prints one past-work trace whole')
+    .option('--search <words>', 'Only lines containing these words (case-insensitive), newest first, at most 50; then its past-work traces that match')
+    .option('--all', 'With --search: a global member\'s past work in every project (refused in an app\'s session)')
     .option('--before <cursor>', 'Continue below this cursor (printed at the end of a page)')
     .option('--limit <n>', 'Sessions per page (default 8), or hits for --search (max 50)')
     .option('--json', 'Emit as JSON')
-    .action((slug: string, opts: { search?: string; before?: string; limit?: string; json?: boolean }) => {
+    .action(async (slug: string, trace: string | undefined, opts: { search?: string; before?: string; limit?: string; json?: boolean; all?: boolean }) => {
       const root = ensureContextRoot();
+      if (slug === 'show' && trace) {
+        const members = [...new Set([...listAgents(root).map((a) => a.slug), ...(process.env.DREAMCONTEXT_AGENT_CHAT ? [process.env.DREAMCONTEXT_AGENT_CHAT] : [])])];
+        const t = findTrace(root, trace, members);
+        if (!t) { error(`No past-work trace "${trace}" here.`); process.exitCode = 1; return; }
+        if (opts.json) { console.log(JSON.stringify(t, null, 2)); return; }
+        console.log(header(`${t.kind === 'run' ? 'Run' : 'Job'} · ${t.at.slice(0, 16).replace('T', ' ')} · ${t.project.name} · ${t.status}`));
+        for (const a of t.asks) console.log(`  ${chalk.bold(a.by)}: ${a.text}`);
+        if (t.did) console.log(`  ${chalk.bold('you')}: ${t.did}`);
+        if (t.files.length) console.log(`  ${chalk.bold('files')}: ${t.files.join(', ')}`);
+        if (t.document) console.log(`  ${chalk.bold('document')}: ${t.document}`);
+        return;
+      }
+      if (opts.all && appSession(root)) {
+        error('`history --all` is not open to an app: an app sees only its own work.');
+        process.exitCode = 1;
+        return;
+      }
       if (!getAgent(root, slug)) {
         error(`No agent named "${slug}" in this project.`);
         process.exitCode = 1;
@@ -798,14 +817,21 @@ export function registerAgentsCommand(program: Command): void {
       // Read-only: the CLI never writes or prunes the session index (it cannot see live chats).
       if (opts.search !== undefined) {
         const found = searchAgentHistory(root, slug, opts.search, { audience: 'agent', before: opts.before ?? null, limit });
-        if (opts.json) { console.log(JSON.stringify(found, null, 2)); return; }
-        if (found.hits.length === 0) { console.log(chalk.dim('Nothing found.')); return; }
+        // Its past-work traces after the run/talk hits (D12): through the app's index, else the files.
+        const traces = await searchPastWork(root, slug, opts.search, { all: opts.all === true });
+        if (opts.json) { console.log(JSON.stringify({ ...found, traces }, null, 2)); return; }
+        if (found.hits.length === 0 && traces.length === 0) { console.log(chalk.dim('Nothing found.')); return; }
         for (const h of found.hits) {
           const who = h.who === 'owner' ? 'the owner' : h.who === 'app' ? 'an app, not the owner' : 'you';
           const where = h.kind === 'talk' ? 'a conversation' : h.title;
           console.log(`${chalk.dim(h.at)}  ${chalk.bold(who)} ${chalk.dim(`(${where})`)}: ${oneLine(h.text, 400)}`);
         }
         if (found.nextBefore) console.log(chalk.dim(`  more: --before '${found.nextBefore}'`));
+        if (traces.length) {
+          console.log(header('Past work'));
+          for (const t of traces) console.log(`  ${t.line}`);
+          console.log(chalk.dim('  One whole: dreamcontext agents history show <w_id>'));
+        }
         return;
       }
       const page = listAgentHistory(root, slug, { audience: 'agent', before: opts.before ?? null, maxSessions: limit });
@@ -819,6 +845,13 @@ export function registerAgentsCommand(program: Command): void {
       }
       if (page.nextBefore) console.log(chalk.dim(`  older: --before '${page.nextBefore}'`));
     });
+}
+
+/** An app's chat or an app's run: never handed another project's work (G2). */
+function appSession(root: string): boolean {
+  if ((process.env.DREAMCONTEXT_AGENT_CHAT ?? '').startsWith('app-')) return true;
+  const sid = process.env.CLAUDE_CODE_SESSION_ID ?? process.env.CLAUDE_SESSION_ID ?? '';
+  try { return !!sid && isAppRunSession(root, sid); } catch { return false; }
 }
 
 /** A message flattened to one line of at most `max` characters. */

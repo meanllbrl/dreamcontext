@@ -57,6 +57,8 @@ import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner
 import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
 import type { ThreadEntry } from './types.js';
 import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from './history.js';
+import { workRoot, writeRunTrace } from '../agents/work-trace.js';
+import { renderPastWork, selectViaServer, workServerPort } from '../agents/work-index.js';
 import { appRunBrief, type AppRunBrief } from '../apps/brief.js';
 import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
 import {
@@ -700,6 +702,21 @@ export async function conditionGate(
   return conditionWakes(result.verdict, m.conditionWake !== false) ? { kind: 'wake', data: result.data } : { kind: 'skip', durationMs };
 }
 
+/** The run-site past-work block (D8): '' on any miss. Never throws, never slows past its timeout. */
+export async function runPastWork(member: string, projectRoot: string, query: string, app: string | null, home?: string): Promise<string> {
+  try {
+    if (!query.trim()) return '';
+    // No work folder: no trace exists, so nothing is asked (the prompt stays byte-identical).
+    const root = workRoot(member, projectRoot, home ?? homedir());
+    if (!root || !existsSync(root)) return '';
+    const sel = await selectViaServer(
+      { member, root: projectRoot, query, audience: app ? 'app' : 'owner', ...(app ? { app } : {}) },
+      { port: workServerPort(process.env, home ?? homedir()) },
+    );
+    return sel ? renderPastWork(sel.lines, sel.more, member, newTurnNonce(), query) : '';
+  } catch { return ''; }
+}
+
 export function composePrompt(
   m: AutomationManifest,
   projectRoot: string,
@@ -731,6 +748,9 @@ export function composePrompt(
   /** What the routine's condition script printed on the fire it woke for (kosullu-otomasyon C5):
    *  DATA under a fresh nonce, after the task block. Absent or '' ⇒ no block. */
   conditionData?: string | null,
+  /** The member's past work that matches this run's ask (uye-gecmis-is D8): a fenced RECORD, beside
+   *  the history block. Absent or '' ⇒ the prompt is exactly what it was. */
+  pastWork?: string | null,
 ): string {
   const parts = [
     buildPreamble(m, projectRoot, fireAt, outputPath, board?.scope ?? null, board?.scope ? null : board?.home ?? null), '', m.prompt.trim(),
@@ -794,6 +814,7 @@ export function composePrompt(
     : '';
   if (askBlock) parts.push('', askBlock);
   else if (app) parts.push('', buildAppContextBlock(app, newTurnNonce()));
+  if (pastWork) parts.splice(historyAt, 0, '', pastWork);
   if (history) {
     // Measured on the finished prompt, so the cap below never reaches the ask: a prompt
     // with no room left gets no history at all.
@@ -2971,6 +2992,13 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       try { return sessionMember({ [RUN_MEMBER_ENV]: who }, join(projectRoot, '_dream_context'))?.slug ?? ''; } catch { return ''; }
     })();
     const { turn, display: askText } = buildBoardTurn(contextRoot, scope ?? homeView, opts.board, opts.ask ?? null);
+    // The member's past work for this run's ask (uye-gecmis-is D8): asked of the running app's warm
+    // index; no server, a late answer or an error is no block. A resumed task step gets none.
+    const runAppSlug = opts.app?.slug ?? manifest.app ?? null;
+    const runAskText = (askText ?? '').trim() || [manifest.title, (manifest.prompt ?? '').trim().split('\n')[0] ?? ''].filter(Boolean).join(': ');
+    const pastWork = runMember && !(taskStep && taskStep.resumePrompt)
+      ? await runPastWork(runMember, projectRoot, runAskText, runAppSlug, opts.home)
+      : '';
     const prompt = composePrompt(
       manifest, projectRoot, fireAt, outputPath, flow, askText,
       // A home agent's turn is never null: its board block is always there, even as the one
@@ -2990,6 +3018,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         && (manifest as AutomationManifest).target !== 'super'
         && routineReachesPhone({ contextRoot, slug, agent: manifest.agent, reply: (manifest as AutomationManifest).reply ?? null, approvalHash: manifestHash(manifest as AutomationManifest), ...(home ? { home } : {}) }),
       gate?.kind === 'wake' ? gate.data : null,
+      pastWork,
     );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
@@ -3479,7 +3508,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       error = error ? `${named} | ${error}` : named;
     }
 
-    return await finalize({
+    const outcome = await finalize({
       status,
       error,
       outputPath: finalOutputPath,
@@ -3507,6 +3536,20 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       advanceWatermark: consumesFire,
       notify: true,
     });
+    // The run's trace (uye-gecmis-is C4): only here, after the child ran; never for a fire that
+    // waits on an approval, and never for a run that is no member's (a Super handoff). A write
+    // error never changes the outcome.
+    if (runMember && status !== 'awaiting-review') {
+      await writeRunTrace({
+        member: runMember, projectRoot, slug, fireIso, finishedAt,
+        ask: { by: runAppSlug ? 'app' : opts.ask ? 'owner' : opts.task ? 'owner' : 'schedule', text: runAskText },
+        result: claudeResult?.result ?? null, document: finalOutputPath && !reviewCardId ? claudeResult?.result ?? null : null,
+        status, sessionId: claudeResult?.sessionId ?? null,
+        tool: runTool === 'codex' ? 'codex' : runTool === 'antigravity' ? 'antigravity' : 'claude',
+        app: runAppSlug, ...(opts.home ? { home: opts.home } : {}),
+      }).catch(() => false);
+    }
+    return outcome;
   } finally {
     if (opts.host === 'server') {
       untrackFn();
