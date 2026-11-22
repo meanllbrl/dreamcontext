@@ -76,6 +76,28 @@ function probeInit(s) {
         mode: document.querySelector('[data-testid="chat-drawer"]')?.getAttribute('data-mode') ?? null,
         rowY: row ? Math.round(row.getBoundingClientRect().top * 10) / 10 : null,
         bodyFocus: document.activeElement === document.body,
+        inSurface: !!(surface && document.activeElement && surface.contains(document.activeElement)),
+        focusAt: (() => { const e = document.activeElement; return e ? `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 40)}@${e.closest('[data-instance-vault]')?.getAttribute('data-instance-vault') ?? '-'}` : null; })(),
+        col: (() => {
+          const sc = document.querySelector('[data-scroll-frame]');
+          const sp = [...document.querySelectorAll('.ns-sb-spacer')].map((e) => e.getBoundingClientRect().height);
+          return sc ? `${Math.round(sc.scrollTop)}/${Math.round(sc.scrollHeight - sc.clientHeight)} sp ${sp.map(Math.round).join(',')}` : null;
+        })(),
+        prep: (() => {
+          // The preparing instance, for diagnosis: what keeps the gate from matching.
+          const pi = document.querySelector('.project-instance[data-preparing]');
+          if (!pi) return null;
+          const t = window.__dcTarget;
+          const pr = pi.querySelector(t === 'chat' ? s.surface : s.region);
+          const ps = pi.querySelector(s.surface);
+          const moving = (el) => (el && el.getAnimations ? el.getAnimations({ subtree: true }).filter((a) => a.playState === 'running' && (a.effect?.getTiming?.().iterations ?? 1) !== Infinity).map((a) => `${a.constructor.name}:${a.animationName ?? a.transitionProperty ?? ''}@${a.effect?.target?.className?.toString().slice(0, 40) ?? ''}`) : []);
+          return {
+            vault: pi.getAttribute('data-instance-vault'), page: pi.getAttribute('data-page'), item: pi.getAttribute('data-item'),
+            region: !!pr, loading: pr ? [...pr.querySelectorAll(s.loading)].map((e) => e.className?.toString().slice(0, 40) || e.tagName).slice(0, 3) : [],
+            moving: [...moving(pr), ...(ps && ps !== pr ? moving(ps) : [])].slice(0, 4),
+            surface: ps ? ps.className.toString().slice(0, 60) : null,
+          };
+        })(),
       });
     }
     requestAnimationFrame(sample);
@@ -90,14 +112,27 @@ const runs = (frames, key) => {
   return n;
 };
 
+/** ⌘N for a project, by the sidebar order (on Chat the rows fold and do not move). */
+async function pressFor(page, vault) {
+  const order = await page.locator('[data-drawer-project]:not([data-hidden-project])').evaluateAll((els) => els.map((e) => e.getAttribute('data-drawer-project')));
+  await page.keyboard.press(`Meta+${order.indexOf(vault) + 1}`);
+}
+
 /** The frame shows the target: Chat lit for a Chat target, else the page. */
 const shows = (f, target) => (target === 'chat' ? f.lit === 'ns-tab-chat' : f.page === target && f.lit !== 'ns-tab-chat');
 
 async function oneSwitch(page, from, to, kind, label, target = 'tasks') {
   const key = `project:${to}`;
+  // Playwright scrolls a half-visible row into view on click: do it before the frames start, so
+  // only the product can move the row.
+  if (target !== 'chat') {
+    await page.locator(`[data-row-key="${key}"]`).first().scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  }
   const before = await page.evaluate(([k, t]) => { window.__dcRowKey = k; window.__dcTarget = t; window.__dcFrames = []; return window.__dcReveal.length; }, [key, target]);
   const t0 = Date.now();
-  await page.locator(`[data-row-key="${key}"]`).first().click();
+  if (target === 'chat') await pressFor(page, to);
+  else await page.locator(`[data-row-key="${key}"]`).first().click();
   // Activation, then a quiet 700 ms so a late loading marker or animation would be caught.
   await page.waitForFunction(([v, n]) => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === v && window.__dcReveal.length > n,
     [to, before], { timeout: 8000, polling: 'raf' }).catch(() => app.findings.push(`${label}: ${to} never became active`));
@@ -110,9 +145,11 @@ async function oneSwitch(page, from, to, kind, label, target = 'tasks') {
     if (kind === 'warm' && entry.why === 'bound') bad.push(`warm bound-fired (${entry.ms} ms)`);
     if (kind === 'cold' && entry.ms > COLD_MS) bad.push(`cold ${entry.ms} ms > ${COLD_MS}`);
   }
-  const at = entry?.at ?? Infinity;
-  const pre = frames.filter((f) => f.t < at);
-  const post = frames.filter((f) => f.t >= at);
+  // Activation on screen = the first frame that shows B (the gate's log is written before React
+  // commits, so a frame may still show A just after it: that frame is A's, not a fault).
+  const split = frames.findIndex((f) => f.vault === to);
+  const pre = split < 0 ? frames : frames.slice(0, split);
+  const post = split < 0 ? [] : frames.slice(split);
   const wrongPre = pre.filter((f) => f.vault !== from || !shows(f, target)).length;
   const wrongPost = post.filter((f) => f.vault !== to || !shows(f, target)).length;
   if (wrongPre) bad.push(`${wrongPre} frames before activation not ${from} › ${target}`);
@@ -124,16 +161,35 @@ async function oneSwitch(page, from, to, kind, label, target = 'tasks') {
   if (runs(frames, 'lit') > 2) bad.push(`lit tab changed ${runs(frames, 'lit') - 1} times`);
   if (runs(frames, 'mode') > 2) bad.push(`sidebar mode changed ${runs(frames, 'mode') - 1} times`);
   const ys = frames.map((f) => f.rowY).filter((y) => y != null);
-  if (ys.length && Math.max(...ys) - Math.min(...ys) > 1) bad.push(`row moved ${(Math.max(...ys) - Math.min(...ys)).toFixed(1)} px`);
-  const bodyFrames = frames.filter((f) => f.bodyFocus).length;
-  if (bodyFrames) bad.push(`${bodyFrames} frames with focus on body`);
+  if (ys.length && Math.max(...ys) - Math.min(...ys) > 1) {
+    bad.push(`row moved ${(Math.max(...ys) - Math.min(...ys)).toFixed(1)} px`);
+    if (process.env.TEK_KENAR_DIAG) {
+      let last = '';
+      for (const f of frames) { const k = `${f.vault} y=${f.rowY} col=${f.col}`; if (k !== last) { last = k; process.stdout.write(`  ROW ${label} +${Math.round(f.t - frames[0].t)}ms ${k}\n`); } }
+    }
+  }
+  // Focus LOST to body: WebKit never focuses a clicked button (platform behaviour), so a switch
+  // that began with focus on body is not one that lost it.
+  const bodyFrames = frames[0]?.bodyFocus ? 0 : frames.filter((f) => f.bodyFocus).length;
+  if (bodyFrames) bad.push(`${bodyFrames} frames with focus lost to body`);
+  // Wherever the switch began, focus ends on something in the window, never on body.
+  if (post.length && post[post.length - 1].bodyFocus) bad.push(`focus ended on body (${post[post.length - 1].focusAt})`);
   for (const b of bad) app.findings.push(`${label}: ${b}`);
+  if (process.env.TEK_KENAR_DIAG && bad.length) {
+    const seen = new Set();
+    for (const f of frames) { if (!f.prep) continue; const k = JSON.stringify(f.prep); if (!seen.has(k)) { seen.add(k); process.stdout.write(`  DIAG ${label} +${Math.round(f.t - frames[0].t)}ms ${k}\n`); } }
+  }
   return { label, kind, target, why: entry?.why ?? '-', ms: entry?.ms ?? Date.now() - t0, frames: frames.length, bad: bad.length };
 }
 
 const rows = [];
-for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]]) {
-  const browser = await engine.launch();
+const ENGINES = [['chromium', chromium], ['webkit', webkit]].filter(([n]) => !process.env.TEK_KENAR_ENGINES || process.env.TEK_KENAR_ENGINES.split(',').includes(n));
+for (const [engineName, engine] of ENGINES) {
+  const browser = await engine.launch().catch((err) => {
+    app.findings.push(`${engineName} did not launch: ${String(err instanceof Error ? err.message : err).split('\n')[0]}`);
+    return null;
+  });
+  if (!browser) continue;
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   await markAnnouncementsSeen(context, app.base);
   await context.addInitScript(probeInit, SELECTORS);
@@ -141,7 +197,10 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
   page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket/.test(m.text())) app.findings.push(`${engineName} console: ${m.text().slice(0, 200)}`); });
   page.on('pageerror', (e) => app.findings.push(`${engineName} crash: ${String(e.message).slice(0, 200)}`));
   let reloads = -1;
-  page.on('load', () => { reloads++; });
+  const t00 = Date.now();
+  const loads = [];
+  page.on('load', () => { reloads++; loads.push(Date.now() - t00); });
+  page.on('console', (m) => { if (/\[vite\]/.test(m.text())) process.stdout.write(`  VITE ${engineName} +${Date.now() - t00}ms ${m.text().slice(0, 160)}\n`); });
   try {
     await page.goto(`${app.base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
     await page.getByTestId('chat-drawer').waitFor({ timeout: 60_000 });
@@ -152,7 +211,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
           await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': v }, body: JSON.stringify({ name: `${v} task ${i}`, why: 'Seeded for the seamless probe.' }) });
         }
       }, PROJECTS);
-      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'load' });
       reloads = 0;
       await page.getByTestId('chat-drawer').waitFor({ timeout: 60_000 });
     }
@@ -183,7 +242,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
     for (const [target, count] of plan) {
       if (target !== 'tasks') {
         for (const v of [from, ...visited.filter((x) => x !== from)]) {
-          if (v !== from) { await page.locator(`[data-row-key="project:${v}"]`).first().click(); await page.waitForTimeout(900); from = v; }
+          if (v !== from) { await pressFor(page, v); await page.waitForTimeout(900); from = v; }
           await page.getByTestId(`ns-tab-${target}`).click();
           await page.waitForTimeout(1200);
         }
@@ -208,7 +267,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
         if (after !== scrolled.set) app.findings.push(`${engineName}: A's scroll not kept (${scrolled.set} → ${after})`);
       } else app.findings.push(`${engineName}: no scrollable list on proj › tasks to check the scroll`);
     }
-    if ((await page.evaluate(() => window.__dcMarker)) !== 'still-here' || reloads > 0) app.findings.push(`${engineName}: the page reloaded`);
+    if ((await page.evaluate(() => window.__dcMarker)) !== 'still-here' || reloads > 0) app.findings.push(`${engineName}: the page reloaded (load events at ${loads.map((t) => `+${t} ms`).join(', ')})`);
   } catch (err) {
     app.findings.push(`${engineName} could not finish: ${err instanceof Error ? err.message : err}`);
   }
