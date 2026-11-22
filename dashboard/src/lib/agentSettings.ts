@@ -126,6 +126,10 @@ export interface AgentSettings {
    *  project on this Mac, starts with. ON by default: only an explicit `false` turns it off.
    *  A pane's composer switch wins for that pane only and never writes this. */
   ecoMode: boolean;
+  /** Settings → Chat "Tasarruf modu: Eco Plus" (plan eco-plus D1): most work on Sonnet, the
+   *  judges stay on Opus. OFF by default; true only for an explicit `true` on a blob whose
+   *  `ecoMode` is not `false`. MIRRORED from `coerceAgentSettings` in launcher.ts. */
+  ecoPlus: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -151,6 +155,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   superEffort: 'high',
   readAloud: false,
   ecoMode: true,
+  ecoPlus: false,
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -215,6 +220,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     readAloud: r.readAloud === true,
     // Default-TRUE: only an explicit `false` turns Eco mode off for new chats.
     ecoMode: r.ecoMode !== false,
+    // Default-FALSE, and Kapalı wins (MIRRORED from the server coercer).
+    ecoPlus: r.ecoPlus === true && r.ecoMode !== false,
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };
@@ -742,4 +749,34 @@ export function createDoubleTapMatcher(token: string, windowMs = DOUBLE_TAP_MS):
     lastTs = now;
     return false;
   };
+}
+
+/** The three-way "Tasarruf modu" (plan eco-plus D1) read from the stored pair. */
+export type SavingMode = 'off' | 'eco' | 'plus';
+export function savingModeOf(s: Pick<AgentSettings, 'ecoMode' | 'ecoPlus'>): SavingMode {
+  if (!s.ecoMode) return 'off';
+  return s.ecoPlus ? 'plus' : 'eco';
+}
+/** The pair each choice writes: Kapalı {false,false}, Eco {true,false}, Eco Plus {true,true}. */
+export function savingModePatch(mode: SavingMode): { ecoMode: boolean; ecoPlus: boolean } {
+  return { ecoMode: mode !== 'off', ecoPlus: mode === 'plus' };
+}
+
+/**
+ * MIRRORED from `lowerModel` / `resolveSpawnModel` in src/lib/eco-plus.ts (a Node file the
+ * dashboard cannot import), for DISPLAY only (the composer chip): the server decides the spawn.
+ * Pinned to the server table by tests/unit/eco-plus.test.ts.
+ */
+export type ModelSource = 'saved' | 'default' | 'pick' | 'resume';
+const ECO_PLUS_HEAVY_RE = /^(?:opus|fable)(?:\[1m\])?$|^claude-(?:opus|fable)(?:-[a-z0-9.-]*)?(?:\[1m\])?$/i;
+export function ecoPlusLowerModel(model: string | null | undefined): string {
+  const m = (model ?? '').trim();
+  return m === '' || ECO_PLUS_HEAVY_RE.test(m) ? 'sonnet' : m;
+}
+export function ecoPlusSpawnModel(input: { model: string | null | undefined; source: ModelSource; tool?: string | null; on: boolean }): { model: string; lowered: boolean } {
+  const m = (input.model ?? '').trim();
+  const claude = !input.tool || input.tool === 'claude';
+  if (!input.on || !claude || (input.source !== 'saved' && input.source !== 'default')) return { model: m, lowered: false };
+  const next = ecoPlusLowerModel(m);
+  return { model: next, lowered: next !== m };
 }

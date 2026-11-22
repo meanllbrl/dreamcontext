@@ -1815,6 +1815,24 @@
       "args": []
     },
     {
+      "path": "eco",
+      "desc": "This Mac's saving mode (Kapalı · Eco · Eco Plus) and the models it picks",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "eco model",
+      "desc": "Print the model a role runs on under the current saving mode (role: builder)",
+      "args": [
+        "<role>"
+      ]
+    },
+    {
+      "path": "eco status",
+      "desc": "Print the saving mode: off, eco or plus",
+      "args": []
+    },
+    {
       "path": "embed",
       "desc": "EXPERIMENTAL: manage the local embedding index used by hybrid recall",
       "args": [],

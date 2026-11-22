@@ -611,6 +611,93 @@ export function ecoModeDefault(home: string = homedir()): boolean {
 }
 
 /**
+ * Eco Plus (owner, 2026-11-22; plan eco-plus K2): this Mac's "Tasarruf modu: Eco Plus", stored as
+ * `agent-ui.json` `ecoPlus` beside `ecoMode`. ON only for an explicit `true` on a file whose
+ * `ecoMode` is not `false` (Kapalı always wins); a missing file, key or unreadable JSON is OFF.
+ * The coercers in `server/routes/launcher.ts` and `dashboard/src/lib/agentSettings.ts` apply the
+ * same rule. Read LIVE at every spawn and by the Agent dispatch hook.
+ */
+export function ecoPlusDefault(home: string = homedir()): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(join(home, '.dreamcontext', 'agent-ui.json'), 'utf-8')) as unknown;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+    const r = raw as Record<string, unknown>;
+    return r.ecoPlus === true && r.ecoMode !== false;
+  } catch {
+    return false;
+  }
+}
+
+/** `~/.dreamcontext/eco-plus-lowered.jsonl`: one line per spawn or dispatch Eco Plus lowered. */
+export function ecoPlusLoweredPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'eco-plus-lowered.jsonl');
+}
+
+/** `~/.dreamcontext/eco-plus-history.jsonl`: one `{at, on}` line per real change of Eco Plus. */
+export function ecoPlusHistoryPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'eco-plus-history.jsonl');
+}
+
+const LOWERED_KEEP_MS = 30 * 24 * 3600_000;
+const LOWERED_TRIM_EVERY_MS = 24 * 3600_000;
+
+export interface EcoPlusLoweredEntry {
+  /** Where the lowering happened: chat, super, member, child, automation, auto-sleep, builder, agent. */
+  site: string;
+  session?: string;
+  agentType?: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Append one lowered spawn to the measurement log (plan eco-plus, Measurement). Never throws: a
+ * failed append never fails the spawn. Keeps only the last 30 days, trimmed at most once a day
+ * (the trim time is the file's own `.trimmed` stamp next to it).
+ */
+export function appendLowered(entry: EcoPlusLoweredEntry, home: string = homedir(), now: number = Date.now()): void {
+  try {
+    const path = ecoPlusLoweredPath(home);
+    mkdirSync(dirname(path), { recursive: true });
+    const line = JSON.stringify({ at: new Date(now).toISOString(), ...entry }) + '\n';
+    writeFileSync(path, line, { flag: 'a' });
+    const stamp = `${path}.trimmed`;
+    let last = 0;
+    try { last = Number(readFileSync(stamp, 'utf-8')) || 0; } catch { /* never trimmed */ }
+    if (now - last < LOWERED_TRIM_EVERY_MS) return;
+    const cutoff = now - LOWERED_KEEP_MS;
+    const kept = readFileSync(path, 'utf-8').split('\n').filter((l) => {
+      if (!l.trim()) return false;
+      try {
+        const at = Date.parse((JSON.parse(l) as { at?: string }).at ?? '');
+        return Number.isFinite(at) && at >= cutoff;
+      } catch { return false; }
+    });
+    writeJsonLines(path, kept);
+    writeFileSync(stamp, String(now));
+  } catch {
+    /* measurement only */
+  }
+}
+
+function writeJsonLines(path: string, lines: string[]): void {
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, lines.length ? lines.join('\n') + '\n' : '');
+  renameSync(tmp, path);
+}
+
+/** Append `{at, on}` to the Eco Plus history (the settings route, on a real change). Never throws. */
+export function appendEcoPlusHistory(on: boolean, home: string = homedir(), now: number = Date.now()): void {
+  try {
+    const path = ecoPlusHistoryPath(home);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ at: new Date(now).toISOString(), on }) + '\n', { flag: 'a' });
+  } catch {
+    /* measurement only */
+  }
+}
+
+/**
  * Set this Mac's Eco mode from the CLI (`dreamcontext config context-handoff on|off`): the same
  * key Settings → Chat → Eco mode writes, every other field of the file kept. False when the file
  * could not be written. An unreadable file is not overwritten: the other settings in it are the

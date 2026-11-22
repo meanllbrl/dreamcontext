@@ -91,6 +91,7 @@ const LOADERS = new Map<string, Loader>([
   ['ask', async () => (await import('./commands/ask.js')).registerAskCommand],
   ['federation', async () => (await import('./commands/federation.js')).registerFederationCommand],
   ['config', async () => (await import('./commands/config.js')).registerConfigCommand],
+  ['eco', async () => (await import('./commands/eco.js')).registerEcoCommand],
   ['people', async () => (await import('./commands/people.js')).registerPeopleCommand],
   ['feedback', async () => (await import('./commands/feedback.js')).registerFeedbackCommand],
   ['migrations', async () => (await import('./commands/migrations.js')).registerMigrationsCommand],

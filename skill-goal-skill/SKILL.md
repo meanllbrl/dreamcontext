@@ -236,6 +236,12 @@ resume and fork, so every fork reads the planner from the cache. Medium, the own
 medium for no better code. The plan's safety comes from the clean plan reviewers of Phase 2, which
 keep their own effort.
 
+**Eco Plus (this Mac's Tasarruf modu):** the lineage's model is resolved ONCE, at the run's start:
+`dreamcontext eco model builder > "$RUN/builder-model"` (prints `opus`, or `sonnet` under Eco Plus).
+Every spawn line below that says `--model opus` passes the value in `$RUN/builder-model` instead, for
+the whole run, whatever the setting says later (one identity per lineage, so forks keep the cache).
+A run with no `builder-model` file reads as `opus`. The plan reviewers keep their own model.
+
 ## Orchestration flow
 
 ```mermaid
