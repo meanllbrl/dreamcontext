@@ -3,6 +3,7 @@ import { sendError, sendJson } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { refreshCodexHealth } from '../../lib/codex-bin.js';
 import { listTools } from '../../lib/t3-bridge/registry.js';
+import { refreshAntigravityModels } from '../../lib/antigravity-models.js';
 
 /**
  * GET /api/agent/tools — the tools a chat can run on (Track T W1: Claude, Codex) with their
@@ -15,5 +16,7 @@ export async function handleAgentTools(req: IncomingMessage, res: ServerResponse
     return;
   }
   await refreshCodexHealth();
+  // Antigravity's list is the runtime's last answer; a stale one is re-asked off this request.
+  try { refreshAntigravityModels().catch(() => { /* the cached list stands */ }); } catch { /* the cached list stands */ }
   sendJson(res, 200, { tools: listTools() });
 }

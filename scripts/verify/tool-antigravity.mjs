@@ -6,6 +6,9 @@
  *
  *   dreamcontext builder heavy -- node scripts/verify/tool-antigravity.mjs
  *
+ * Last, the runtime's own model list (antigravity-models.ts): the cache a probe writes, with the
+ * answer runtime 1.4.1 gave on 2026-11-22, must replace T3's bundled list in the picker.
+ *
  * Shots at 1440/1024/390 in dark and light, with console errors and failed requests recorded.
  * SHOTS_DIR copies the screenshots there.
  */
@@ -55,13 +58,16 @@ async function openChat(page, w) {
 
 const theme = (name) => (page) => page.evaluate((n) => { localStorage.setItem('dreamcontext-theme', n); document.documentElement.setAttribute('data-theme', n); }, name);
 
-async function picker(page, w, { expect, button }) {
+async function picker(page, w, { expect, button, absent = [] }) {
   await openChat(page, w);
   await page.locator('.chat-cmp-modeltrigger[title^="Model and reasoning effort"]:visible').first().click();
   await page.locator('[data-testid="model-picker"] [data-tool="antigravity"]:visible').click({ timeout: 10_000 });
   for (const text of expect) {
     const seen = await page.locator('[data-testid="model-picker"]:visible').getByText(text, { exact: false }).first().waitFor({ state: 'visible', timeout: 5_000 }).then(() => true, () => false);
     if (!seen) app.findings.push(`${w.name}: "${text}" is not in the picker`);
+  }
+  for (const text of absent) {
+    if (await page.locator('[data-testid="model-picker"]:visible').getByText(text, { exact: false }).count()) app.findings.push(`${w.name}: "${text}" is still in the picker`);
   }
   if (button) {
     const has = await page.locator('[data-testid="codex-fix"]:visible').filter({ hasText: button }).count();
@@ -83,6 +89,13 @@ try {
   for (const mode of ['dark', 'light']) {
     await app.look('/?vault=proj', async (page, w) => { await theme(mode)(page); await picker(page, w, { expect: ['Gemini'] }); }, { name: `ready-${mode}` });
   }
+  // What a probe of the runtime writes: the picker must show the runtime's list, not the bundled one.
+  const live = [
+    ['gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)'], ['gemini-3.8-flash-medium', 'Gemini 3.8 Flash (Medium)'], ['gemini-3.8-flash-low', 'Gemini 3.8 Flash (Low)'],
+    ['claude-sonnet-4-6', 'Claude Sonnet 4.6 (Thinking)'], ['claude-opus-4-6-thinking', 'Claude Opus 4.6 (Thinking)'], ['gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)'],
+  ].map(([id, label]) => ({ id, label }));
+  writeFileSync(join(t3, 'antigravity-models.json'), JSON.stringify({ checkedAt: Date.now(), version: '1.4.1', account: 'primary', defaultModel: 'gemini-3.8-flash-high', models: live }));
+  await app.look('/?vault=proj', async (page, w) => { await picker(page, w, { expect: ['Gemini 3.8 Flash', 'Claude Opus 4.6', 'GPT-OSS 120B'], absent: ['Gemini 3.7', 'Gemini 3.6'] }); }, { name: 'live-models' });
   await app.look('/?vault=proj', async (page, w) => {
     // The app's own way to Settings: the picker's "Models" link.
     await openChat(page, w);
