@@ -283,6 +283,11 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
     expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin PR aç", null).ok).toBe(false);
     expect(ruleCovers('firebase deploy -P acme-staging', "staging'e kendin push et, PR aç", null).ok).toBe(false);
   });
+  it('a rule he said again grants only what every saying grants', () => {
+    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin push et / Staging'e kendin push et.", null).ok).toBe(true);
+    expect(ruleCovers('gh pr create --base staging --fill', "staging'e kendin push et, PR aç / staging'e kendin push et", null).ok).toBe(false);
+    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin push et / ama önce bana sor", null).ok).toBe(false);
+  });
   it('any other wording grants nothing: bans, conditions, permissions in prose, another target', () => {
     for (const words of [
       // allowing prose (fail-safe: a card instead)

@@ -246,11 +246,18 @@ const RULE_PART_KIND: Record<string, RuleKind> = { 'push et': 'push', 'pr ac': '
 /** The sentence a refusal shows. */
 export const RULE_SENTENCE = "staging'e kendin push et, PR aç ve deploy et";
 
-/** The kinds his rule's words grant: only the fixed sentence (or its parts) counts; anything else grants none. */
+/** The kinds his rule's words grant: only the fixed sentence (or its parts) counts; anything else
+ *  grants none. A rule he said again holds each saying (joined by " / "): every saying must be the
+ *  sentence, and only the kinds all of them name are granted. */
 function ruleKinds(words: string): Set<RuleKind> {
-  const w = words.replace(/[\u2018\u2019`]/g, "'").replace(/\s+/g, ' ').trim();
-  if (!RULE_SENTENCE_RE.test(w)) return new Set();
-  return new Set([...w.matchAll(/push et|pr ac|deploy et/g)].map((m) => RULE_PART_KIND[m[0]]));
+  let kinds: Set<RuleKind> | null = null;
+  for (const saying of words.split(' / ')) {
+    const w = saying.replace(/[\u2018\u2019`]/g, "'").replace(/\s+/g, ' ').trim();
+    if (!RULE_SENTENCE_RE.test(w)) return new Set();
+    const these = new Set<RuleKind>([...w.matchAll(/push et|pr ac|deploy et/g)].map((m) => RULE_PART_KIND[m[0]]));
+    kinds = kinds ? new Set([...kinds].filter((k: RuleKind) => these.has(k))) : these;
+  }
+  return kinds ?? new Set();
 }
 
 /** His words with every merge said not to happen taken out. */
