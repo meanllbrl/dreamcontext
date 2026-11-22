@@ -1041,8 +1041,8 @@
   line-height: 14px;
   padding: 0 4px;
   border-radius: 4px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--color-accent-text);
+  background: var(--color-accent-soft);
   white-space: nowrap;
 }
 
