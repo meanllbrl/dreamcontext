@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
-import { shortcutFor, visiblePickerRows } from '../../../lib/pickerRows';
+import { shortcutFor, splitPickerRows } from '../../../lib/pickerRows';
+import { HiddenGroupToggle } from './HiddenGroupToggle';
 
 export interface PickerRow {
   name: string;
@@ -35,7 +36,10 @@ export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewPro
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const rows = visiblePickerRows(allRows, '');
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const split = splitPickerRows(allRows, '');
+  // Keyboard order: the shown rows, then the hidden ones while that section is open.
+  const rows = hiddenOpen ? [...split.shown, ...split.hidden] : split.shown;
   const [focused, setFocused] = useState(() => Math.max(0, rows.findIndex((r) => r.active)));
 
   useLayoutEffect(() => {
@@ -73,6 +77,28 @@ export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewPro
     if (e.key === 'Enter' && rows[focused]) { e.preventDefault(); onPick(rows[focused].name); }
   };
 
+  const renderRow = (r: PickerRow, i: number) => (
+      <button
+        key={r.name}
+        type="button"
+        role="option"
+        aria-selected={r.active}
+        className="ns-menu-row"
+        data-on={r.active ? 'true' : undefined}
+        data-hidden-project={i >= split.shown.length ? 'true' : undefined}
+        data-focus={i === focused ? 'true' : undefined}
+        data-testid={`ns-picker-${r.name}`}
+        onMouseEnter={() => setFocused(i)}
+        onClick={() => onPick(r.name)}
+      >
+        <VaultLogo name={r.name} hasLogo={r.logo} stamp={r.logoStamp} size={18} className="ns-menu-logo" />
+        <span className="ns-menu-label">{r.name}</span>
+        {r.otherWindow && <span className="ns-menu-note">{t('shell.picker.otherWindow')}</span>}
+        {!r.otherWindow && r.asleep && <span className="ns-menu-note">{t('shell.picker.asleep')}</span>}
+        {shortcutFor(allRows, r.name) !== null && <kbd className="ns-menu-kbd">⌘{shortcutFor(allRows, r.name)}</kbd>}
+      </button>
+  );
+
   return (
     <div
       ref={ref}
@@ -87,27 +113,14 @@ export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewPro
     >
       <div className="ns-menu-head">{t('shell.picker.label')}</div>
       <div className="ns-picker-list">
-        {rows.map((r, i) => (
-          <button
-            key={r.name}
-            type="button"
-            role="option"
-            aria-selected={r.active}
-            className="ns-menu-row"
-            data-on={r.active ? 'true' : undefined}
-            data-hidden-project={r.hidden ? 'true' : undefined}
-            data-focus={i === focused ? 'true' : undefined}
-            data-testid={`ns-picker-${r.name}`}
-            onMouseEnter={() => setFocused(i)}
-            onClick={() => onPick(r.name)}
-          >
-            <VaultLogo name={r.name} hasLogo={r.logo} stamp={r.logoStamp} size={18} className="ns-menu-logo" />
-            <span className="ns-menu-label">{r.name}</span>
-            {r.otherWindow && <span className="ns-menu-note">{t('shell.picker.otherWindow')}</span>}
-            {!r.otherWindow && r.asleep && <span className="ns-menu-note">{t('shell.picker.asleep')}</span>}
-            {shortcutFor(allRows, r.name) !== null && <kbd className="ns-menu-kbd">⌘{shortcutFor(allRows, r.name)}</kbd>}
-          </button>
-        ))}
+        {split.shown.map((r, i) => renderRow(r, i))}
+        {split.hidden.length > 0 && (
+          <div className="ns-picker-hidden" data-open={hiddenOpen ? 'true' : undefined} data-testid="ns-picker-hidden-group">
+            <HiddenGroupToggle open={hiddenOpen} label={t('shell.drawer.hiddenGroup')} count={split.hidden.length}
+              onToggle={() => setHiddenOpen((o) => !o)} data-testid="ns-picker-hidden-row" />
+            {hiddenOpen && split.hidden.map((r, i) => renderRow(r, split.shown.length + i))}
+          </div>
+        )}
       </div>
       {onNewProject && (
       <button type="button" className="ns-menu-row ns-picker-new" data-testid="ns-picker-new-project" onClick={onNewProject}>
