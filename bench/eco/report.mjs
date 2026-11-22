@@ -128,18 +128,26 @@ const COLORS = { light: { off: '#2a78d6', plus: '#1baf7a', ink: '#0b0b0b', ink2:
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const fmt = (x, d = 0) => (Number.isFinite(x) ? x.toLocaleString('tr-TR', { minimumFractionDigits: d, maximumFractionDigits: d }) : '–');
 
+// Round axis: a 1/2/5 x 10^k step, 4-6 ticks, top at a whole step.
+function niceAxis(max) {
+  const raw = max / 6, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((st) => st >= raw);
+  const n = Math.ceil(max / step - 1e-9);
+  return { top: step * n, step, n, dec: step < 1 ? Math.max(0, -Math.floor(Math.log10(step))) : 0 };
+}
 // One vertical bar chart: bars [{label, value, lo, hi, mode, text}], y from 0 to max.
 function bars({ title, sub, items, max, foot, theme, unit = '' }) {
   const c = COLORS[theme] || null;
   const ink = c ? c.ink : 'currentColor', ink2 = c ? c.ink2 : 'currentColor', grid = c ? c.grid : 'currentColor';
-  const W = 1200, H = 675, L = 120, R = 80, T = 150, Bm = 150;
+  const W = 1200, H = 675, L = 120, R = 80, T = 178, Bm = 150;
+  const ax = niceAxis(max); max = ax.top;
   const ph = H - T - Bm, bw = Math.min(220, (W - L - R) / items.length * 0.5), gap = (W - L - R) / items.length;
   const y = (v) => T + ph - (v / max) * ph;
   let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" style="width:100%;height:auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">`;
   if (c) s += `<rect width="${W}" height="${H}" fill="${c.bg}"/>`;
   s += `<text x="${L - 60}" y="62" font-size="34" font-weight="650" fill="${ink}">${esc(title)}</text>`;
   s += `<text x="${L - 60}" y="104" font-size="22" fill="${ink2}" opacity="${c ? 1 : 0.75}">${esc(sub)}</text>`;
-  for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${grid}" stroke-width="1" opacity="${c ? 1 : 0.18}"/><text x="${L - 12}" y="${y(v) + 7}" font-size="18" text-anchor="end" fill="${ink2}" opacity="${c ? 1 : 0.7}">${fmt(v, max < 5 ? 1 : 0)}${unit}</text>`; }
+  for (let i = 0; i <= ax.n; i++) { const v = ax.step * i; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${grid}" stroke-width="1" opacity="${c ? 1 : 0.18}"/><text x="${L - 12}" y="${y(v) + 7}" font-size="18" text-anchor="end" fill="${ink2}" opacity="${c ? 1 : 0.7}">${fmt(v, ax.dec)}${unit}</text>`; }
   items.forEach((it, i) => {
     const cx = L + gap * i + gap / 2, x = cx - bw / 2, top = y(it.value);
     const col = c ? c[it.mode] : (it.mode === 'off' ? '#3080dd' : '#1aa676');
@@ -159,6 +167,7 @@ function bars({ title, sub, items, max, foot, theme, unit = '' }) {
 function grouped({ title, sub, rows, max, foot, theme, unit = '', refLine }) {
   const c = COLORS[theme] || null;
   const ink = c ? c.ink : 'currentColor', ink2 = c ? c.ink2 : 'currentColor', grid = c ? c.grid : 'currentColor';
+  const ax = niceAxis(max); max = ax.top;
   const W = 1200, L = 330, R = 140, T = 170, rowH = 64, H = T + rows.length * rowH + 120;
   const x = (v) => L + (Math.min(v, max) / max) * (W - L - R);
   let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" style="width:100%;height:auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">`;
@@ -166,7 +175,7 @@ function grouped({ title, sub, rows, max, foot, theme, unit = '', refLine }) {
   s += `<text x="60" y="62" font-size="34" font-weight="650" fill="${ink}">${esc(title)}</text><text x="60" y="104" font-size="22" fill="${ink2}" opacity="${c ? 1 : 0.75}">${esc(sub)}</text>`;
   // legend
   MODES.forEach((m, i) => { const lx = 60 + i * 260; const col = c ? c[m] : (m === 'off' ? '#3080dd' : '#1aa676'); s += `<rect x="${lx}" y="128" width="18" height="18" rx="4" fill="${col}"/><text x="${lx + 28}" y="144" font-size="19" fill="${ink}">${esc(MODE_NAME[m])}</text>`; });
-  for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s += `<line x1="${x(v)}" x2="${x(v)}" y1="${T - 6}" y2="${T + rows.length * rowH}" stroke="${grid}" opacity="${c ? 1 : 0.18}"/><text x="${x(v)}" y="${T + rows.length * rowH + 26}" font-size="16" text-anchor="middle" fill="${ink2}" opacity="${c ? 1 : 0.7}">${fmt(v, max < 5 ? 1 : 0)}${unit}</text>`; }
+  for (let i = 0; i <= ax.n; i++) { const v = ax.step * i; s += `<line x1="${x(v)}" x2="${x(v)}" y1="${T - 6}" y2="${T + rows.length * rowH}" stroke="${grid}" opacity="${c ? 1 : 0.18}"/><text x="${x(v)}" y="${T + rows.length * rowH + 26}" font-size="16" text-anchor="middle" fill="${ink2}" opacity="${c ? 1 : 0.7}">${fmt(v, ax.dec)}${unit}</text>`; }
   if (refLine !== undefined) s += `<line x1="${x(refLine)}" x2="${x(refLine)}" y1="${T - 10}" y2="${T + rows.length * rowH}" stroke="${ink}" stroke-dasharray="6 5" stroke-width="1.5"/>`;
   rows.forEach((r, i) => {
     const y0 = T + i * rowH;
@@ -185,6 +194,7 @@ function grouped({ title, sub, rows, max, foot, theme, unit = '', refLine }) {
 const REPS = Math.max(...TASKS.map(([t]) => Math.min(...MODES.map((m) => cell(t, m).length))));
 const minReps = Math.min(...TASKS.map(([t]) => Math.min(...MODES.map((m) => cell(t, m).length))));
 const nLine = `n = ${TASKS.length} iş × ${minReps === REPS ? REPS : `${minReps}-${REPS}`} tekrar, ${runsTotal} koşu · çubuk üstü: %95 güven aralığı (bootstrap, 4000 örnek) · kurgu proje Pinewood Pantry · 22 Kas 2026`;
+const nLineG = nLine.replace(' · çubuk üstü: %95 güven aralığı (bootstrap, 4000 örnek)', '');
 const pctTxt = (r) => `%${fmt(r.point * 100)}`;
 const charts = {
   usage: (theme) => bars({ theme, title: 'Aynı işte kullanım', sub: 'Kullanım limitinden yenen pay, Kapalı = 100 (liste fiyatı oranı)', max: 120,
@@ -206,18 +216,18 @@ const charts = {
   byTaskUsage: (theme) => grouped({ theme, title: 'İş türüne göre kullanım', sub: 'Liste fiyatı, dolar, koşu başına ortalama', max: Math.max(...perTask.map((p) => Math.max(p.usd.off.mean || 0, p.usd.plus.mean || 0))) * 1.25,
     rows: perTask.map((p) => ({ label: p.name, values: { off: p.usd.off.mean, plus: p.usd.plus.mean },
       texts: { off: `${fmt(p.usd.off.mean, 2)} $`, plus: `${fmt(p.usd.plus.mean, 2)} $${p.ratio ? ` · ${fmt(p.ratio.point * 100)}` : ''}` } })),
-    foot: ['Eco Plus satırındaki ikinci sayı: Kapalı = 100 iken Eco Plus kullanımı.', nLine] }),
+    foot: ['Eco Plus satırındaki ikinci sayı: Kapalı = 100 iken Eco Plus kullanımı.', nLineG] }),
   byTaskQuality: (theme) => grouped({ theme, title: 'İş türüne göre kalite', sub: 'Kör hakem puanı 0-10, koşu ortalaması (yanında: başarılı koşu / koşu)', max: 10,
     rows: perTask.map((p) => ({ label: p.name, values: { off: p.judge.off.mean, plus: p.judge.plus.mean },
       texts: Object.fromEntries(MODES.map((m) => [m, `${fmt(p.judge[m].mean, 1)}${p.success[m].length ? ` · ${p.success[m].filter((x) => x === 1).length}/${p.success[m].length}` : ''}`])) })),
-    foot: ['Plan ve hafıza işlerinde gizli test yok; yalnız hakem puanı.', nLine] }),
+    foot: ['Plan ve hafıza işlerinde gizli test yok; yalnız hakem puanı.', nLineG] }),
 };
 if (eco) {
   charts.eco = (theme) => bars({ theme, title: 'Eco: devirden sonraki iş', sub: `Bu Mac'in gerçek oturumları, son ${eco.days} gün, ${eco.handoffs} devir: aynı işin maliyeti, Eco olmasa = 100`, max: 120,
     items: [{ label: 'Eco olmasa (aynı oturum sürse)', mode: 'off', value: 100, text: '100' },
       { label: 'Eco ile (taze oturum)', mode: 'plus', value: eco.costShareWithEco * 100, lo: eco.shareLo * 100, hi: eco.shareHi * 100, text: fmt(eco.costShareWithEco * 100) }],
-    foot: [`Devirde bağlam medyan ${fmt(eco.medianHandoffCtx / 1000)}k → taze oturumda ${fmt(eco.medianFreshCtx / 1000)}k token (%${fmt(eco.medianDrop * 100)} az). Karşı olgu: taze oturumun ${fmt(eco.freshCalls)} çağrısı eski bağlamla tekrar oynatıldı, 1M pencerede kesildi.`,
-      'Geçişin maliyeti (taze oturumun önbelleğe yazdığı ilk bağlam) düşüldü. Ölçüm, deney değil: Eco hep açıktı.'] });
+    foot: [`Devirde bağlam medyan ${fmt(eco.medianHandoffCtx / 1000)}k → taze oturumda ${fmt(eco.medianFreshCtx / 1000)}k token (%${fmt(eco.medianDrop * 100)} az). Ölçüm, deney değil: Eco hep açıktı.`,
+      `Karşı olgu: ${fmt(eco.freshCalls)} çağrı eski bağlamla yeniden fiyatlandı (1M sınırlı), geçiş maliyeti düşüldü.`] });
 }
 
 // ---------- SVG files for the PNG export (png.mjs renders them, through the heavy lock) ----------
@@ -261,7 +271,7 @@ ${failRows.map((r) => `<tr><td><code class="dc-code">${r.key}</code></td><td>${r
 </tbody></table></div>` : '<p class="dc-p">Başarısız koşu yok.</p>'}
 ${eco ? `<h2 class="dc-h2">Eco: gerçek oturumlardan</h2>
 ${fig('eco', `Son ${eco.days} günde ${eco.vaults} projede ${eco.handoffs} devir.`)}
-<p class="dc-p">Nasıl ölçüldü: her devirde eski oturumun bağlamı ve devam eden taze oturum kayıtlı. Taze oturumun her API çağrısını, eski oturum hiç kapanmasaydı taşıyacağı fazla bağlamla (devir bağlamı eksi taze oturumun ilk bağlamı, 1M pencereyle sınırlı) yeniden fiyatladık ve geçişin kendi maliyetini (taze oturumun ilk bağlamını önbelleğe yazması) düştük. Bu bir karşı olgu hesabı: eski oturumun aynı çağrıları yapacağını varsayar; zincirleme devirlerin birikimini saymadığı için ihtiyatlı. Medyan devir ${fmt(eco.medianHandoffCtx / 1000)}k tokende oldu, taze oturum ${fmt(eco.medianFreshCtx / 1000)}k ile başladı (çeyrekler arası düşüş %${fmt(eco.p25Drop * 100)}-%${fmt(eco.p75Drop * 100)}). Devirden sonraki işte okunan girdi tokeninin %${fmt(eco.shareOfInputAvoided * 100)}'i Eco sayesinde hiç okunmadı. Kısa işlerde (bağlam ${fmt(300)}k'ya varmadan biten) Eco hiçbir şeyi değiştirmez.</p>` : ''}
+<p class="dc-p">Nasıl ölçüldü: her devirde eski oturumun bağlamı ve devam eden taze oturum kayıtlı. Taze oturumun her API çağrısını, eski oturum hiç kapanmasaydı taşıyacağı fazla bağlamla (devir bağlamı eksi taze oturumun ilk bağlamı, 1M pencereyle sınırlı) yeniden fiyatladık ve geçişin kendi maliyetini (taze oturumun ilk bağlamını önbelleğe yazması) düştük. Bu bir karşı olgu hesabı: eski oturumun aynı çağrıları yapacağını varsayar; zincirleme devirlerin birikimini saymadığı için ihtiyatlı. Medyan devir ${fmt(eco.medianHandoffCtx / 1000)}k tokende oldu, taze oturum ${fmt(eco.medianFreshCtx / 1000)}k ile başladı (çeyrekler arası düşüş %${fmt(eco.p25Drop * 100)}-%${fmt(eco.p75Drop * 100)}). Devirden sonraki işte okunan girdi tokeninin %${fmt(eco.shareOfInputAvoided * 100)} kadarı Eco sayesinde hiç okunmadı. Kısa işlerde (bağlam ${fmt(300)}k'ya varmadan biten) Eco hiçbir şeyi değiştirmez.</p>` : ''}
 <h2 class="dc-h2">Yöntem</h2>
 <ul class="dc-list">
 <li><strong class="dc-strong">Proje:</strong> kurgu bir gıda bankası envanter aracı (TypeScript, vitest, 8 kaynak dosya), dreamcontext beyni ve bu dalın kancaları kurulu. Gerçek proje, kişi ya da sır yok.</li>
