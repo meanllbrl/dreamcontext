@@ -3,7 +3,7 @@
 // same; a wrong password costs a step of a per-IP limiter keyed on Cloudflare's own header.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { closeAllShares, openShare, type Share } from '../../src/server/shares/registry.js';
-import { DOOR_CSP, LoginLimiter, SESSION_CAP } from '../../src/server/shares/door.js';
+import { DOOR_CSP, LoginLimiter, SESSION_CAP, SHARE_LOGIN_PER_MINUTE, limiterKey } from '../../src/server/shares/door.js';
 import { fakeKind, fakeWorld, openAndWait, sessionCookie, viaTunnel, type FakeWorld, type KindSpy } from './share-fixture.js';
 
 let world: FakeWorld;
@@ -161,12 +161,75 @@ describe('the link with a password (K5)', () => {
   });
 });
 
+describe('the password door under parallel and spread-out guessing (K5)', () => {
+  const PW = 'kuzey-limon-pencere';
+  const ticketOf = async (s: Share): Promise<string> => {
+    const r = await viaTunnel(s, 'GET', `/k/${s.token}`, HTML);
+    return (r.headers['set-cookie'] ?? []).find((l) => l.startsWith('__Host-dct='))!.split(';')[0];
+  };
+  const login = (s: Share, ticket: string, pw: string, ip: string) => viaTunnel(s, 'POST', '/__share/login', {
+    cookie: ticket, origin: s.origin ?? '', 'content-type': 'application/x-www-form-urlencoded', 'cf-connecting-ip': ip,
+  }, `p=${encodeURIComponent(pw)}`);
+
+  it('serves the password page same-origin so a real browser keeps its Origin on the POST', async () => {
+    const s = await open(PW);
+    const r = await viaTunnel(s, 'GET', `/k/${s.token}`, HTML);
+    expect(r.headers['referrer-policy']).toBe('same-origin');
+    expect(r.body).toContain('<meta name="referrer" content="same-origin">');
+    // Every other door page stays no-referrer.
+    expect((await viaTunnel(s, 'GET', '/__share/closed', HTML)).headers['referrer-policy']).toBe('no-referrer');
+    // A browser never sends Origin: null from that page, and the door still refuses one.
+    const ticket = await ticketOf(s);
+    expect((await viaTunnel(s, 'POST', '/__share/login', { cookie: ticket, origin: 'null', 'cf-connecting-ip': '203.0.113.7' }, `p=${PW}`)).status).toBe(401);
+  });
+
+  it('checks at most 5 of 20 parallel wrong posts from one IP against the password', async () => {
+    const s = await open(PW);
+    const ticket = await ticketOf(s);
+    const replies = await Promise.all(Array.from({ length: 20 }, () => login(s, ticket, 'yanlis-sifre-123', '203.0.113.7')));
+    expect(replies.filter((r) => r.status === 401).length).toBe(5);
+    expect(replies.filter((r) => r.status === 429).length).toBe(15);
+  });
+
+  it('counts a whole IPv6 /64 as one address', async () => {
+    const s = await open(PW);
+    const ticket = await ticketOf(s);
+    for (let i = 1; i <= 5; i++) expect((await login(s, ticket, 'yanlis-sifre-123', `2001:db8:1:2::${i.toString(16)}`)).status).toBe(401);
+    expect((await login(s, ticket, PW, '2001:0db8:0001:0002:ffff:0:0:9')).status).toBe(429);
+    expect((await login(s, ticket, PW, '2001:db8:1:3::1')).status).toBe(200);
+  });
+
+  it('caps wrong tries per share per minute whatever the addresses', async () => {
+    const s = await open(PW);
+    const ticket = await ticketOf(s);
+    let ip = 0;
+    for (let i = 0; i < SHARE_LOGIN_PER_MINUTE; i++) expect((await login(s, ticket, 'yanlis-sifre-123', `198.51.100.${(ip++ % 200) + 1}`)).status).toBe(401);
+    expect((await login(s, ticket, PW, '192.0.2.1')).status).toBe(429);
+    world.now += 61_000;
+    expect((await login(s, ticket, PW, '192.0.2.1')).status).toBe(200);
+  });
+});
+
 describe('LoginLimiter', () => {
-  it('counts only wrong tries within the last minute, per key', () => {
+  it('takes a slot at admission, per key, within the last minute; a refund gives it back', () => {
     const l = new LoginLimiter(5);
-    for (let i = 0; i < 5; i++) { expect(l.allowed('a', 1000)).toBe(true); l.fail('a', 1000); }
-    expect(l.allowed('a', 1000)).toBe(false);
-    expect(l.allowed('b', 1000)).toBe(true);
-    expect(l.allowed('a', 61_001)).toBe(true);
+    const stamps: number[] = [];
+    for (let i = 0; i < 5; i++) stamps.push(l.admit('a', 1000)!);
+    expect(stamps.every((t) => t === 1000)).toBe(true);
+    expect(l.admit('a', 1000)).toBeNull();
+    expect(l.admit('b', 1000)).toBe(1000);
+    l.refund('a', stamps[0]);
+    expect(l.admit('a', 1000)).toBe(1000);
+    expect(l.admit('a', 1000)).toBeNull();
+    expect(l.admit('a', 61_001)).toBe(61_001);
+  });
+
+  it('keys IPv4 as is, IPv6 by its /64, IPv4-mapped IPv6 as IPv4', () => {
+    expect(limiterKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(limiterKey('2001:db8:1:2::5')).toBe('2001:db8:1:2::/64');
+    expect(limiterKey('2001:0DB8:0001:0002:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::/64');
+    expect(limiterKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(limiterKey('::1')).toBe('0:0:0:0::/64');
+    expect(limiterKey('::ffff:198.51.100.4')).toBe('198.51.100.4');
   });
 });

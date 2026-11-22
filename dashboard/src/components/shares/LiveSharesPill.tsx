@@ -13,8 +13,11 @@ import './ShareSheet.css';
  * the sidebar (or a row on the new shell's rail) while any link is starting, open or broken; its
  * list names each with who is connected and whether it has a password, and Kopyala, Kapat and
  * Hepsini kapat work from there. No link: nothing is drawn.
+ *
+ * Every shell that draws it gets a face that fits: the text pill in the open sidebar; the glyph
+ * and dot (name in aria-label and data-tip) on the new shell's rail and in the collapsed sidebar.
  */
-export function LiveSharesPill({ variant }: { variant: 'sidebar' | 'rail' }) {
+export function LiveSharesPill({ variant, collapsed = false }: { variant: 'sidebar' | 'rail'; collapsed?: boolean }) {
   const t = useShareT();
   const rows = useLiveShares();
   const pill = pillState(rows.data);
@@ -26,21 +29,22 @@ export function LiveSharesPill({ variant }: { variant: 'sidebar' | 'rail' }) {
 
   if (!pill && !again) return null;
   const label = pill ? t(pill.count === 1 ? 'liveShare.pill.one' : 'liveShare.pill.other', { n: String(pill.count) }) : '';
+  const glyphFace = variant === 'rail' || collapsed;
   return (
     <>
-      {pill && (variant === 'sidebar' ? (
+      {pill && (!glyphFace ? (
         <button ref={btn} type="button" className="live-pill" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)} data-testid="live-shares-pill">
           <span className={`live-share__dot${pill.bad ? ' live-share__dot--bad' : ''}`} aria-hidden="true" />
           {label}
         </button>
       ) : (
-        <button ref={btn} type="button" className="ns-rail-btn live-rail" aria-expanded={open} aria-haspopup="dialog" aria-label={label} data-tip={label} onClick={() => setOpen((o) => !o)} data-testid="live-shares-pill">
+        <button ref={btn} type="button" className={variant === 'rail' ? 'ns-rail-btn live-rail' : 'live-pill live-pill--glyph live-rail'} aria-expanded={open} aria-haspopup="dialog" aria-label={label} data-tip={label} onClick={() => setOpen((o) => !o)} data-testid="live-shares-pill">
           <LinkGlyph />
           <span className={`live-share__dot${pill.bad ? ' live-share__dot--bad' : ''}`} aria-hidden="true" />
         </button>
       ))}
-      {open && pill && <SharesPopover anchor={btn.current} side={variant === 'rail' ? 'right' : 'above'} rows={rows.data ?? []} onClose={() => setOpen(false)} onAgain={(s) => { setOpen(false); setAgain(s); }} />}
-      {again && <ShareSheet kind={again.kind} vault={again.vault} slug={again.slug} name={again.name} onClose={() => setAgain(null)} />}
+      {open && pill && <SharesPopover anchor={btn.current} side={glyphFace ? 'right' : 'above'} rows={rows.data ?? []} onClose={() => setOpen(false)} onAgain={(s) => { setOpen(false); setAgain(s); }} />}
+      {again && <ShareSheet kind={again.kind} vault={again.vault} slug={again.slug} name={again.name} prior={{ ai: again.ai, password: again.password }} onClose={() => setAgain(null)} />}
     </>
   );
 }
@@ -99,7 +103,10 @@ function SharesPopover({ anchor, side, rows, onClose, onAgain }: { anchor: HTMLE
               {s.state === 'broken' ? (
                 <span className="live-share__live"><span className="live-share__dot live-share__dot--bad" aria-hidden="true" />{t('liveShare.pop.broken')}</span>
               ) : s.state === 'starting' ? (
-                <span className="live-share__live"><span className="live-share__spin" aria-hidden="true" />{t(`liveShare.stage.${s.stage ?? 'download'}`, { n: String(stageStep(s.stage)) })}</span>
+                <>
+                  <span className="live-share__live"><span className="live-share__spin" aria-hidden="true" />{t(`liveShare.stage.${s.stage ?? 'download'}`, { n: String(stageStep(s.stage)) })}</span>
+                  <span>· {t(s.password ? 'liveShare.pop.withPw' : 'liveShare.pop.noPw')}</span>
+                </>
               ) : (
                 <>
                   {s.people > 0

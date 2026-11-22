@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { ApiClient } from '../../api/client';
 import { useApi } from '../../context/VaultContext';
 import { Sheet, useShareT } from '../apps/Sheet';
 import { Toggle } from '../settings/SettingRow';
@@ -25,18 +27,58 @@ export interface ShareSheetProps {
   agent?: string | null;
   /** app: stopped by the owner (no link until it runs again). */
   stopped?: boolean;
+  /** A link being opened again (the pill's Yeniden aç): its AI and password choices seed the form. */
+  prior?: { ai: boolean; password: boolean };
 }
 
-export function ShareSheet({ kind, vault, slug, name, onClose, settingsLine, agent, stopped }: ShareSheetProps) {
+interface AppFacts { agent: string | null; settingsLine: string | null; stopped: boolean; loading: boolean }
+
+/**
+ * app: what the form says about the app (its agent, the keys line, stopped). Taken from the
+ * caller when it passed them (the app page); otherwise read from the app itself by vault and slug,
+ * so a form opened from anywhere (the pill) never shows less than the app page's form does.
+ * Same query keys as the Apps page and the app page: one cache.
+ */
+function useAppFacts(kind: ShareKind, vault: string, slug: string, given: Pick<ShareSheetProps, 'agent' | 'settingsLine' | 'stopped'>): AppFacts {
+  const vapi = useMemo(() => new ApiClient(vault), [vault]);
+  const needRow = kind === 'app' && (given.agent === undefined || given.stopped === undefined);
+  const needStore = kind === 'app' && given.settingsLine === undefined;
+  const apps = useQuery({
+    queryKey: ['apps', vault],
+    queryFn: () => vapi.get<{ apps: Array<{ slug: string; agent?: string | null; stoppedByOwner?: boolean }> }>('/apps'),
+    enabled: needRow,
+    staleTime: 3000,
+  });
+  const store = useQuery({
+    queryKey: ['app-store', vault, slug],
+    queryFn: () => vapi.get<{ can?: Array<{ kind: string; text: string }> }>(`/apps/${encodeURIComponent(slug)}/store`),
+    enabled: needStore,
+    staleTime: 10_000,
+  });
+  const row = apps.data?.apps.find((a) => a.slug === slug);
+  return {
+    agent: given.agent !== undefined ? given.agent : (row?.agent ?? null),
+    stopped: given.stopped !== undefined ? given.stopped : !!row?.stoppedByOwner,
+    settingsLine: given.settingsLine !== undefined ? given.settingsLine : (store.data?.can?.find((c) => c.kind === 'settings')?.text ?? null),
+    loading: (needRow && apps.isPending) || (needStore && store.isPending),
+  };
+}
+
+export function ShareSheet({ kind, vault, slug, name, onClose, prior, ...given }: ShareSheetProps) {
   const api = useApi();
   const t = useShareT();
   const refresh = useRefreshShares();
   const rows = useLiveShares();
   const share = shareFor(rows.data, kind, vault, slug);
   const phase = sheetPhase(share);
+  const facts = useAppFacts(kind, vault, slug, given);
+  const { agent, settingsLine, stopped } = facts;
 
-  const [ai, setAi] = useState(false);
-  const [pwOn, setPwOn] = useState(false);
+  // The AI choice starts from the link being opened again (a broken row, or the pill's prior),
+  // never silently off; the owner's own flip wins.
+  const [aiPick, setAi] = useState<boolean | null>(null);
+  const ai = aiPick ?? !!(prior?.ai ?? (share?.state === 'broken' ? share.ai : false));
+  const [pwOn, setPwOn] = useState(!!prior?.password);
   const [pw, setPw] = useState(() => suggestPassword());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -146,7 +188,7 @@ export function ShareSheet({ kind, vault, slug, name, onClose, settingsLine, age
     foot = (
       <>
         <button type="button" className="app-card__stop" onClick={onClose}>{t('liveShare.cancel')}</button>
-        <button type="button" className="app-card__launch" disabled={busy || !!stopped} onClick={() => void start()}>{t('liveShare.open')}</button>
+        <button type="button" className="app-card__launch" disabled={busy || !!stopped || facts.loading} onClick={() => void start()}>{t('liveShare.open')}</button>
       </>
     );
   } else if (phase === 'starting') {

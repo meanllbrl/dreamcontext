@@ -298,7 +298,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
       <div className="sidebar-footer">
         {/* "Projelerden bağımsız": the Global ekip row (plan-r10 1f, r8-12). */}
         {/* Open live links, always in sight while one exists (tunel-paylasim). */}
-        {!tunnel && <LiveSharesPill variant="sidebar" />}
+        {!tunnel && <LiveSharesPill variant="sidebar" collapsed={collapsed} />}
         {!tunnel && <SidebarTeam kind="global" />}
 
         {tunnel ? null : signedIn && hasRemote ? (

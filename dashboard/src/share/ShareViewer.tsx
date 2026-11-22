@@ -2,20 +2,22 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import './ShareViewer.css';
-import { GONE_AFTER_MS, initialViewer, kindLabel, onBoard, onPoll, POLL_MS, type PollAnswer, type ViewerState } from './viewerModel';
+import { initialViewer, kindLabel, nextPollMs, onBoard, onPoll, POLL_MS, type PollAnswer, type ViewerState } from './viewerModel';
 
 /**
  * A live link's board, for the guest (tunel-paylasim C7, D5): live and read-only. It reads only
  * the share's own `/__share/*` routes; it never imports the dashboard (no VaultContext, no
- * dashboard API), and its widget cards show a kind and a title, nothing else.
+ * dashboard API). Its widget cards show what the guest view keeps: a kind and a title, plus a
+ * note's text and a todo's items (src/lib/whiteboards/guest-view.ts).
  */
 
 interface GuestWidget { kind?: string; title?: string; markdown?: string; items?: Array<{ text: string; done: boolean }> }
 interface BoardBody { name?: string; rev?: string; elements?: unknown[] }
 
+type GuestFile = { id: string; mimeType: string; dataURL: string; created: number };
 type Api = {
   updateScene: (s: { elements?: readonly unknown[] }) => void;
-  addFiles: (files: Array<{ id: string; mimeType: string; dataURL: string; created: number }>) => void;
+  addFiles: (files: GuestFile[]) => void;
   scrollToContent: (target?: unknown, opts?: unknown) => void;
 };
 
@@ -74,7 +76,17 @@ export default function ShareViewer(): ReactNode {
   const stateRef = useRef(state);
   const apiRef = useRef<Api | null>(null);
   const loaded = useRef(new Set<string>());
+  // Pictures fetched before Excalidraw handed back its API wait here and go in when it does.
+  const pending = useRef<GuestFile[]>([]);
   stateRef.current = state;
+
+  // Gone unmounts the canvas: its API and pictures are dropped, a reopen mounts a fresh one.
+  useEffect(() => {
+    if (state.phase !== 'gone') return;
+    apiRef.current = null;
+    loaded.current.clear();
+    pending.current = [];
+  }, [state.phase]);
 
   useEffect(() => {
     if (typeof matchMedia !== 'function') return;
@@ -96,7 +108,9 @@ export default function ShareViewer(): ReactNode {
         const r = await fetch(`/__share/files/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
         if (!r.ok) { loaded.current.delete(id); continue; }
         const blob = await r.blob();
-        apiRef.current?.addFiles([{ id, mimeType: blob.type, dataURL: await dataUrlOf(blob), created: Date.now() }]);
+        const file: GuestFile = { id, mimeType: blob.type, dataURL: await dataUrlOf(blob), created: Date.now() };
+        if (apiRef.current) apiRef.current.addFiles([file]);
+        else pending.current.push(file);
       } catch { loaded.current.delete(id); }
     }
   }, []);
@@ -122,14 +136,15 @@ export default function ShareViewer(): ReactNode {
     const tick = async () => {
       if (stop) return;
       const cur = stateRef.current;
-      if (cur.phase === 'closed' || cur.phase === 'gone') return;
+      if (cur.phase === 'closed') return;
       const a = await ask('/__share/rev');
       if (stop) return;
       const step = onPoll(stateRef.current, a, Date.now());
       setState(step.state);
       if (step.refetch) await fetchBoard();
-      // A miss is checked again sooner, so a gone board reads as gone within the rule's window.
-      t = window.setTimeout(tick, step.state.missSince !== null ? Math.min(POLL_MS, GONE_AFTER_MS) : POLL_MS);
+      if (step.state.phase === 'closed') return;
+      // Gone keeps asking, slower, and opens again when the board answers.
+      t = window.setTimeout(tick, nextPollMs(step.state));
     };
     t = window.setTimeout(tick, POLL_MS);
     return () => { stop = true; window.clearTimeout(t); };
@@ -152,6 +167,7 @@ export default function ShareViewer(): ReactNode {
           <Excalidraw
             excalidrawAPI={(api) => {
               apiRef.current = api as unknown as Api;
+              if (pending.current.length) { apiRef.current.addFiles(pending.current); pending.current = []; }
               try { apiRef.current.scrollToContent(undefined, { fitToContent: true, animate: false }); } catch { /* not ready */ }
             }}
             initialData={{ elements: first.elements ?? [], appState: { viewBackgroundColor: 'transparent' }, scrollToContent: true } as never}

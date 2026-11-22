@@ -1,8 +1,9 @@
 // The live-link board viewer's state machine (dashboard/src/share/viewerModel.ts, tunel-paylasim C7,
 // D13): open, closed at once on 410/401, a single miss keeps the last frame, a second miss ≥ 5 s
-// later reads as gone, a non-JSON edge page never crashes it, and a closed viewer never reopens.
+// later reads as gone, the guest's own network failing never counts, a non-JSON edge page never
+// crashes it, gone keeps asking slower and opens again, and only a closed viewer never reopens.
 import { describe, it, expect } from 'vitest';
-import { GONE_AFTER_MS, initialViewer, kindLabel, onBoard, onPoll, type ViewerState } from '../../dashboard/src/share/viewerModel.js';
+import { GONE_AFTER_MS, GONE_POLL_MS, POLL_MS, initialViewer, kindLabel, nextPollMs, onBoard, onPoll, type ViewerState } from '../../dashboard/src/share/viewerModel.js';
 
 const ok = (rev: string) => ({ status: 200, body: { rev } });
 
@@ -30,7 +31,7 @@ describe('viewer model', () => {
     expect(miss1.missSince).toBe(1000);
     const miss2 = onPoll(miss1, { status: 404, body: null }, 1000 + GONE_AFTER_MS - 1).state;
     expect(miss2.phase).toBe('open');
-    expect(onPoll(miss2, { status: 0, body: null }, 1000 + GONE_AFTER_MS).state.phase).toBe('gone');
+    expect(onPoll(miss2, { status: 530, body: null }, 1000 + GONE_AFTER_MS).state.phase).toBe('gone');
     const healed = onPoll(miss1, ok('r1'), 4000).state;
     expect(healed.missSince).toBeNull();
     expect(onPoll(healed, { status: 404, body: null }, 7000).state.phase).toBe('open');
@@ -44,12 +45,33 @@ describe('viewer model', () => {
     expect(onPoll(open, { status: 200, body: { rev: 7 } }, 0).state.missSince).toBe(0);
   });
 
-  it('closed or gone never reopens, whatever comes next', () => {
-    for (const phase of ['closed', 'gone'] as const) {
-      const s: ViewerState = { phase, rev: 'r1', missSince: null };
-      expect(onPoll(s, ok('r9'), 0)).toEqual({ state: s, refetch: false });
-      expect(onBoard(s, 'r9')).toBe(s);
-    }
+  it("the guest's own network failing (status 0) never counts toward gone, however long", () => {
+    const open: ViewerState = { phase: 'open', rev: 'r1', missSince: null };
+    let s = open;
+    for (let t = 0; t <= 60_000; t += POLL_MS) s = onPoll(s, { status: 0, body: null }, t).state;
+    expect(s).toEqual(open);
+    // Nor does it extend or end a run of real misses.
+    const miss1 = onPoll(open, { status: 530, body: null }, 1000).state;
+    expect(onPoll(miss1, { status: 0, body: null }, 9000).state).toEqual(miss1);
+  });
+
+  it('gone keeps asking slower and opens again on a good rev; a 410 then closes it', () => {
+    const gone: ViewerState = { phase: 'gone', rev: 'r1', missSince: 1000 };
+    expect(nextPollMs(gone)).toBe(GONE_POLL_MS);
+    expect(nextPollMs({ ...gone, phase: 'open' })).toBe(POLL_MS);
+    expect(onPoll(gone, { status: 530, body: null }, 99_000)).toEqual({ state: gone, refetch: false });
+    const back = onPoll(gone, ok('r1'), 99_000);
+    expect(back).toEqual({ state: { phase: 'loading', rev: null, missSince: null }, refetch: true });
+    expect(onBoard(back.state, 'r1')).toEqual({ phase: 'open', rev: 'r1', missSince: null });
+    expect(onPoll(gone, { status: 410, body: null }, 99_000).state.phase).toBe('closed');
+    // A board that arrives while still gone is ignored (the canvas is not mounted).
+    expect(onBoard(gone, 'r9')).toBe(gone);
+  });
+
+  it('closed never reopens, whatever comes next', () => {
+    const s: ViewerState = { phase: 'closed', rev: 'r1', missSince: null };
+    expect(onPoll(s, ok('r9'), 0)).toEqual({ state: s, refetch: false });
+    expect(onBoard(s, 'r9')).toBe(s);
   });
 
   it('every widget kind has a Turkish label; an unknown kind is a plain card', () => {

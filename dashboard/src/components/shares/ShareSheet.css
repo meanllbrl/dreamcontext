@@ -49,6 +49,9 @@
 .live-pill:focus-visible, .live-rail:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .live-rail { position: relative; }
 .live-rail .live-share__dot { position: absolute; right: 8px; top: 8px; }
+/* The collapsed classic sidebar (56 px): the rail's face, a square glyph button with its dot. */
+.live-pill--glyph { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: var(--radius-md); margin-inline: auto; }
+.live-pill--glyph .live-share__dot { right: 6px; top: 6px; }
 
 .live-pop {
   position: fixed; z-index: 1000; width: min(460px, calc(100vw - 32px));

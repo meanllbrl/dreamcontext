@@ -1,15 +1,18 @@
 /**
  * The door of a live link (plan C2, C3, D6, D7): the only routes a request without a guest session
  * reaches. `GET /k/<token>` (the link), `GET|POST /__share/login` (the optional password),
- * `GET /__share/closed`. Every answer here: `no-store`, `no-referrer`, a CSP that runs no script,
+ * `GET /__share/closed`. Every answer here: `no-store`, no referrer to another site, a CSP that runs no script,
  * and no request input echoed. An unknown token, a wrong token and a closed share all get the SAME
  * page (no oracle).
  *
  * Session: `__Host-dcs` (Secure, HttpOnly, SameSite=Strict, Path=/, no Domain), set on a small
  * same-origin page that then opens `/`, so Strict holds on the first navigation from a chat app.
  * With a password: a 5-minute single-use door ticket (`__Host-dct`) first, consumed only by the
- * right password; a wrong one costs a step of a per-IP limiter (5 per minute) keyed on
- * `cf-connecting-ip` (Cloudflare sets it; a client-sent one is refused at the edge, spike S1).
+ * right password. Every try takes a slot of a per-IP limiter (5 per minute, an IPv6 address by
+ * its /64) and of a per-share one (30 per minute) BEFORE its body is read; the right password
+ * gives both back. The IP is `cf-connecting-ip` (Cloudflare sets it; a client-sent one is refused
+ * at the edge, spike S1). The password page alone is `same-origin` (a form POST from a
+ * `no-referrer` page carries `Origin: null`); every other door page is `no-referrer`.
  * The token, the ticket and the password are never logged.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -84,28 +87,41 @@ function liveTicket(share: Share, req: IncomingMessage, now: number): string | n
 
 // ─── The per-IP password limiter ────────────────────────────────────────────
 
+/** Wrong tries a whole share takes per minute, whatever the addresses (an IPv6 block has many). */
+export const SHARE_LOGIN_PER_MINUTE = 30;
+const LIMITER_KEYS_MAX = 10_000;
+
+/**
+ * A sliding one-minute window per key. An attempt takes its slot when it is ADMITTED, before any
+ * await, so parallel attempts see each other; the right password gives its slot back.
+ */
 export class LoginLimiter {
   private hits = new Map<string, number[]>();
   constructor(private readonly perMinute = LOGIN_PER_MINUTE) {}
-  /** True when `ip` still may try (and counts nothing). */
-  allowed(ip: string, now: number): boolean {
-    const h = (this.hits.get(ip) ?? []).filter((t) => t > now - 60_000);
-    this.hits.set(ip, h);
-    return h.length < this.perMinute;
-  }
-  /** A wrong password from `ip`. */
-  fail(ip: string, now: number): void {
-    const h = (this.hits.get(ip) ?? []).filter((t) => t > now - 60_000);
+  /** Takes a slot for `key` and returns its stamp, or null when the minute's slots are spent. */
+  admit(key: string, now: number): number | null {
+    const h = (this.hits.get(key) ?? []).filter((t) => t > now - 60_000);
+    if (h.length >= this.perMinute) { this.hits.set(key, h); return null; }
     h.push(now);
-    this.hits.set(ip, h);
-    if (this.hits.size > 10_000) this.hits.delete(this.hits.keys().next().value as string);
+    this.hits.delete(key);
+    this.hits.set(key, h);
+    while (this.hits.size > LIMITER_KEYS_MAX) this.hits.delete(this.hits.keys().next().value as string);
+    return now;
+  }
+  /** Gives back a slot `admit` took (the password was right). */
+  refund(key: string, stamp: number): void {
+    const h = this.hits.get(key);
+    if (!h) return;
+    const i = h.lastIndexOf(stamp);
+    if (i >= 0) h.splice(i, 1);
   }
 }
 
-const limiters = new WeakMap<Share, LoginLimiter>();
-function limiterOf(share: Share): LoginLimiter {
+interface ShareLimiters { perIp: LoginLimiter; perShare: LoginLimiter }
+const limiters = new WeakMap<Share, ShareLimiters>();
+function limitersOf(share: Share): ShareLimiters {
   let l = limiters.get(share);
-  if (!l) { l = new LoginLimiter(); limiters.set(share, l); }
+  if (!l) { l = { perIp: new LoginLimiter(), perShare: new LoginLimiter(SHARE_LOGIN_PER_MINUTE) }; limiters.set(share, l); }
   return l;
 }
 
@@ -113,6 +129,24 @@ function limiterOf(share: Share): LoginLimiter {
 export function clientIp(req: IncomingMessage): string | null {
   const v = req.headers['cf-connecting-ip'];
   return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+}
+
+/**
+ * The limiter key of an address: an IPv4 address as is, an IPv6 address by its /64 (one holder of
+ * a /64 has 2^64 addresses). An IPv4-mapped IPv6 address counts as its IPv4 address.
+ */
+export function limiterKey(ip: string): string {
+  const a = ip.toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  if (!a.includes(':')) return a;
+  const mapped = /^(?:[0:]*:)?ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (mapped) return mapped[1];
+  const [head, tail = ''] = a.split('::', 2) as [string, string?];
+  const left = head ? head.split(':') : [];
+  const right = a.includes('::') && tail ? tail.split(':') : [];
+  const fill = a.includes('::') ? Array(Math.max(0, 8 - left.length - right.length)).fill('0') : [];
+  const groups = [...left, ...fill, ...right].slice(0, 4).map((g) => (g.replace(/^0+(?=.)/, '') || '0'));
+  while (groups.length < 4) groups.push('0');
+  return `${groups.join(':')}::/64`;
 }
 
 // ─── Pages ──────────────────────────────────────────────────────────────────
@@ -136,17 +170,24 @@ const PAGE_STYLE = [
   'footer{text-align:center;font-size:11px;color:var(--text2);padding:16px}',
 ].join('');
 
-function page(title: string, body: string): string {
+/**
+ * A door page's referrer policy. `no-referrer` everywhere except a page that holds a form:
+ * browsers send `Origin: null` on a POST from a `no-referrer` page, and the login checks Origin.
+ * `same-origin` keeps the real Origin and still sends nothing to another site.
+ */
+type DoorReferrer = 'no-referrer' | 'same-origin';
+
+function page(title: string, body: string, referrer: DoorReferrer = 'no-referrer'): string {
   return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`
-    + `<meta name="referrer" content="no-referrer"><title>${escapeHtml(title)}</title><style>${PAGE_STYLE}</style></head>`
+    + `<meta name="referrer" content="${referrer}"><title>${escapeHtml(title)}</title><style>${PAGE_STYLE}</style></head>`
     + `<body><main>${body}</main><footer>dreamcontext canlı link</footer></body></html>`;
 }
 
-function doorHeaders(extra: Record<string, string | string[]> = {}): Record<string, string | string[]> {
+function doorHeaders(extra: Record<string, string | string[]> = {}, referrer: DoorReferrer = 'no-referrer'): Record<string, string | string[]> {
   return {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer',
+    'Referrer-Policy': referrer,
     'Content-Security-Policy': DOOR_CSP,
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
@@ -189,12 +230,12 @@ function passwordPage(share: Share, error: string | null): string {
     + '<label for="p">Şifre</label><input id="p" name="p" type="password" autocomplete="current-password" autofocus required maxlength="200">'
     + (error ? `<p class="err" role="alert">${escapeHtml(error)}</p>` : '')
     + '<button type="submit">Aç</button></form>'
-    + '<p class="en" lang="en">Enter the password to open it.</p>');
+    + '<p class="en" lang="en">Enter the password to open it.</p>', 'same-origin');
 }
 
 function sendPasswordPage(res: ServerResponse, share: Share, status: number, error: string | null, setCookie?: string): void {
   const html = passwordPage(share, error);
-  res.writeHead(status, doorHeaders({ 'Content-Length': String(Buffer.byteLength(html)), ...(setCookie ? { 'Set-Cookie': setCookie } : {}) }));
+  res.writeHead(status, doorHeaders({ 'Content-Length': String(Buffer.byteLength(html)), ...(setCookie ? { 'Set-Cookie': setCookie } : {}) }, 'same-origin'));
   res.end(html);
 }
 
@@ -266,8 +307,13 @@ export async function handleDoor(share: Share, req: IncomingMessage, res: Server
     if (!ip) { req.resume(); sendUnavailable(req, res); return true; }
     const ticket = liveTicket(share, req, now);
     if (!ticket) { req.resume(); sendUnavailable(req, res); return true; }
-    const limiter = limiterOf(share);
-    if (!limiter.allowed(ip, now)) {
+    // The attempt takes its slots NOW, before the body is awaited: parallel posts see each other.
+    const { perIp, perShare } = limitersOf(share);
+    const key = limiterKey(ip);
+    const ipSlot = perIp.admit(key, now);
+    const shareSlot = ipSlot === null ? null : perShare.admit('*', now);
+    if (ipSlot === null || shareSlot === null) {
+      if (ipSlot !== null) perIp.refund(key, ipSlot);
       req.resume();
       sendPasswordPage(res, share, 429, 'Çok fazla deneme. Bir dakika sonra yeniden dene.');
       return true;
@@ -277,10 +323,11 @@ export async function handleDoor(share: Share, req: IncomingMessage, res: Server
     const given = form?.get('p') ?? '';
     const right = given.length > 0 && given.length <= 200 && timingSafeEqual(digest(given), share.passwordDigest);
     if (!right) {
-      limiter.fail(ip, now);
       sendPasswordPage(res, share, 401, 'Şifre yanlış.');
       return true;
     }
+    perIp.refund(key, ipSlot);
+    perShare.refund('*', shareSlot);
     share.tickets.delete(ticket);
     sendBounce(res, mintSession(share, now), true);
     return true;
