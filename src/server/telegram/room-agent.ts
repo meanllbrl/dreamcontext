@@ -800,7 +800,7 @@ export class RoomRunner {
       const speak = this.deps.speak ?? this.hub.deps.speakSummary ?? ((t: string) => speakSummary(t, { home: this.hub.home, signal: AbortSignal.timeout(VOICE_DEADLINE_MS) }));
       r = await speak(v.text);
     } catch { r = { ok: false, reason: 'failed' }; }
-    if (r.ok && await this.hub.sendRoom(ab, chatId, 'room-voice', voiceCaptionHtml(v.title), { kind: 'voice', file: { name: 'ozet.ogg', data: r.ogg, contentType: 'audio/ogg' }, seconds: r.seconds })) return 'voice';
+    if (r.ok && await this.hub.sendRoom(ab, chatId, 'room-voice', voiceCaptionHtml(v), { kind: 'voice', file: { name: 'ozet.ogg', data: r.ogg, contentType: 'audio/ogg' }, seconds: r.seconds })) return 'voice';
     const asText = await this.sendLong(ab, chatId, v.title ? `${v.title}\n${v.text}` : v.text);
     if (!asText) return false;
     // Told only when its words truly went as text (a refused text is a part not sent).
