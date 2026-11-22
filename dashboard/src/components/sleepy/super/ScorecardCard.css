@@ -23,6 +23,8 @@ button.sc-star:disabled { cursor: progress; }
 .sc-star.is-on { color: var(--color-warning-ink, var(--color-warning)); }
 /* The Super's reading of his words (W3 E12): violet, still filled vs outline by shape. */
 .sc-stars--judged .sc-star.is-on { color: var(--color-accent-ink); }
+/* Its empty stars are violet outlines too (the approved drawing): the whole row reads as the Super's. */
+.sc-stars--judged .sc-star:not(.is-on) { color: color-mix(in srgb, var(--color-accent-ink) 70%, var(--color-bg)); }
 .sc-stars:hover button.sc-star:not(:disabled) { color: var(--color-warning-ink, var(--color-warning)); }
 .sc-stars button.sc-star:hover ~ button.sc-star { color: var(--sc-empty); }
 button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-sm); }

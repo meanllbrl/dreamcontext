@@ -342,6 +342,21 @@ describe('stars under a run in the member\'s chat', () => {
     expect(html).toContain('data-ask="rated"');
     expect(html).toContain('You rated 4 · from Telegram');
   });
+  it('W3: a judged rating in the chat row is the Super\'s, never "You rated"; a correction on it keeps the Super\'s stars', () => {
+    const d = rated();
+    d.card.ratings['conor::jd'] = rating(2, {
+      by: 'super', via: 'super', judged: true, quote: 'bütçeyi bana sormadan artırmamalıydı',
+      corrections: [{ id: 'co9', note: 'kitleyi de daraltmamalıydı', quoteTurn: 't9', at: iso(1) }],
+    }) as never;
+    const html = render(d, createElement(RunStars, { member: SLUG, sessionKey: 'conor::jd', request: { eligible: true, endedAt: iso(0) } }));
+    expect(html).not.toContain('You rated');
+    expect(html).toContain('Super&#x27;s rating 2, from your words · tap a star to make it yours');
+    expect(html).toContain('aria-label="Super&#x27;s rating"');
+    expect(html).toContain('sc-stars--judged');
+    const cardHtml = card(empty([run('conor::jd', 'Budget raise', 1, { rating: d.card.ratings['conor::jd'] })]), 'full');
+    expect(cardHtml).toContain('Super&#x27;s 2★ kept');
+    expect(cardHtml).not.toContain('your 2★ kept');
+  });
   it('W3: a global member\'s card keys its runs with the project prefix', () => {
     const d = rated();
     d.prefix = '0123456789abcdef/';

@@ -663,7 +663,7 @@ function RatedDetail({ ctx, run, w, onClear }: { ctx: Ctx; run: ScoreRun; w: Sen
         </p>
       )}
       {r.quote && !r.judged && <p className="mcb-muted sc-quote" data-testid="sc-quote">{t('scorecard.fromWords')} «{r.quote}»</p>}
-      {(r.corrections ?? []).map((c) => <CorrectionRow key={c.id} ctx={ctx} run={run} c={c} stars={r.stars} w={w} />)}
+      {(r.corrections ?? []).map((c) => <CorrectionRow key={c.id} ctx={ctx} run={run} c={c} rating={r} w={w} />)}
       {draft?.state === 'running' && <p className="mcb-muted" data-testid="sc-draft-running">{t('scorecard.drafting')}</p>}
       {draft?.state === 'failed' && (
         <p className="sc-failed" data-testid="sc-draft-failed">
@@ -678,14 +678,24 @@ function RatedDetail({ ctx, run, w, onClear }: { ctx: Ctx; run: ScoreRun; w: Sen
   );
 }
 
-/** W3 E13: his words the Super noted beside his own note; his stars and note stay as he left them. */
-function CorrectionRow({ ctx, run, c, stars, w }: { ctx: Ctx; run: ScoreRun; c: ScoreCorrection; stars: number; w: Send }) {
+/**
+ * Whose stars a rating holds, in words (W3 E12): a judged rating is the Super's reading of his words,
+ * never "you rated", and one tap of his makes it his. Every rating line says it through this one.
+ */
+function ratedLine(t: (k: string) => string, r: ScoreRating, kind: 'rated' | 'kept'): string {
+  const n = String(r.stars);
+  if (kind === 'kept') return t(r.judged ? 'scorecard.keptSuper' : 'scorecard.keptYours').replace('{n}', n);
+  return r.judged ? `${t('scorecard.superRated').replace('{n}', n)} · ${t('scorecard.tapToOwn')}` : t('scorecard.youRated').replace('{n}', n);
+}
+
+/** W3 E13: his words the Super noted beside his own note; the stars and his note stay as they were. */
+function CorrectionRow({ ctx, run, c, rating, w }: { ctx: Ctx; run: ScoreRun; c: ScoreCorrection; rating: ScoreRating; w: Send }) {
   const { t } = useI18n();
   const d = c.draft;
   return (
     <div className="sc-correction" data-testid="sc-correction" data-id={c.id}>
       <span><span className="sc-strong">{t('scorecard.superNoted')}</span> «{c.note}»</span>
-      <span className="mcb-muted"> · {t('scorecard.keptYours').replace('{n}', String(stars))}</span>
+      <span className="mcb-muted"> · {ratedLine(t, rating, 'kept')}</span>
       {d?.state === 'running' && <span className="mcb-muted" data-testid="sc-correction-running"> · {t('scorecard.drafting')}</span>}
       {d?.state === 'failed' && (
         <span className="sc-failed" data-testid="sc-correction-failed">
@@ -770,10 +780,10 @@ export function RunStars({ member, sessionKey, request }: {
   return (
     <div className="sc-runstars" data-testid="run-stars" data-run={sessionKey} data-ask={state}>
       <span className="sc-runstars-row">
-        <Stars value={r?.stars ?? 0} judged={!!r?.judged} label={t('scorecard.rateRun')} disabled={w.busy} onRate={rate} />
+        <Stars value={r?.stars ?? 0} judged={!!r?.judged} label={r?.judged ? t('scorecard.superRating') : t('scorecard.rateRun')} disabled={w.busy} onRate={rate} />
         {!r && !cleared && <span className="mcb-muted">{t('scorecard.rateRun')}</span>}
         {!r && cleared && <ClearedUndo onUndo={undoClear} busy={w.busy} />}
-        {r && <span className="mcb-muted" data-testid="run-stars-rated">{t('scorecard.youRated').replace('{n}', String(r.stars))}{r.via === 'telegram' ? ` · ${t('scorecard.fromTelegram')}` : ''}</span>}
+        {r && <span className="mcb-muted" data-testid="run-stars-rated">{ratedLine(t, r, 'rated')}{r.via === 'telegram' ? ` · ${t('scorecard.fromTelegram')}` : ''}</span>}
         {!r?.note && !noting && <button type="button" className="mcb-link" data-testid="run-stars-note" disabled={!r} title={r ? undefined : t('scorecard.starsFirst')} onClick={() => setNoting(true)}>{t('scorecard.addNote')}</button>}
       </span>
       {r?.note && <span className="sc-runstars-note">“{r.note}”</span>}

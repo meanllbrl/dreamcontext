@@ -63,7 +63,7 @@ function state(rate: boolean, held: boolean) {
 
 const brief = superBriefing();
 let cost = 0;
-function claude(prompt: string, resume?: string): { text: string; session: string } {
+function claude(prompt: string, resume?: string, tries = 0): { text: string; session: string } {
   if (DRY) return { text: LINE, session: 'dry' };
   const r = spawnSync('claude', ['-p', '--model', MODEL, '--tools', '', '--output-format', 'json', '--append-system-prompt', brief, '--strict-mcp-config', '--setting-sources', '', ...(resume ? ['--resume', resume] : [])], {
     // On stdin: `--tools` takes several values and would swallow a trailing prompt.
@@ -71,7 +71,11 @@ function claude(prompt: string, resume?: string): { text: string; session: strin
     // The model call signs in as the owner's own CLI (his HOME); the fixtures stay in the temp one.
     cwd: empty, env: realEnv, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024, timeout: 300_000,
   });
-  if (r.status !== 0) throw new Error(`claude exited ${r.status}: ${r.stderr.slice(0, 400)}`);
+  if (r.status !== 0) {
+    // Up to 3 retries: a killed call (143) is the machine, not the model's answer.
+    if (tries < 3) { console.log(`(claude exited ${r.status} ${r.signal ?? ''} at ${new Date().toISOString()}, retry ${tries + 1} of 3)`); spawnSync('sleep', ['20']); return claude(prompt, resume, tries + 1); }
+    throw new Error(`claude exited ${r.status} ${r.signal ?? ''}: ${r.stderr.slice(0, 400)} ${r.stdout.slice(0, 400)}`);
+  }
   const j = JSON.parse(r.stdout) as { result?: string; session_id?: string; total_cost_usd?: number };
   cost += j.total_cost_usd ?? 0;
   return { text: (j.result ?? '').trim(), session: j.session_id ?? '' };
@@ -82,7 +86,9 @@ const voiceOk = (t: string) => {
   const m = /```dream-voice[^\n]*\n([\s\S]*?)```/.exec(t);
   return !m || m[1].trim().endsWith(LINE);
 };
-const rows: Array<{ kind: string; ok: boolean; text: string }> = [];
+const all: Array<{ kind: string; ok: boolean; text: string }> = [];
+// Each reply is printed as it lands, so a run cut short still leaves its evidence.
+const rows = { push: (r: { kind: string; ok: boolean; text: string }) => { console.log(`=== ${r.kind} ${r.ok ? 'PASS' : 'FAIL'} ===\n${r.text}\n`); all.push(r); } };
 
 const rated = state(true, false);
 const batch = superBatchText(root, rated.s, [rated.item], 'b-check');
@@ -94,7 +100,10 @@ for (let i = 0; i < N.mac; i++) {
   rows.push({ kind: 'mac', ok: endsWithLine(r.text) && !/super ask/.test(r.text), text: r.text });
 }
 for (let i = 0; i < N.telegram; i++) {
-  const first = claude(`Meta'ya bu haftanın bütçe planını çıkart.\n<owner-msg ref="tg${String(i).padStart(4, '0')}" via="telegram"/>`);
+  // His ask, from Telegram. With no tools the Super can only stall over how to hand it on (measured:
+  // the call never answered and was killed at ~5 min), so a harness line, outside his message,
+  // says it was handed already. This turn only sets the channel; the measured turn is the next one.
+  const first = claude(`Meta'ya bu haftanın bütçe planını çıkart.\n<owner-msg ref="tg${String(i).padStart(4, '0')}" via="telegram"/>\n[check harness: tools are off here; you already handed this job to Meta with \`dreamcontext super team ask\` and it runs. Reply to him in one short line.]`);
   const r = claude(batch, first.session);
   rows.push({ kind: 'telegram', ok: endsWithLine(r.text) && voiceOk(r.text) && !/super ask/.test(r.text), text: r.text });
 }
@@ -114,10 +123,9 @@ for (let i = 0; i < N.plain; i++) {
   rows.push({ kind: 'plain', ok: !r.text.includes('1-5 yıldız'), text: r.text });
 }
 
-for (const row of rows) console.log(`=== ${row.kind} ${row.ok ? 'PASS' : 'FAIL'} ===\n${row.text}\n`);
-const tally = (k: string) => `${rows.filter((r) => r.kind === k && r.ok).length}/${rows.filter((r) => r.kind === k).length}`;
+const tally = (k: string) => `${all.filter((r) => r.kind === k && r.ok).length}/${all.filter((r) => r.kind === k).length}`;
 console.log(`RESULT mac ${tally('mac')} telegram ${tally('telegram')} held ${tally('held')} plain ${tally('plain')} cost $${cost.toFixed(3)} model ${MODEL}`);
 rmSync(project, { recursive: true, force: true });
 rmSync(home, { recursive: true, force: true });
 rmSync(empty, { recursive: true, force: true });
-process.exit(rows.every((r) => r.ok) ? 0 : 1);
+process.exit(all.every((r) => r.ok) ? 0 : 1);

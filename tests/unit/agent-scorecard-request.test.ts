@@ -212,6 +212,9 @@ describe('the Super rates a job it handed the member (C16)', () => {
     expect(() => rateRun(projectRoot, 'herodot', { run: key, stars: 3, by: 'super', quote: '3, CTA eksikti', note: 'CTA eksikti', home, now: NOW, env, turns: early }))
       .toThrow(/after you asked/);
     const turns = [turn('3, CTA eksikti', '2026-11-20T08:07:00.000Z', 't-3')];
+    // A note cut inside a word is not his words (whole words only).
+    expect(() => rateRun(projectRoot, 'herodot', { run: key, stars: 3, by: 'super', quote: '3, CTA eksikti', note: 'CTA eksik', home, now: NOW, env, turns }))
+      .toThrow(/his own words/);
     const r = rateRun(projectRoot, 'herodot', { run: key, stars: 3, by: 'super', quote: '3, CTA eksikti', note: 'CTA eksikti', home, now: NOW, env, turns });
     expect(r.rating).toMatchObject({ stars: 3, note: 'CTA eksikti' });
     expect(r.draft).toBe(true);
@@ -280,6 +283,52 @@ describe('--judged: the Super\'s own reading of his words (E12)', () => {
     expect(r.keptOwnerStars).toBe(true);
     expect(r.rating).toMatchObject({ stars: 5, by: 'owner' });
     expect(r.rating?.judged).toBeUndefined();
+  });
+});
+
+describe('an agent never takes his words away (E13, review w3 r1)', () => {
+  it('the same correction sent twice, judged or not, keeps his note and drafts once', () => {
+    for (const judged of [false, true]) {
+      const key = run(judged ? '2026-11-19T10:00:00.000Z' : '2026-11-19T09:00:00.000Z');
+      rateRun(projectRoot, 'herodot', { run: key, stars: 3, note: 'CTA eksikti', by: 'owner', home, now: NOW });
+      const said = 'bütçeyi sormadan artırmamalıydı';
+      const turns = [turn(said, '2026-11-19T12:00:00.000Z', `t-r${judged ? 'j' : 'p'}`)];
+      const call = () => rateRun(projectRoot, 'herodot', { run: key, stars: 4, by: 'super', ...(judged ? { judged: true } : {}), quote: said, note: said, home, now: NOW, env, turns });
+      const one = call();
+      expect(one.rating).toMatchObject({ note: 'CTA eksikti' });
+      expect(one.rating?.corrections).toHaveLength(1);
+      expect(one.draft).toBe(true);
+      const two = call();
+      expect(two.rating).toMatchObject({ note: 'CTA eksikti' });
+      expect(two.rating?.corrections).toHaveLength(1);
+      expect(two.draft).toBe(false);
+      expect(two.slot).toBeUndefined();
+    }
+  });
+
+  it('a judged correction on a judged rating keeps the first words too', () => {
+    const key = run('2026-11-19T09:00:00.000Z');
+    const a = 'Hayır, bütçeyi bana sormadan artırmamalıydı.';
+    const b = 'kitleyi de daraltmamalıydı';
+    const turns = [turn(a, '2026-11-19T12:00:00.000Z', 't-ja'), turn(b, '2026-11-19T12:10:00.000Z', 't-jb')];
+    rateRun(projectRoot, 'herodot', { run: key, stars: 2, by: 'super', judged: true, quote: a, note: 'bütçeyi bana sormadan artırmamalıydı', home, now: NOW, env, turns });
+    for (let i = 0; i < 2; i++) {
+      const r = rateRun(projectRoot, 'herodot', { run: key, stars: 2, by: 'super', judged: true, quote: b, note: b, home, now: NOW, env, turns });
+      expect(r.rating).toMatchObject({ note: 'bütçeyi bana sormadan artırmamalıydı', quote: a, judged: true });
+      expect(r.rating?.corrections?.map((c) => c.note)).toEqual([b]);
+    }
+  });
+
+  it('an agent cannot clear a rating, judged or not; he can', () => {
+    const key = run('2026-11-19T09:00:00.000Z');
+    rateRun(projectRoot, 'herodot', { run: key, stars: 5, note: 'CTA eksikti', by: 'owner', home, now: NOW });
+    const said = 'sil bunu';
+    const turns = [turn(said, '2026-11-19T12:00:00.000Z', 't-x')];
+    for (const judged of [false, true]) {
+      expect(() => rateRun(projectRoot, 'herodot', { run: key, stars: null, by: 'super', ...(judged ? { judged: true } : {}), quote: said, home, now: NOW, env, turns })).toThrow(/Only the owner clears/);
+    }
+    expect(readScorecard(projectRoot, 'herodot', home).card.ratings[Object.keys(readScorecard(projectRoot, 'herodot', home).card.ratings)[0]]).toMatchObject({ stars: 5, note: 'CTA eksikti' });
+    expect(rateRun(projectRoot, 'herodot', { run: key, stars: null, by: 'owner', home, now: NOW }).rating).toBeNull();
   });
 });
 

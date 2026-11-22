@@ -196,6 +196,9 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
   // The member first: an unknown one is `unknown_member`, never "no run".
   resolveScorecard(projectRoot, member, input.home);
   const quote = input.quote ? input.quote.replace(/\s+/g, ' ').trim().slice(0, 500) : undefined;
+  // E13: only he clears a rating (his stars, his note, every correction and its lesson); an agent
+  // records his words, it never takes them away.
+  if (stars === null && input.by !== 'owner') throw new ScorecardRefused('invalid_args', 400, 'Only the owner clears a rating: he clears it on the card.');
   if (input.judged) {
     if (input.by === 'owner') throw new ScorecardRefused('invalid_args', 400, '--judged is the Super\'s reading of his words: only from an agent session.');
     if (!quote) throw new ScorecardRefused('rate_needs_owner_words', 403, '--judged needs --quote "<his exact words>".');
@@ -265,7 +268,8 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
   // A note an agent passes becomes a lesson in the member's prompt "as his words": it must BE his
   // words, from the turn the quote resolved to.
   if (input.by !== 'owner' && given) {
-    const covered = windowed ? answerFold(quoteOwn).includes(answerFold(given)) && answerFold(given) !== '' : quoteCovers(given, quoteOwn);
+    // Whole words only: a cut word can flip his meaning ("artırma" cut to "artır").
+    const covered = windowed ? answerFold(given) !== '' && ` ${answerFold(quoteOwn)} `.includes(` ${answerFold(given)} `) : quoteCovers(given, quoteOwn);
     if (!covered) throw new ScorecardRefused('rate_needs_owner_words', 403, 'The note must be his own words from that message: pass them as he said them, or rate without a note.');
   }
   const project = projectRefOf(projectRoot, input.home);
@@ -283,8 +287,12 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
       return { runKey, rating: null, draft: false };
     }
     const at = now.toISOString();
-    // E13: an agent's words on a run that already holds his note become a correction beside it.
-    const correcting = input.by !== 'owner' && !!given && !!prev?.note && prev.quoteTurn !== quoteTurn && foldNote(given) !== prev.noteFold;
+    // E13: an agent's words never replace the note he already has. From another turn they become a
+    // correction beside it (the same turn again: that correction, nothing new); from the note's own
+    // turn they are the note itself. The rating keeps the note's quote and turn either way, so a
+    // resend still finds both.
+    const keepsNote = input.by !== 'owner' && !!given && !!prev?.note && foldNote(given) !== prev.noteFold;
+    const correcting = keepsNote && prev!.quoteTurn !== quoteTurn;
     let correction: Correction | undefined;
     if (correcting && !sameCorrection) {
       const fold = foldNote(given!);
@@ -292,19 +300,19 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
         correction = { id: newId('co'), note: given!, noteFold: fold, quoteTurn: quoteTurn!, at };
       }
     }
-    const note = correcting ? prev!.note! : given ?? prev?.note ?? '';
+    const note = keepsNote ? prev!.note! : given ?? prev?.note ?? '';
     const fold = note ? foldNote(note) : '';
     // E12: a judged rating never replaces his own stars.
     const keepOwner = !!input.judged && !!prev && !prev.judged;
     const corrections = [...(prev?.corrections ?? []), ...(correction ? [correction] : [])];
-    const keepQuote = given === null && !quote;
+    const keepQuote = keepsNote || (given === null && !quote);
     const rating: Rating = keepOwner ? { ...prev! } : {
       stars,
       firstAt: prev?.firstAt ?? at,
       at,
       by: input.judged ? 'super' : input.by,
-      ...(quote ? { quote } : keepQuote && prev?.quote ? { quote: prev.quote } : {}),
-      ...(quoteTurn ? { quoteTurn } : keepQuote && prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}),
+      ...(keepsNote ? (prev?.quote ? { quote: prev.quote } : {}) : quote ? { quote } : keepQuote && prev?.quote ? { quote: prev.quote } : {}),
+      ...(keepsNote ? (prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}) : quoteTurn ? { quoteTurn } : keepQuote && prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}),
       title: session.title,
       runAt: session.startedAt,
       status: session.status,
@@ -327,7 +335,7 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
         draft = true;
         slot = `c:${correction.id}`;
       }
-    } else if (!correcting) {
+    } else if (!keepsNote) {
       if (!note) {
         retireRunLessons(card, runKey, undefined);
       } else if (prev?.noteFold === fold && prev.draft) {
