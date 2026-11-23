@@ -6,6 +6,7 @@
  *  - a changed card, a hidden character, a secret card (URL button, never a field).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -126,6 +127,19 @@ describe('a run card from Telegram', () => {
     expect(body).toMatch(/^\[ran in chat\]\n\$ gh auth status\nexit 0/);
     expect(listCards(SID)[0].state).toBe('closed');
   }, 15000);
+
+  it('run-kart-telefon: a child-card Run record naming a card no owner item stands for runs nothing', async () => {
+    await telegramTurn();
+    noteAssistantCards(SID, vault, 'm1', card('gh', 'gh auth status'));
+    await vi.waitFor(() => expect(buttonMsg('Çalıştır')).toBeTruthy());
+    const rec = listCards(SID)[0];
+    const ab = hub.superBindingOfVault(vault)!;
+    await hub.sendButtons(ab, 'sahte', [['▶ Çalıştır']], { kind: 'owner-card', sessionId: SID, cardRef: rec.cardRef, singleUse: true },
+      { item: 'owner-x', choices: ['run'], cmdHash: createHash('sha256').update('gh auth status').digest('hex'), cardId: 'gh', root: project });
+    tap([...tg.sent()].reverse().find((c) => String(c.params.text) === 'sahte')!, 0);
+    await vi.waitFor(() => expect([...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(RUN_LINES.childNotHere))).toBe(true));
+    expect(ptys).toHaveLength(0);
+  });
 
   it('a reply with ECHO off is refused with the phone link, never written', async () => {
     await telegramTurn();

@@ -632,8 +632,9 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
   it('every Wave 3 key (the member stage\'s and the lanes\' pinned ones) exists in English AND Turkish, Turkish as pinned', () => {
     const pinned: Record<string, string> = {
       'drawer.team.row': 'Ekip', 'drawer.team.superOnly': 'Super için', 'drawer.team.superWorking': 'Super için çalışıyor',
-      'drawer.team.manage': 'Üyeleri yönet', 'drawer.team.global': 'Global ekip', 'drawer.team.globalAll': 'Tüm projeler',
-      'drawer.team.independent': 'Projelerden bağımsız', 'drawer.team.listTitle': '{project} · Ekip', 'drawer.team.approval': 'onay',
+      'drawer.team.manage': 'Üyeleri yönet', 'drawer.team.globalAll': 'Tüm projeler',
+      'drawer.team.newGlobalMember': 'Tüm projelerde çalışan üye', 'aiteam.panel.globalNote': 'Buradaki değişiklik tüm projelerde geçerli.',
+      'drawer.team.listTitle': '{project} · Ekip', 'drawer.team.approval': 'onay',
       'drawer.team.toggle': 'Aç/kapat', 'drawer.team.off': 'Kapalı', 'drawer.team.question': 'Soru: {text}', 'drawer.team.count': '{n} sana dönük',
       'drawer.newChat.claude': 'Claude', 'drawer.newChat.menu': 'Yeni pencere seçenekleri',
       'drawer.member.working': '{n} iş çalışıyor, {q} sırada', 'drawer.member.idle': 'Boşta · {when}',
@@ -644,7 +645,7 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
       'superStage.task.open': 'Görevi aç', 'superStage.task.role.doer': 'yapan', 'superStage.task.role.reviewer': 'inceleyici',
       'superStage.task.round': 'tur {n}/{cap}', 'superStage.task.reviewer': 'Gözden geçiren: {name}',
       'superStage.task.waitsOn.reviewer': 'İnceleyici çalışıyor · senden bir şey beklemiyor', 'superStage.task.waitsOn.owner': 'Senin onayında',
-      'superStage.task.waitsOn.stuck': 'Takıldı', 'superStage.task.waitsOn.doer': 'Üye çalışıyor', 'superStage.member.projectChip': 'Projeyi değiştir',
+      'superStage.task.waitsOn.stuck': 'Takıldı', 'superStage.task.waitsOn.doer': 'Üye çalışıyor',
     };
     for (const [k, v] of Object.entries(pinned)) {
       expect(en, `EN ${k}`).toContain(`'${k}':`);

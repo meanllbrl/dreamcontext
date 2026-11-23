@@ -42,7 +42,6 @@ describe('whiteboardPrefs', () => {
     prefs.writeWhiteboardPref('acme', 'tabs', 'dreamcontext:whiteboard-tabs:acme', '{"tabs":["a","b"]}');
     place.writeLastBoard('acme', 'q3-plan');
     place.writeViewport('acme', 'q3-plan', { scrollX: 10, scrollY: -4, zoom: 1.5 });
-    place.writePanelOpen('acme', true);
     expect(server.saves).toHaveLength(0);
     vi.advanceTimersByTime(400);
     expect(server.saves).toHaveLength(1);
@@ -54,7 +53,6 @@ describe('whiteboardPrefs', () => {
     expect(prefs.readWhiteboardPref('acme', 'tabs', 'dreamcontext:whiteboard-tabs:acme')).toBe('{"tabs":["a","b"]}');
     expect(place.readLastBoard('acme')).toBe('q3-plan');
     expect(place.readViewport('acme', 'q3-plan')).toEqual({ scrollX: 10, scrollY: -4, zoom: 1.5 });
-    expect(place.readPanelOpen('acme')).toBe(true);
   });
 
   it('drops a retired key (the old tab strip) from both copies once, and writes nothing when it is not there', async () => {
@@ -114,8 +112,8 @@ describe('whiteboardPrefs', () => {
     vi.useFakeTimers();
     const server = fakeServer();
     await prefs.hydrateWhiteboardPrefs('acme', server.transport);
-    place.writePanelOpen('acme', true);
+    place.writeLastBoard('acme', 'q3-plan');
     prefs.flushWhiteboardPrefs();
-    expect(server.saves).toEqual([{ agentPanel: '1' }]);
+    expect(server.saves).toEqual([{ lastBoard: 'q3-plan' }]);
   });
 });

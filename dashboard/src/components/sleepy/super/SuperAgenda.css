@@ -105,6 +105,41 @@
   border-radius: var(--radius-md);
 }
 .super-agenda-row:hover, .super-agenda-row[data-selected='true'] { background: var(--color-bg-secondary); }
+/* The row whose thread the Super chat shows (owner 2026-11-17: "seçili kalsın ki filtreli olduğunu
+   anlayayım"): tinted, edged and barred in the accent while the filter is on, hovered or not, in
+   both themes (the accent token flips with the theme). Pressing it again ends the filter. The tint
+   and the bar are layers of their own, so the press moves only their opacity and transform ("küt
+   diye değil"; the motion is in the block at the end of this file). */
+.super-agenda-row { isolation: isolate; }
+.super-agenda-row::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  opacity: 0;
+  transform: scale(0.98);
+  pointer-events: none;
+}
+.super-agenda-row::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  opacity: 0;
+  transform: scaleY(0.3);
+  pointer-events: none;
+}
+.super-agenda-row[data-thread='on']::before, .super-agenda-row[data-thread='on']::after { opacity: 1; transform: none; }
+/* Hovered, it keeps the same look (the tint alone, never the grey hover beneath it). */
+.super-agenda-row[data-thread='on']:hover { background: transparent; }
+.super-agenda-row[data-thread='on'] .super-agenda-name { font-weight: var(--font-weight-medium); }
 .agenda-mark {
   width: 24px;
   height: 28px;
@@ -133,9 +168,9 @@ button.agenda-mark:hover { background: var(--color-bg-tertiary); }
   min-width: 0;
   width: 100%;
   display: grid;
-  /* The name keeps at least half the row: chips wrap inside what is left instead of
-     squeezing the words into a narrow column. */
-  grid-template-columns: minmax(50%, 1fr) minmax(0, auto) auto;
+  /* Small and medium: one line, the words cut to fit and the time on the right. Large and up
+     lay the row out as a wrapping line instead (below). */
+  grid-template-columns: minmax(0, 1fr) auto;
   column-gap: var(--space-2);
   row-gap: 2px;
   align-items: baseline;
@@ -183,6 +218,22 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .super-agenda-chip:is([data-kind='permission'], [data-kind='question'], [data-kind='ask'], [data-kind='needsYou']) { color: var(--color-text); background: color-mix(in srgb, var(--agenda-waiting) 16%, var(--color-bg-elevated)); }
 .super-agenda-chip[data-kind='day'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
 .super-agenda-chip[data-kind='mode'] { font-weight: var(--font-weight-medium); background: none; box-shadow: inset 0 0 0 1px var(--color-border); }
+/* Large and up (owner 2026-11-17, "chipler maddenin altında ufak bir satırda"): the words read
+   across the whole row, the detail under them, then one small muted line: source · date. Every
+   width and the phone sheet (a large card) read it the same way. */
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0; row-gap: 2px; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .super-agenda-name { flex: 1 1 100%; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .super-agenda-line { flex: 1 1 100%; order: 1; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .super-agenda-meta { order: 2; justify-content: flex-start; gap: 0; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .agenda-time { order: 3; }
+.super-agenda-row-btn .super-agenda-chip { background: none; box-shadow: none; padding: 0; border-radius: 0; font-weight: var(--font-weight-regular, 400); color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.super-agenda-row-btn .super-agenda-chip + .super-agenda-chip::before { content: '·'; margin: 0 6px; color: var(--color-text-tertiary); }
+.super-agenda-meta:not(:empty) + .agenda-time::before { content: '·'; margin: 0 6px; }
+.super-agenda-meta:empty { display: none; }
+/* Under the words, a chip that means something keeps its colour as text: a stale day warns, and
+   what waits on him reads a step stronger than the rest. */
+.super-agenda-row-btn .super-agenda-chip[data-kind='day'] { color: var(--color-warning-ink); }
+.super-agenda-row-btn .super-agenda-chip:is([data-kind='permission'], [data-kind='question'], [data-kind='ask'], [data-kind='needsYou']) { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
 
 /* Hover: Done and Ask over the time; a touch screen has none (a tap opens the detail with both). */
 .agenda-hover {
@@ -194,8 +245,19 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   padding-left: var(--space-2);
   background: var(--color-bg-secondary);
 }
-.super-agenda-row:hover .agenda-hover, .super-agenda-row:focus-within .agenda-hover { display: inline-flex; }
-@media (hover: none) { .super-agenda-row:hover .agenda-hover { display: none; } }
+/* Keyboard focus shows the actions; a mouse press leaves none behind over the row it selected. */
+.super-agenda-row:hover .agenda-hover, .super-agenda-row:has(:focus-visible) .agenda-hover { display: inline-flex; }
+/* Large and up the time sits on the row's last line: the actions cover that line, never the words. */
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row:has(.agenda-time, .super-agenda-meta:not(:empty)) .agenda-hover { top: auto; bottom: 4px; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row:has(.agenda-time, .super-agenda-meta:not(:empty)) .agenda-hover-btn { height: 20px; }
+/* Over the selected row the strip keeps the row's tint (its own fill would cut a grey hole in it)
+   and the time it covers steps aside. */
+.super-agenda-row[data-thread='on'] .agenda-hover { background: transparent; }
+.super-agenda-row[data-thread='on'][data-hover]:is(:hover, :has(:focus-visible)) :is(.agenda-time, .super-agenda-meta) { visibility: hidden; }
+@media (hover: none) {
+  .super-agenda-row:hover .agenda-hover { display: none; }
+  .super-agenda-row[data-thread='on'][data-hover]:hover :is(.agenda-time, .super-agenda-meta) { visibility: visible; }
+}
 .agenda-hover-btn {
   height: 24px;
   display: inline-flex;
@@ -249,7 +311,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-btn:hover:not(:disabled) { background: var(--color-bg-secondary); }
 .agenda-btn:disabled { opacity: 0.5; cursor: default; }
 .agenda-btn[data-primary='true'] { border-color: transparent; background: var(--color-accent-strong); color: var(--color-accent-text); }
-.agenda-btn[data-primary='true']:hover { filter: brightness(1.08); }
+/* Its hover keeps the accent: the plain hover's light background under white words hid the label. */
+.agenda-btn[data-primary='true']:hover:not(:disabled) { background: var(--color-accent-strong); filter: brightness(1.08); }
 .agenda-btn[data-tone='quiet'] { color: var(--color-text-secondary); }
 .agenda-plus {
   flex: none;
@@ -491,3 +554,99 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-board { flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: var(--space-3); align-items: start; overflow-x: auto; overscroll-behavior-x: contain; }
 .agenda-board-col { min-width: 0; padding: var(--space-1); border-radius: var(--radius-lg, 10px); background: color-mix(in srgb, var(--color-bg-secondary) 60%, transparent); }
 .agenda-board-col + .agenda-board-col { margin-top: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* ajanda-filtre motion (owner 2026-11-17): the selection comes and goes in about a quarter second,
+     easing out; opacity and transform only, so nothing is laid out again. */
+  .super-agenda-row::before, .super-agenda-row::after { transition: opacity 240ms cubic-bezier(0.22, 1, 0.36, 1), transform 280ms cubic-bezier(0.34, 1.4, 0.64, 1); }
+}
+
+/* Search (owner pick A, 18 Nov): a round magnifier in the header row that grows LEFT into a
+   capsule over the day and the count, in the same row; no new row, no height. A filled capsule,
+   no border (the macOS/iOS search field); the accent only as the focus ring. */
+.agenda-head, .agenda-title-row, .agenda-main-head { position: relative; }
+.agenda-find { position: relative; flex: none; display: inline-flex; width: 28px; height: 28px; --find-h: 28px; }
+.super-agenda[data-size='small'] .agenda-find { width: 24px; height: 24px; --find-h: 24px; }
+.agenda-head .agenda-find { margin-left: var(--space-1); }
+.agenda-title-row .agenda-find { margin-left: auto; align-self: center; }
+.agenda-title-row .agenda-find + .agenda-viewswitch { margin-left: var(--space-2); }
+.agenda-main-head .agenda-find { margin-left: auto; }
+.agenda-find-spot { width: 100%; height: 100%; }
+.agenda-find-cap {
+  position: absolute; right: 0; top: 50%; z-index: 2; transform: translateY(-50%);
+  width: var(--find-h); height: var(--find-h); box-sizing: border-box; overflow: hidden;
+  display: flex; align-items: center; gap: 6px;
+  border-radius: var(--radius-full);
+  /* the tint over the card's own surface, so the words it covers never show through */
+  background: linear-gradient(color-mix(in srgb, var(--color-text) 9%, transparent), color-mix(in srgb, var(--color-text) 9%, transparent)), var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  transition: width 260ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 160ms ease;
+}
+.agenda-find[data-state='open'] .agenda-find-cap { padding: 0 6px 0 8px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.agenda-find-btn { width: 100%; height: 100%; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-full); background: none; color: inherit; cursor: pointer; }
+.agenda-find-btn:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.agenda-find-clear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+/* The capsule clips its button, so the closed magnifier's focus ring is drawn on the capsule. */
+.agenda-find-btn:focus-visible { outline: none; }
+.agenda-find-cap:has(.agenda-find-btn:focus-visible) { box-shadow: 0 0 0 2px var(--color-border-focus); }
+.agenda-find-glass { flex: none; }
+.agenda-find-input, .agenda-find-input:focus, .agenda-find-input:focus-visible { flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; box-shadow: none; background: none; font: inherit; font-size: var(--font-size-sm); color: var(--color-text); -webkit-appearance: none; appearance: none; }
+.agenda-find-input::placeholder { color: var(--color-text-tertiary); }
+.agenda-find-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.agenda-find-clear { flex: none; width: 16px; height: 16px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-full); background: color-mix(in srgb, var(--color-text) 28%, transparent); color: var(--color-bg-elevated); cursor: pointer; }
+.agenda-find-clear:hover { background: color-mix(in srgb, var(--color-text) 44%, transparent); }
+/* What the open capsule covers fades out and leaves the tab order; the view switch stays. */
+:is(.agenda-head, .agenda-title-row, .agenda-main-head) > :not(.agenda-find):not(.agenda-viewswitch) { transition: opacity 180ms ease; }
+:is(.agenda-head, .agenda-title-row, .agenda-main-head)[data-find='open'] > :not(.agenda-find):not(.agenda-viewswitch) { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+.agenda-hit { padding: 0 1px; border-radius: 2px; background: var(--color-accent-soft); color: inherit; }
+/* A finished line found by the search: its Done mark, and the words quieter. */
+.agenda-results .super-agenda-row[data-status='done'] .super-agenda-row-btn { opacity: 0.64; }
+@media (prefers-reduced-motion: reduce) {
+  .agenda-find-cap, :is(.agenda-head, .agenda-title-row, .agenda-main-head) > * { transition: none !important; }
+}
+
+/* ── One header row (owner 19 Nov: "çok kalabalık ve heavy") ─────────────────────────────
+   Inside a card the head is the card's own: ≡ Agenda on the left, search and list/board on the
+   right. No date, arrows, Today, count or bar row under it. */
+.agenda-head-tools { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-1); pointer-events: auto; }
+.agenda-head-tools:empty { display: none; }
+.agenda-head-tools .agenda-find { margin-left: 0; }
+.agenda-head-tools .agenda-viewswitch { margin-left: 0; }
+.super-card-frame:not([data-where='float']) .agenda-head-tools { margin-right: 0; }
+/* A floating card's hover buttons step LEFT of the tools (the tools keep their spot and take the
+   pointer); the title gives way to them as it already does to the lights. */
+.super-card-frame[data-where='float'][data-kind='agenda']:is(:hover, :focus-within):not([data-lifted]) .super-card-actions { right: calc(var(--agenda-tools-w, 0px) + 6px); }
+.agenda-head-tools, .agenda-glyph-btn { position: relative; z-index: 3; }
+.super-card-frame[data-where='float'][data-kind='agenda']:is(:hover, :focus-within):not([data-lifted]) .super-card-head[data-agenda-head] > .super-card-title { opacity: 0; }
+.super-card-head[data-find='open'] > :not(.agenda-head-tools) { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+.super-card-head[data-agenda-head] { position: relative; }
+/* The ≡ is the day menu's button: the same glyph, now pressable. */
+.agenda-glyph-btn { pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 24px; padding: 0 2px; border: 0; border-radius: var(--radius-sm, 4px); background: none; color: var(--color-text-tertiary); font: inherit; font-size: var(--font-size-xs); cursor: pointer; }
+.agenda-glyph-btn:hover, .agenda-glyph-btn[aria-expanded='true'] { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.agenda-glyph-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.agenda-daymenu {
+  position: absolute; z-index: 5; top: 0; left: var(--space-2); min-width: 128px; display: flex; flex-direction: column; padding: 4px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-elevated); box-shadow: var(--shadow-md, 0 4px 14px rgba(0, 0, 0, 0.22));
+}
+.agenda-daymenu-item { text-align: left; padding: 6px 10px; border: 0; border-radius: var(--radius-sm, 4px); background: none; color: var(--color-text); font: inherit; cursor: pointer; }
+.agenda-daymenu-item:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.agenda-daymenu-item:disabled { color: var(--color-text-tertiary); cursor: default; }
+.agenda-daymenu-item:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+/* Another day: a thin row, only while he is away from today. */
+.agenda-pastbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.agenda-today-btn { flex: none; padding: 2px 10px; border: 0; border-radius: var(--radius-full); background: var(--color-bg-tertiary); color: var(--color-text); font: inherit; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); cursor: pointer; }
+.agenda-today-btn:hover { background: color-mix(in srgb, var(--color-text) 12%, var(--color-bg-tertiary)); }
+.agenda-today-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+/* Small: the magnifier lives in the foot beside the +; open, it grows over the waiting line. */
+.agenda-foot { position: relative; }
+.agenda-foot .agenda-find { margin-left: auto; }
+.agenda-foot:has(.agenda-find) .agenda-fab { margin-left: 0; }
+.agenda-foot[data-find='open'] > .agenda-foot-waiting { opacity: 0; visibility: hidden; }
+/* While the search is open in the head, the lights and the hover buttons give way: the field
+   takes the whole head row and every click in it is the field's. */
+.super-card-frame:has(.super-card-head[data-find='open']) :is(.super-card-lights, .super-card-actions) { opacity: 0; pointer-events: none; }
+
+.agenda-daymenu-rule { height: 1px; margin: 4px 2px; background: var(--color-border); }
+/* A floating card's hover buttons sit over the head row and a little under it (6 px top + 34 px,
+   the head is 36): the lines start below them, and the last line ends above the resize corner. */
+.super-card-frame[data-where='float'] .super-agenda { padding-top: var(--space-2); padding-bottom: 20px; }

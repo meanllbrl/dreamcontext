@@ -676,7 +676,6 @@ video.chat-msg-user-media-el { cursor: default; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.chat-surveycard-progress { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
 .chat-surveycard-block { display: flex; flex-direction: column; gap: 8px; }
 /* Horizontal pageview: one question per page, the track slid by whole viewport widths.
    The viewport's height is written by the card from the ACTIVE page's measured height (see
@@ -740,18 +739,7 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 .chat-surveycard-dot.done .chat-surveycard-dot-i { background: var(--color-accent); border-color: var(--color-accent); }
 .chat-surveycard-dot.on .chat-surveycard-dot-i { transform: scale(1.5); border-color: var(--color-accent); }
-.chat-surveycard-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.chat-surveycard-jump {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--color-accent);
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.chat-surveycard-jump:hover { text-decoration: underline; }
-.chat-surveycard-jump:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-surveycard-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .chat-surveycard-helper { color: var(--color-text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
 .chat-surveycard-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-lg, 18px); color: var(--color-text); }
 .chat-surveycard-options { display: flex; flex-direction: column; gap: 6px; }
@@ -793,13 +781,13 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .chat-surveycard-opt-title { font-size: 13px; font-weight: 600; }
 .chat-surveycard-opt-desc { font-size: 11.5px; color: var(--color-text-secondary); }
-.chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
-.chat-surveycard-count { color: var(--color-text-tertiary); font-size: 11.5px; }
+.chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.chat-surveycard-actions { flex: 0 0 auto; }
+.chat-surveycard-go { white-space: nowrap; flex: 0 0 auto; }
 /* "Waiting for connection" is drawn over the pager's box (or, with no pager, in the space left
    of the buttons), out of the flow and on ONE line: nothing reflows, the card never grows. */
 .chat-surveycard-pager { position: relative; }
-.chat-surveycard-pager[data-waiting] > :not(.chat-surveycard-waiting) { visibility: hidden; }
-.chat-surveycard-pager > .chat-surveycard-waiting { position: absolute; inset: 0; display: flex; align-items: center; }
+.chat-surveycard-pager[data-waiting] { visibility: hidden; }
 .chat-surveycard-actions { position: relative; }
 .chat-surveycard-waiting-beside {
   position: absolute;
@@ -858,7 +846,9 @@ video.chat-msg-user-media-el { cursor: default; }
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
   font-size: 10.5px;
+  display: none;
 }
+@media (hover: hover) and (pointer: fine) { .chat-surveycard-opt-key { display: inline; } }
 
 /* The always-on free-text field: a note on the pick, or the answer when nothing is picked.
    Same height whatever is clicked — only typing past a line grows it (see SurveyCard.tsx). */
@@ -874,19 +864,6 @@ video.chat-msg-user-media-el { cursor: default; }
   transition: border-color var(--transition-fast);
 }
 .chat-surveycard-field:focus-within { border-style: solid; border-color: var(--color-accent); }
-.chat-surveycard-field-tag {
-  flex: 0 0 auto;
-  margin-top: 3px;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.chat-surveycard-field.note .chat-surveycard-field-tag { background: var(--color-accent-soft); color: var(--color-accent); }
 .chat-surveycard-fieldinput {
   flex: 1 1 200px;
   min-width: 0;
@@ -900,24 +877,50 @@ video.chat-msg-user-media-el { cursor: default; }
   color: var(--color-text);
   font-family: inherit;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 20px;
 }
 .chat-surveycard-fieldinput:focus { outline: none; }
 .chat-surveycard-fieldinput::placeholder { color: var(--color-text-tertiary); }
 /* Body font, not mono: the mono stack has no ↵ glyph on every platform. */
 .chat-surveycard-fieldhint { flex: 1 0 100%; color: var(--color-text-tertiary); font-size: 11px; }
 
-.chat-surveycard-unclear {
-  padding: 0;
+/* The "more" menu: Unclear / Already answered, rare, so out of the footer's way. */
+.chat-surveycard-more { position: relative; }
+.chat-surveycard-more-btn { font-size: 16px; letter-spacing: -1px; }
+.chat-surveycard-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-lg);
+}
+.chat-surveycard-menuitem {
+  padding: 8px 10px;
   border: 0;
+  border-radius: var(--radius-md, 8px);
   background: none;
-  color: var(--color-text-tertiary);
-  font-size: 11.5px;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
-.chat-surveycard-side { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-width: 0; }
-.chat-surveycard-unclear:hover { color: var(--color-text); text-decoration: underline; }
-.chat-surveycard-unclear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-surveycard-menuitem:hover { background: var(--color-bg-tertiary); }
+.chat-surveycard-menuitem:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+/* A finger needs a bigger target than a pointer. */
+@media (pointer: coarse) {
+  .chat-surveycard-arrow { width: 32px; height: 32px; }
+  .chat-surveycard-dot { width: 26px; height: 26px; }
+  .chat-surveycard-menuitem { padding: 12px 12px; }
+}
 
 /* ── The A/B/C board — options you compare by looking ─────────────────────────────── */
 /* How much of a preview shows before the ⛶ door is needed: most of a real mock, capped by the

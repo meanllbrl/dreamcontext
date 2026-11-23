@@ -161,6 +161,10 @@ interface SyncPayload {
   failure?: SyncFailure;
   /** The sync detected + demoted a stale per-project token (kept on disk), falling back to the signed-in account. */
   healedStaleProjectToken?: boolean;
+  /** The boards travelled beside a team merge that waits (the board's Sync button reads it). */
+  boards?: { sent: number; received: number; waiting: number; note?: string; error?: string; stopped?: 'secret' | 'no-session' | 'no-git'; trashed?: number };
+  /** Brain files a waiting team merge left for sleep (/dream-sync). */
+  awaitingSleep?: number;
 }
 
 /**
@@ -199,6 +203,8 @@ async function runSyncPayload(
       codeConflicts: result.codeConflicts,
       failure,
       healedStaleProjectToken: result.healedStaleProjectToken,
+      ...(result.boards ? { boards: { sent: result.boards.sent, received: result.boards.received, waiting: result.boards.waiting, note: result.boards.note, error: result.boards.error, stopped: result.boards.stopped, trashed: result.boards.trashed } } : {}),
+      ...(result.awaitingSleep !== undefined ? { awaitingSleep: result.awaitingSleep } : {}),
     };
   } catch (err) {
     // Tier-aware failure copy: if the token that failed is a per-project one (it

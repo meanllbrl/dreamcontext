@@ -5,8 +5,9 @@ import { isDesktop } from '../../lib/desktop';
 import { DELETE_ARM_MS } from '../../lib/agentDraft';
 import { MaskedSecretInput } from '../core/MaskedSecretInput';
 import { PairingView, StatusError, TelegramBindSheet, pendingSince } from '../telegram/TelegramBindSheet';
+import { TelegramGroups } from '../telegram/TelegramGroups';
 import {
-  TelegramShellError, atName, telegramRoutes, telegramShell, useInvalidateTelegram, useTelegramManager,
+  TelegramShellError, atName, telegramRoutes, telegramShell, useInvalidateTelegram, useTelegramManager, useTelegramStatus,
   type PairingStart,
 } from '../../api/telegram';
 import { RequestError } from '../../api/client';
@@ -35,6 +36,9 @@ export function TelegramSettings() {
   const [flow, setFlow] = useState<Flow>({ kind: 'idle' });
   const status = useTelegramManager({ enabled: desktop, waiting: flow.kind === 'pairing' });
   const manager = status.data?.manager ?? null;
+  // This project's bound bots and their groups (tg-grup, approved screen 4).
+  const project = useTelegramStatus({ enabled: desktop, watch: true });
+  const projectBots = (project.data?.rows ?? []).filter((r) => r.state === 'active');
   const alarm = status.data?.alarm ?? null;
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
@@ -171,6 +175,15 @@ export function TelegramSettings() {
   return (
     <div className="tg-settings" data-testid="tg-settings">
       {body}
+      {projectBots.map((r) => (
+        <div key={r.target} className="tg-group-card" data-testid={`tg-project-bot-${r.target}`}>
+          <p className="tg-member-who">
+            <b>{r.target === 'super' ? t('telegram.groups.superName') : status.data?.bots.find((b) => b.target === r.target)?.label ?? r.target}</b>
+            <span>{' '}{t('telegram.groups.bot').replace('{bot}', atName(r.botUsername))}</span>
+          </p>
+          <TelegramGroups row={r} />
+        </div>
+      ))}
       {error && <p className="tg-error" role="alert">{error}</p>}
       {ownToken && <TelegramBindSheet target="super" name={null} startWith="token" onClose={() => setOwnToken(false)} />}
     </div>

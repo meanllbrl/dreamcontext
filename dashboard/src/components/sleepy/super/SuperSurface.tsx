@@ -15,7 +15,8 @@ import { PresentQueue } from './PresentQueue';
 import { sendQueueJump } from './queueJump';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
-import { SuperAgenda, type AgendaSize } from './SuperAgenda';
+import { SuperAgenda, type AgendaSize, type ThreadPress } from './SuperAgenda';
+import { useThreadFilter } from './superThreadFilter';
 import type { AgendaDay } from './superApi';
 import { onOpenJobRow, publishSuperEventContext, useQueueHeight } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
@@ -113,6 +114,8 @@ export interface SuperSurfaceProps {
   onCommentCardText?: (id: string, text: string) => void;
   /** "Write about this" on an agenda line: the line becomes the About chip in the centre's composer. */
   onWriteAbout?: (row: AgendaRow) => void;
+  /** An agenda row's press filters the Super chat to its thread (ajanda-filtre D1). */
+  onThread?: (press: ThreadPress) => boolean;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
@@ -125,6 +128,8 @@ export interface SuperSurfaceProps {
   onPadRemove?: (id: string) => Promise<void>;
   /** One day of the agenda (`GET /api/super/agenda-day`). Absent: no day browsing. */
   loadAgendaDay?: (date: string) => Promise<AgendaDay | null>;
+  /** The days that have a file (the agenda search). Absent: it reads what is loaded. */
+  loadAgendaDays?: () => Promise<string[]>;
   /** His "Gerek yok" on an unanswered agenda line. Absent: read only. */
   onDropOwed?: (id: string) => void;
   /** The owner opens a card himself (POST /api/super/open): the state is applied before it
@@ -420,6 +425,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // A selection belongs to one presentation: another card set starts on its first card.
   const presentedKey = [...presented].sort().join('\n');
   useEffect(() => { setSelected(null); setStripStart(0); setRailStart(0); }, [presentedKey]);
+  // A narrow stage's page or presentation starts folded to its tabs over a full-height chat
+  // (owner 2026-11-17); one the owner opened himself (the server stamps `by`) starts open, so his
+  // own press is never undone. Window state, keyed by what the view shows and when he last set it:
+  // a new view, or his own press again on the same cards, starts over.
+  const foldKey = `${view.mode === 'half' ? `h:${view.card ?? ''}` : view.mode === 'present' ? `p:${presentedKey}` : ''}@${view.by === 'owner' ? view.ownerAt ?? 0 : ''}`;
+  const [fold, setFold] = useState<{ key: string; open: boolean } | null>(null);
+  const sheetOpen = fold && fold.key === foldKey ? fold.open : view.by === 'owner';
+  const setSheetOpen = (open: boolean) => setFold({ key: foldKey, open });
   const layoutChoices = useMemo<PresentLayout[]>(() => {
     const cards = presented.map((id) => state.containers.find((c) => c.id === id)!);
     return cards.length ? PRESENT_LAYOUTS.filter((l) => resolveLayout(l, cards) === l) : [];
@@ -441,8 +454,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, folded: !sheetOpen }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, sheetOpen],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
@@ -816,9 +829,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (document.querySelector('.super-add-menu, .super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
       const p = presentKeysRef.current.plan;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); presentKeysRef.current.exit(); return; }
-      // ←/→: the next big card of a filmstrip, the next tab of a narrow sheet.
-      // The strip's own fixed order: the selection walks it, nothing reorders.
-      const ids = p.strip?.ids ?? p.tabs?.ids;
+      // ←/→: the next big card of a filmstrip, the next tab of an open narrow sheet (folded, the
+      // tab row's own keys move focus). The strip's own fixed order: the selection walks it.
+      const ids = p.strip?.ids ?? (p.tabs?.folded ? undefined : p.tabs?.ids);
       if (!ids || ids.length < 2 || !rootRef.current?.contains(ae)) return;
       const at = ids.indexOf(p.strip?.big ?? ids.find((id) => p.cards[id]?.where === 'sheet') ?? ids[0]);
       e.preventDefault();
@@ -1090,15 +1103,29 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (c) showChildRef.current(c.id);
   }), []);
   // "Write about this" on a line: its About chip goes into the centre's composer. Only while
-  // the super chat is there to write in. A stage too narrow to float cards first goes back to
-  // the floating view (its cards to Others, the head's Agenda button stays), so the composer
-  // the chip lands in is in view.
+  // the super chat is there to write in. A narrow stage's open sheet first folds to its tabs, so
+  // the composer the chip lands in is in view.
   const onWriteAbout = props.onWriteAbout;
   const writeAbout = onWriteAbout && superSession && superSession.status !== 'closed'
     ? (row: AgendaRow) => {
-      // Never from a remote screen: that automatic write would move the Mac's stage under him.
-      if (plan.narrow && viewMode !== 'float' && !remote) onLayout({ view: { mode: 'float' } });
+      // A narrow stage's open sheet folds to its tabs (window state, so a remote screen may too):
+      // the composer the chip lands in is then in view and the view stays his.
+      if (plan.tabs && !plan.tabs.folded) setSheetOpen(false);
       onWriteAbout(row);
+    }
+    : undefined;
+  // An agenda row's press (ajanda-filtre C5): a chat folded to its bar unfolds first, so the
+  // filtered thread is on screen; a stage too narrow to float cards goes back to floating.
+  const onThreadProp = props.onThread;
+  const threadRowKey = useThreadFilter(superSession?.claudeId)?.rowKey ?? null;
+  const pressThreadRow = onThreadProp && superSession
+    ? (p: ThreadPress): boolean => {
+      const on = onThreadProp(p);
+      if (on && !remote) {
+        if (plan.chat === 'bar') onLayout({ chat: { value: null, cards: presented } });
+        else if (plan.narrow && viewMode !== 'float') onLayout({ view: { mode: 'float' } });
+      }
+      return on;
     }
     : undefined;
   // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
@@ -1173,6 +1200,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowChild={showChild}
       onShowQuestion={showQuestion}
       onWriteAbout={writeAbout}
+      onThread={pressThreadRow}
+      threadRowKey={threadRowKey}
       taskRows={taskRows}
       recallRows={recallRows}
       syncRows={syncRows}
@@ -1185,6 +1214,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onPadAdd={props.onPadAdd}
       onPadRemove={props.onPadRemove}
       loadDay={props.loadAgendaDay}
+      loadDays={props.loadAgendaDays}
       onDropOwed={props.onDropOwed}
       extra={member && size !== 'small' && size !== 'medium' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />
@@ -1250,11 +1280,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
               onTurnOff={remote ? undefined : props.onTurnOff}
-              // A narrow stage's page or presentation covers the centre: there the side bands' right click opens it.
-              onAdd={canAdd && !(plan.narrow && view.mode !== 'float') ? openAddMenu : undefined}
+              // A narrow stage's open page or presentation covers the centre: there the side bands' right click opens it.
+              onAdd={canAdd && !(plan.tabs && !plan.tabs.folded) ? openAddMenu : undefined}
               actions={(
                 <>
-                  {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
+                  {/* A narrow stage ignores the bar: its sheet folds to the tabs instead, giving the chat its height. */}
+                  {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && !plan.narrow && (
                     <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
                   )}
                 </>
@@ -1422,10 +1453,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />
       )}
-      {plan.tabs && (
-        <SheetTabs rect={plan.tabs.rect} ids={plan.tabs.ids} selected={plan.tabs.ids.find((id) => plan.cards[id]?.where === 'sheet') ?? plan.tabs.ids[0]}
-          titleOf={(id) => { const c = byId.get(id); return c ? titleOf(c) : id; }} onSelect={setSelected} />
-      )}
+      {plan.tabs && (() => {
+        const tabs = plan.tabs;
+        const open = tabs.folded ? null : tabs.ids.find((id) => plan.cards[id]?.where === 'sheet') ?? plan.strip?.big ?? tabs.ids[0];
+        return (
+          <SheetTabs rect={tabs.rect} ids={tabs.ids} open={open}
+            titleOf={(id) => { const c = byId.get(id); return c ? titleOf(c) : id; }}
+            // The open tab folds the sheet; any other opens on that card.
+            onSelect={(id) => { if (id === open) { setSheetOpen(false); return; } setSelected(id); setSheetOpen(true); }}
+            onFold={() => setSheetOpen(false)} />
+        );
+      })()}
       {state.containers.length === 0 && props.terminals.length === 0 && (
         <div className="super-empty-hint" data-testid="super-empty-hint" style={{ left: plan.centre.x, top: plan.dock.y, width: plan.centre.width, height: plan.dock.height }}>
           {t('super.stage.empty')}

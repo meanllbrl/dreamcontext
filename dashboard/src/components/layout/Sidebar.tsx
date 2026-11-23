@@ -246,7 +246,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     </button>
                   </li>
                   {/* ONE Ekip row under Chat (plan-r10 1d, r8-05). */}
-                  {!tunnel && <SidebarTeam kind="project" />}
+                  {!tunnel && <SidebarTeam />}
                   </Fragment>
                 );
               }
@@ -295,9 +295,6 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
           on click (label shows live status), the gear opens Settings, and a
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
-        {/* "Projelerden bağımsız": the Global ekip row (plan-r10 1f, r8-12). */}
-        {!tunnel && <SidebarTeam kind="global" />}
-
         {tunnel ? null : signedIn && hasRemote ? (
           <BrainSyncControl onOpenSettings={openGithubSync} onOpenGitHub={() => onNavigate('settings', 'github')} />
         ) : (

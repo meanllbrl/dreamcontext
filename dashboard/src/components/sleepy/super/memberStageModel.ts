@@ -176,6 +176,13 @@ export function coldWaiting(tried: ReadonlyMap<string, ColdTry>, now: number): {
   return { waiting, nextAt };
 }
 
+/** `memberHeld` of `GET /agent/sessions?summary=1`: every session a member Super holds (its own
+ *  chat, its children, its former children), read defensively (an older server sends none). */
+export function readMemberHeld(raw: unknown): string[] {
+  const list = raw && typeof raw === 'object' ? (raw as { memberHeld?: unknown }).memberHeld : undefined;
+  return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+}
+
 /** `members` of `GET /agent/sessions?summary=1`, read defensively (an older server sends none). */
 export function readMemberSummaries(raw: unknown): Array<SuperMemberSummary & { pending: number }> {
   const list = raw && typeof raw === 'object' ? (raw as { members?: unknown }).members : undefined;

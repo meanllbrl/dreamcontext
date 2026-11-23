@@ -73,6 +73,30 @@ describe('judgeSuiteRun: green only on positive proof', () => {
     expect(parseVitestLog(RED2.split(' FAIL  ').join('\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m ')).listed).toEqual(['tests/a.test.ts', 'tests/b.test.ts']);
   });
 
+  it('a fixture test that prints a whole vitest log into its stdout adds nothing to the red list', () => {
+    // The real run: 2 red files. A test (suite-record.test.ts itself) printed RED2-shaped output,
+    // blocks, `Test Files` and `Errors` lines included, into its stdout section.
+    const nested = vitestLog({ tests: [['tests/x.test.ts', 'one'], ['tests/y.test.ts', 'two']], errorFrom: ['tests/x.test.ts'] });
+    const real = vitestLog({ tests: [['tests/a.test.ts', 'one'], ['tests/b.test.ts', 'grp > two']], own: nested });
+    const withPass = real.replace('stdout |', ' ✓ tests/ok.test.ts (3 tests) 4ms\nstdout |');
+    for (const log of [real, withPass]) {
+      const s = parseVitestLog(log);
+      expect(s.listed).toEqual(['tests/a.test.ts', 'tests/b.test.ts']);
+      expect(s.failedFiles).toBe(2);
+      expect(s.errors).toBe(0);
+      expect(judgeSuiteRun({ exit: 1, exitNotOwned: null, summary: s })).toMatchObject({ state: 'red', files: ['tests/a.test.ts', 'tests/b.test.ts'] });
+    }
+    // A real Failed Suites block after a nested Failed Tests one is still read.
+    const suiteOnly = vitestLog({ suites: ['tests/c.test.ts'], own: nested });
+    expect(parseVitestLog(suiteOnly).listed).toEqual(['tests/c.test.ts']);
+  });
+
+  it('two real runs in one log never turn a red first run green', () => {
+    const red = vitestLog({ tests: [['tests/a.test.ts', 'one']], errorFrom: ['tests/a.test.ts'] });
+    const log = [' RUN  v4.1.10 /repo', red, ' RUN  v4.1.10 /repo', GREEN].join('\n');
+    expect(judgeSuiteRun({ exit: 0, exitNotOwned: null, summary: parseVitestLog(log) }).state).not.toBe('green');
+  });
+
   it('table: every gap is incomplete, never green', () => {
     expect(judge(GREEN, 0).state).toBe('green');
     // killed at the ceiling, or never ended

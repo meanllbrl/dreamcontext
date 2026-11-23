@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
@@ -351,6 +351,65 @@ export function unregisterProject(projectRoot: string, home?: string): boolean {
 /** Every project root currently registered on this machine. */
 export function listRegisteredProjects(home?: string): string[] {
   return Object.keys(readAutomationsRegistry(home).projects).filter((k) => k !== GLOBAL_REGISTRY_KEY);
+}
+
+/** What {@link listDistinctProjects} answers. */
+export interface DistinctProjects {
+  /** One root per real brain, in registry order: the ones a scheduler pass works on. */
+  roots: string[];
+  /** Registered roots with no `_dream_context/` at all. */
+  missing: string[];
+  /** Registered roots skipped because their `_dream_context/` is the same folder as a kept root's. */
+  aliases: Array<{ root: string; sameAs: string }>;
+}
+
+/**
+ * Every registered project, each REAL BRAIN once (owner 2026-11-19, "Gece denemesi"). A code repo
+ * whose `_dream_context` is a link to a brain registers under its own path, with its own empty
+ * approvals bucket. Ticking both ran the brain's routines twice per fire: once approved, once
+ * "never approved", and the refused copy went to the owner's phone as a false alarm.
+ *
+ * Two roots whose `_dream_context` resolves to the same folder are one project. The kept root is
+ * the one whose bucket holds approvals (where the owner's yes actually lives), then the one whose
+ * `_dream_context` is the real folder rather than a link, then the first registered. Only a root
+ * whose bucket holds NO approval is skipped: one that holds its own yes (an older version could
+ * approve through the link) keeps ticking, as it did, so no approved routine stops. Nothing is
+ * moved or merged (owner 2026-11-19, review narrowed).
+ */
+export function listDistinctProjects(home?: string): DistinctProjects {
+  const registry = readAutomationsRegistry(home);
+  const missing: string[] = [];
+  const groups = new Map<string, string[]>();
+  for (const root of Object.keys(registry.projects)) {
+    if (root === GLOBAL_REGISTRY_KEY) continue;
+    const ctx = join(root, '_dream_context');
+    if (!existsSync(ctx)) { missing.push(root); continue; }
+    const real = tryRealpath(ctx);
+    const g = groups.get(real);
+    if (g) g.push(root); else groups.set(real, [root]);
+  }
+  const holdsApprovals = (root: string): boolean => {
+    const p = registry.projects[root];
+    return Object.keys(p?.approvals ?? {}).length > 0 || Object.keys(p?.agentApprovals ?? {}).length > 0;
+  };
+  const isLink = (root: string): boolean => {
+    try { return lstatSync(join(root, '_dream_context')).isSymbolicLink(); } catch { return true; }
+  };
+  const rank = (root: string): number => (holdsApprovals(root) ? 0 : 2) + (isLink(root) ? 1 : 0);
+  const keep = new Set<string>();
+  const aliases: DistinctProjects['aliases'] = [];
+  for (const group of groups.values()) {
+    // Stable: equal ranks keep registry order.
+    const best = group.reduce((a, b) => (rank(b) < rank(a) ? b : a));
+    keep.add(best);
+    for (const r of group) {
+      if (r === best) continue;
+      if (holdsApprovals(r)) keep.add(r);
+      else aliases.push({ root: r, sameAs: best });
+    }
+  }
+  const roots = Object.keys(registry.projects).filter((r) => keep.has(r));
+  return { roots, missing, aliases };
 }
 
 // ─── Approval payload (the tripwire's whole correctness claim) ──────────────

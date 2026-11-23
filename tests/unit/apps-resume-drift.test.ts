@@ -13,6 +13,7 @@ const GUARDED: Record<string, RegExp> = {
   'src/lib/builder-spawn.ts': /assertNotAppChat/,
   'src/lib/automations/verdict.ts': /assertNotAppChat/,
   'src/lib/automations/runner.ts': /assertNotAppChat/,
+  'src/server/telegram/room-agent.ts': /appChatRefusal/,
 };
 /** Their ids are tool threads, or the flag is another program's. */
 const NOT_A_CLAUDE_RESUME = new Set([

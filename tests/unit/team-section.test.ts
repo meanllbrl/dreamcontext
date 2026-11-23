@@ -27,7 +27,7 @@ function withStore(open: Record<string, string>) {
 afterEach(() => { delete g.window; });
 
 const render = (members: EkipMember[], o: Record<string, unknown> = {}) =>
-  renderToStaticMarkup(createElement(I18nProvider, null, createElement(TeamSection, { members, kind: 'project', vault: 'acme', label: 'Team', testid: 'drawer-team-row', onOpen: () => undefined, onManage: () => undefined, ...o })));
+  renderToStaticMarkup(createElement(I18nProvider, null, createElement(TeamSection, { members, vault: 'acme', label: 'Team', testid: 'drawer-team-row', onOpen: () => undefined, onManage: () => undefined, ...o })));
 const countOf = (html: string, needle: string) => html.split(needle).length - 1;
 
 describe('the Team row in place', () => {
@@ -36,18 +36,17 @@ describe('the Team row in place', () => {
     expect(folded).toContain('aria-expanded="false"');
     expect(folded).toContain('ns-team-chev');
     expect(folded).not.toContain('data-testid="team-list"');
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const open = render(many(5));
     expect(open).toContain('aria-expanded="true"');
     expect(countOf(open, 'data-testid="team-list-member"')).toBe(5);
     // Another project's key does not open this one.
-    withStore({ [teamOpenKey('project', 'other')]: '1' });
+    withStore({ [teamOpenKey('other')]: '1' });
     expect(render(many(5))).toContain('aria-expanded="false"');
-    expect(teamOpenKey('global', null)).toBe('dc.drawer.team.global');
   });
 
   it('8 members: no box, no search; 9: a box; 13: box and search', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const eight = render(many(8));
     expect(eight).not.toContain('data-boxed');
     expect(eight).not.toContain('team-search');
@@ -62,7 +61,7 @@ describe('the Team row in place', () => {
   });
 
   it('no switch in the sidebar list; one end mark per member', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const html = render([
       member('card', { approval: true, unread: 2 }), member('ring', { ownerWorking: 1, asking: true }),
       member('ask', { asking: true, unread: 1 }), member('read', { unread: 2 }), member('sup', { superOnly: true }),
@@ -80,12 +79,12 @@ describe('the Team row in place', () => {
     expect(html).toContain('aria-label="CARD (approvals waiting: 1, 2 unread)"');
     expect(html).toContain('title="ASK (questions for you: 1, 1 unread)"');
     expect(html).toMatch(/data-slug="off" data-off="true"/);
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     expect(render([member('w', { ownerWorking: 1 })])).toContain('data-testid="mark-working"');
   });
 
   it('a photo is read from the row\'s project (the drawer sits outside every provider: owner 2026-11-05)', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const html = render([member('pho', { hasPhoto: true }), member('fig', { face: { shape: 4, color: 3 } })]);
     // Every <img> of the row (the faces in the header and the list) names the project.
     const srcs = [...html.matchAll(/src="([^"]+)"/g)].map((x) => x[1].replace(/&amp;/g, '&'));
@@ -96,7 +95,7 @@ describe('the Team row in place', () => {
   });
 
   it('"Super için" sits on the face, never at the row\'s end beside the name', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const html = render([member('sup', { title: 'Pacioli', superOnly: true })]);
     expect(html).toMatch(/class="ns-team-mface"><span class="agent-av[^]*?data-testid="team-mark-super"[^]*?<\/span><\/span><span class="ns-team-mname">Pacioli<\/span><\/button>/);
     expect(html).toContain('aria-label="For Super"');
@@ -108,7 +107,7 @@ describe('the Team row in place', () => {
       member('a', { unread: 1 }), member('b', { asking: true }), member('c', { approval: true }), member('d', { unread: 2 }),
       member('w', { ownerWorking: 1 }),
     ];
-    for (const html of [render(news), render(news, { openSlug: 'w' }), render(news, { kind: 'global', vault: null })]) {
+    for (const html of [render(news), render(news, { openSlug: 'w' }), render(news, { vault: null })]) {
       expect(html).toContain('data-open="false"');
       expect(html).not.toContain('ns-team-mrow');
       expect(html).not.toContain('team-popout');
@@ -118,12 +117,12 @@ describe('the Team row in place', () => {
     expect(render(news)).toMatch(/data-testid="mark-asking" aria-hidden="true">2</);
     expect(render(news)).toMatch(/data-testid="drawer-team-row"[^>]*data-ask-row="true"/);
     // Unfolded, the same members are rows again.
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     expect(countOf(render(news), 'data-testid="team-list-member"')).toBe(5);
   });
 
   it('open row: no summed ring or count on the Team row, the member rows carry their own', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const open = render([member('w', { ownerWorking: 1 }), member('r', { unread: 2 })]);
     expect(open).toContain('data-testid="team-row-mark"></span>');
     expect(open).toContain('data-testid="mark-working"');
@@ -147,7 +146,7 @@ describe('the Team row in place', () => {
   });
 
   it('"⋯" holds Manage members and New member; no Manage link under the open list', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const html = render(many(2), { onNewMember: () => undefined });
     expect(html).toContain('data-testid="team-more"');
     expect(html).toContain('aria-haspopup="menu"');
@@ -201,7 +200,7 @@ describe('a project with no member yet (owner 2026-11-03)', () => {
 
 describe('the open member is the selected row (owner 2026-11-04)', () => {
   it('open list: only the open member row is selected, the Team row never is', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     const html = render(many(4), { openSlug: 'm2' });
     expect(countOf(html, 'ns-team-mrow is-sel')).toBe(1);
     expect(html).toMatch(/data-slug="m2"[^>]*>/);
@@ -216,7 +215,30 @@ describe('the open member is the selected row (owner 2026-11-04)', () => {
     expect(render([member('a'), member('b')], { openSlug: 'zz' })).not.toContain('is-sel');
   });
   it('no open member: nothing is selected', () => {
-    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    withStore({ [teamOpenKey('acme')]: '1' });
     expect(render(many(3))).not.toContain('is-sel');
+  });
+});
+
+describe('a member of all projects in a project\'s list (owner 2026-11-17)', () => {
+  const ada = member('ada', { global: true, unread: 1 });
+  it('the desktop row wears the globe, and its label says it works in all projects', () => {
+    withStore({ [teamOpenKey('acme')]: '1' });
+    const html = render([member('rota'), ada]);
+    expect(countOf(html, 'data-testid="team-member-global"')).toBe(1);
+    // The row's label replaces its content when it has marks: the globe's word is in it.
+    expect(html).toMatch(/data-slug="ada"[^>]*aria-label="ADA \([^)]*(all projects|Tüm projelerde)/);
+    expect(render([member('rota'), ada], { onNewMember: () => undefined, onNewGlobalMember: () => undefined })).toContain('ns-team-sec');
+  });
+  it('the phone sheet wears the globe too, and offers no switch it would be refused', async () => {
+    const { TeamList } = await import('../../dashboard/src/components/layout/newshell/TeamList.js');
+    const sheet = (sheetOn: boolean) => renderToStaticMarkup(createElement(I18nProvider, null, createElement(TeamList, {
+      title: 'acme · Ekip', members: [member('rota'), ada], sheet: sheetOn, testid: 'team-list', vault: 'acme', anchor: null,
+      onOpen: () => undefined, onSwitch: async () => undefined, onClose: () => undefined,
+    })));
+    const html = sheet(true);
+    expect(countOf(html, 'data-testid="team-member-global"')).toBe(1);
+    expect(html).toContain('data-testid="team-member-switch" data-slug="rota"');
+    expect(html).not.toContain('data-testid="team-member-switch" data-slug="ada"');
   });
 });

@@ -6,9 +6,9 @@
  * `RefKind`, Edit/Write diff parsing, and the sub-agent summary/suppression helpers
  * (frame-driven, per the plan's round-3 correction — NOT parentToolUseId-driven).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
-  isStreamGrowth, contentTopOf, screenScaleOf,
+  isStreamGrowth, contentTopOf, screenScaleOf, settleShiftOf,
   toolGlyph, classifyReference, isPdfPath, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
@@ -2671,6 +2671,20 @@ describe('contentTopOf: a row\'s start in scroll pixels', () => {
     expect(screenScaleOf({ offsetHeight: 0, getBoundingClientRect: () => box(0, 0) } as unknown as HTMLElement)).toBe(1);
     // A fractional height against offsetHeight's whole pixel is rounding, not a transform.
     expect(screenScaleOf({ offsetHeight: 560, getBoundingClientRect: () => box(0, 559.5) } as unknown as HTMLElement)).toBe(1);
+  });
+
+  it('a row passing through the agenda filter\'s settle motion is read where it will rest', () => {
+    // The motion moves the row 8px down at its start (ChatPane.css chat-thread-settle-*).
+    const moving = { getBoundingClientRect: () => box(172, 10), closest: () => ({}) } as unknown as Element;
+    const still = { getBoundingClientRect: () => box(164, 10), closest: () => null } as unknown as Element;
+    vi.stubGlobal('getComputedStyle', () => ({ transform: 'matrix(1, 0, 0, 1, 0, 8)' }));
+    try {
+      expect(contentTopOf(moving, scroller(1, 7000))).toBe(7064);
+      expect(contentTopOf(still, scroller(1, 7000))).toBe(7064);
+      expect(settleShiftOf(moving)).toBe(8);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

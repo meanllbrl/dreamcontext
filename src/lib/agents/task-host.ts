@@ -254,8 +254,8 @@ export async function runTaskJob(contextRoot: string, slug: string, runId: strin
   const target = approvedRunTarget(contextRoot, claim.agent, 'agent', home);
   if (!target) return block(`the agent ${claim.agent} is gone`);
   const level = target.autonomy ?? DEFAULT_AGENT_AUTONOMY;
-  if (claim.step === 'plan' && level !== 'ask') {
-    // The level changed since the plan step was queued: there is no plan step above Ask.
+  if (claim.step === 'plan') {
+    // A plan step queued when a member could still be Ask: no member runs at Ask now, so it works.
     casTask(contextRoot, view.slug, { from: ['running'], step: 'plan' }, { agent_step: 'work' });
     claim.step = 'work';
   }

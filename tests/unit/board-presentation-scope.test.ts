@@ -403,7 +403,9 @@ describe('a card conversation is never wider than the agent\'s level', () => {
     expect(cardSessionMode('bypassPermissions', 'balanced')).toBe('auto');
     expect(cardSessionMode('auto', 'free')).toBe('auto');
     expect(cardSessionMode('bypassPermissions', 'free')).toBe('bypassPermissions');
-    expect(cardSessionMode('auto', 'ask')).toBe('default');
+    // A stored `ask` is Balanced (owner 2026-11-18): a card never opens a member in `default`.
+    expect(cardSessionMode('auto', 'ask')).toBe('auto');
+    expect(cardSessionMode('bypassPermissions', 'ask')).toBe('auto');
     expect(cardModeAllowed('bypassPermissions', 'balanced')).toBe(false);
     expect(cardModeAllowed('auto', 'balanced')).toBe(true);
   });

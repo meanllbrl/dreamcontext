@@ -22,7 +22,7 @@ export interface MemberPermissions {
   applies: { narrowing: 'now' | 'next_session'; widening: 'next_session' };
 }
 
-const ORDER: readonly AgentAutonomy[] = ['ask', 'balanced', 'free'];
+const ORDER: readonly AgentAutonomy[] = ['balanced', 'free'];
 
 /**
  * The line for a level the owner picked but has not saved: a stricter one reaches a running member

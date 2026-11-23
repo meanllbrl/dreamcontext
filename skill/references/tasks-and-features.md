@@ -750,7 +750,7 @@ Lanes are selections, so switching the funnel re-applies them to the new funnel.
 
 A metric that returns the same value for two different windows ignores the date filter: leave it out.
 
-**Refresh.** `lab sync` alone brings no new data (the script reads a file). Refresh = pull the queries again → build the snapshot → `lab data check` → `lab data write`. A scheduled refresh is an automation (`dreamcontext automations create`) whose prompt follows this contract:
+**Refresh.** `lab sync` alone brings no new data (the script reads a file). Refresh = pull the queries again → build the snapshot → `lab data check` → `lab data write`. A scheduled refresh is an automation (`dreamcontext automations create --agent <member>`) whose prompt follows this contract:
 
 1. Record the current `pulled_at` (`dreamcontext lab data check <slug> --json`).
 2. If `kb_chart_query` is not among your tools, make the FIRST line of your final message `RUN FAILED: KB tools missing (kb_chart_query)` and write nothing.

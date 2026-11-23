@@ -93,10 +93,14 @@ describe('what is not the bare stage keeps its layout', () => {
     expect([p.othersInHead, p.agendaInHead]).toEqual([true, true]);
   });
 
-  it('a sheet over a narrow stage keeps both bands: its exits live there', () => {
+  it('a sheet over a narrow stage keeps both bands: its exits live there, its tab row over the chat', () => {
     const p = planStage([card('a')], { mode: 'half', card: 'a' }, { width: 854, height: 918 });
-    expect(gaps(p)).toEqual({ top: M + BAND, bottom: M + BAND });
+    // The row of tabs sits at the content's top; the chat (and the open sheet) start under it.
+    expect(gaps(p)).toEqual({ top: M + BAND + STAGE.TAB_H + STAGE.GAP / 2, bottom: M + BAND });
+    expect(p.tabs!.rect.y).toBe(M + BAND);
     expect(p.othersInHead).toBe(false);
+    const folded = planStage([card('a')], { mode: 'half', card: 'a' }, { width: 854, height: 918 }, { folded: true });
+    expect(gaps(folded)).toEqual(gaps(p));
   });
 
   it('side by side and a presentation on a wide stage keep their bands', () => {

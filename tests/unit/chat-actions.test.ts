@@ -388,3 +388,58 @@ describe('toAction — app-install kind (app-araclari §5)', () => {
     expect(toAction({ label: 'x', action: 'app-install', id: 'acme/crm' })).toBeNull();
   });
 });
+
+describe('parseChatActions — dream-voice', () => {
+  it('turns a voice fence into a voice block with its title, in written order', () => {
+    const r = parseChatActions('Önce.\n\n```dream-voice Günlük özet\nMerhaba, bugün üç iş bitti.\n```\n\nSonra.');
+    expect(r.segments.map((s) => s.kind)).toEqual(['prose', 'voice', 'prose']);
+    expect(r.segments[1]).toEqual({ kind: 'voice', title: 'Günlük özet', text: 'Merhaba, bugün üç iş bitti.' });
+    expect(r.body).not.toContain('dream-voice');
+  });
+  it('stacks several and accepts a fence with no title', () => {
+    const r = parseChatActions('```dream-voice\nBir.\n```\n```dream-voice İkinci\nİki.\n```');
+    expect(r.blocks.map((b) => (b.kind === 'voice' ? b.title : '-'))).toEqual(['', 'İkinci']);
+  });
+  it('hides a voice fence that is still streaming and drops an empty one', () => {
+    expect(parseChatActions('Merhaba\n```dream-voice Başlık\nyarım').body).toBe('Merhaba');
+    expect(parseChatActions('```dream-voice x\n  \n```').blocks).toEqual([]);
+  });
+});
+
+describe('parseChatActions — fence names written in prose', () => {
+  it('keeps the rest of a finished answer when a fence name is only mentioned', () => {
+    const r = parseChatActions('Use it like this:\n```dream-view``` draws a card.\n\nMore answer here.');
+    expect(r.body).toContain('More answer here.');
+    const v = parseChatActions('Hi\n```dream-voice The `x` summary\nhello\n```\nRest of answer.');
+    // A backtick in the info string means it is no fence (CommonMark): nothing is hidden.
+    expect(v.blocks.filter((b) => b.kind === 'voice')).toHaveLength(0);
+    expect(v.body).toContain('Rest of answer.');
+  });
+});
+
+describe('parseChatActions — dream-voice mentioned inline with a title', () => {
+  it('keeps the rest of a finished answer', () => {
+    const r = parseChatActions('Write it:\n```dream-voice Title``` gives a card.\n\nMore answer.');
+    expect(r.body).toContain('More answer.');
+    expect(parseChatActions('Hi\n```dream-voice Başlık\nyarım').body).toBe('Hi');
+    expect(parseChatActions('Hi\n```dream-voice Dai').body).toBe('Hi');
+  });
+});
+
+describe('parseChatActions — a voice title never swallows a fence marker', () => {
+  it('does not treat an inline mention followed by a later fence as one block', () => {
+    const r = parseChatActions('Say ```dream-voice A``` here.\n```dream-voice B\nreal\n```\nEnd.');
+    expect(r.body).toContain('End.');
+    expect(r.blocks.filter((b) => b.kind === 'voice')).toHaveLength(1);
+  });
+});
+
+describe('parseChatActions — a voice fence line is matched in linear time', () => {
+  it('survives a long whitespace run and never blanks on a backtick title', () => {
+    const t0 = Date.now();
+    parseChatActions('```dream-voice' + ' '.repeat(5000) + '\n' + 'x'.repeat(2000));
+    parseChatActions('```dream-voice' + ' '.repeat(5000) + ' ```\nx');
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(parseChatActions('```dream-voice T`\nMore prose.\nEnd.').body).toContain('End.');
+  });
+});

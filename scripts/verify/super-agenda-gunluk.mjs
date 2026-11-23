@@ -217,7 +217,8 @@ const inViewport = (page, loc) => loc.evaluate((el) => { const r = el.getBoundin
 async function hoverShows(page, text) {
   const r = rowWith(page, text);
   await r.hover();
-  return until(page, async () => (await r.getByTestId('super-agenda-done').isVisible()) && (await r.getByTestId('super-agenda-about').isVisible()), 3000);
+  // Owner 2026-11-17: Ask alone on the hover; Done is in the status menu and the detail.
+  return until(page, async () => (await r.getByTestId('super-agenda-about').isVisible()) && (await r.getByTestId('super-agenda-done').count()) === 0, 3000);
 }
 
 async function main() {
@@ -314,11 +315,11 @@ async function main() {
     await menu.locator('button[data-status="in-progress"]').click();
     ok('…picking In progress is recorded on his line', await until(page, async () => { const p = pad().find((x) => x.text.startsWith('Beta için fiyat')); return p && p.section === 'now' && !p.stage; }, 8000), JSON.stringify(pad().find((x) => x.text.startsWith('Beta için fiyat'))));
 
-    ok('hover on a line shows Done and Ask (large)', await hoverShows(page, "Main'e gönderim"));
+    ok('hover on a line shows Ask alone (large)', await hoverShows(page, "Main'e gönderim"));
     await shot(page, '03-hover-large-light.png');
-    await rowWith(page, 'Ekip üyesi').hover();
-    await rowWith(page, 'Ekip üyesi').getByTestId('super-agenda-done').click();
-    ok('Done on hover moves the line to Done', await until(page, async () => pad().find((x) => x.text.startsWith('Ekip üyesi'))?.section === 'done'
+    await rowWith(page, 'Ekip üyesi').getByTestId('super-agenda-status').click();
+    await page.getByTestId('super-agenda-status-menu').locator('button[data-status="done"]').click();
+    ok('Done from the status circle moves the line to Done', await until(page, async () => pad().find((x) => x.text.startsWith('Ekip üyesi'))?.section === 'done'
       && (await section(page, 'done').locator('[data-testid="super-agenda-row"]').filter({ hasText: 'Ekip üyesi' }).count()) === 1, 8000));
 
     await page.mouse.move(5, 5);
@@ -406,8 +407,8 @@ async function main() {
           // A refused Done shows on the small card itself (review r1).
           await page.route('**/api/super/pad', (r) => (r.request().method() === 'POST' ? r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'unknown_note', message: 'no such note' }) }) : r.continue()));
           const lr = rows(page).filter({ has: page.getByTestId('super-agenda-status') }).first();
-          await lr.hover();
-          await lr.getByTestId('super-agenda-done').click();
+          await lr.getByTestId('super-agenda-status').click();
+          await page.getByTestId('super-agenda-status-menu').locator('button[data-status="done"]').click();
           ok('light small: a refused Done says why on the card, in words', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-error').isVisible()) && !/Request failed/.test(await agendaCard(page).getByTestId('super-agenda-error').innerText()), 4000));
           await cardShot(page, '12b-small-light-done-refused.png');
           await page.unroute('**/api/super/pad');
@@ -447,7 +448,7 @@ async function main() {
       await shot(page, `14-full-${theme}.png`);
       const fr = page.locator('[data-testid="super-agenda"] [data-testid="super-agenda-row"]').filter({ hasText: "Main'e gönderim" }).first();
       await fr.hover();
-      ok(`${theme} full: hover shows Done and Ask`, await until(page, async () => fr.getByTestId('super-agenda-done').isVisible(), 3000));
+      ok(`${theme} full: hover shows Ask alone`, await until(page, async () => (await fr.getByTestId('super-agenda-about').isVisible()) && (await fr.getByTestId('super-agenda-done').count()) === 0, 3000));
       await shot(page, `15-full-${theme}-hover.png`);
       await owner(page, { view: { mode: 'float' } });
       await until(page, async () => (await agendaCard(page).count()) === 1, 8000);

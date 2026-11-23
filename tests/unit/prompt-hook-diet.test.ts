@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { promptOwnerText, recallQuery } from '../../src/lib/agents/team-roster.js';
 import { firstInSession, resetSessionOnce } from '../../src/lib/hook-delivery.js';
 import {
-  CONTEXT_GATE_REMINDER, PATTERN_BANNER_REMINDER, SUBAGENT_DISPATCH_REMINDER, hitSize, peerBlockWanted, renderRecallBlock,
+  CONTEXT_GATE_REMINDER, PATTERN_BANNER_REMINDER, SUBAGENT_DISPATCH_REMINDER, hitSize, peerNamed, renderRecallBlock,
 } from '../../src/cli/commands/hook.js';
 import type { CorpusDoc, RecallHit } from '../../src/lib/recall.js';
 
@@ -28,6 +28,12 @@ describe('recallQuery: the owner words, nothing a machine wrote (MM-1)', () => {
   it('a Super event and a handoff turn are no query', () => {
     expect(recallQuery('[super events] child b1 finished: green, 3 commits')).toBeNull();
     expect(recallQuery('Handoff: continue the checkout work from the task')).toBeNull();
+  });
+  it('a sub-agent or teammate message is not the owner speaking', () => {
+    const report = 'Another Claude session sent a message:\n<agent-message from="a1b2c3">\n[Subagent hand-back] The report follows:\n  REVIEW: the checkout flow in src/lib/pay.ts has two Major findings, retry loop and refund race\n</agent-message>\n\nThat "other Claude session" is an agent working inside this same session, so this was not typed by your user.';
+    expect(recallQuery(report)).toBeNull();
+    expect(recallQuery('<agent-message from="t9">still running the payment tests</agent-message>')).toBeNull();
+    expect(recallQuery(report + '\nwhy is the checkout slow?')).toBe('why is the checkout slow?');
   });
 
   it('a child kickoff keeps the job, drops the dev-server line and the brief path', () => {
@@ -90,18 +96,18 @@ describe('firstInSession: the long blocks once, then one line (MM-3)', () => {
   });
 });
 
-describe('peerBlockWanted (MM-7)', () => {
-  it('named peer: shown, whatever the scores', () => {
-    expect(peerBlockWanted('what did tilki decide about payments', ['tilki'], 3, 40)).toBe(true);
-    expect(peerBlockWanted("Tilki'nin ödeme kararı", ['Tilki'], 3, 40)).toBe(true);
+describe('peerNamed (MM-7)', () => {
+  it('a named peer is a mention, in any case and with a suffix', () => {
+    expect(peerNamed('what did harbor decide about payments', ['harbor'])).toBe(true);
+    expect(peerNamed("Harbor'un ödeme kararı", ['Harbor'])).toBe(true);
+    expect(peerNamed('check the lighthouse app', ['harbor', 'Lighthouse'])).toBe(true);
   });
-  it('not named: only when the peer outscores this vault', () => {
-    expect(peerBlockWanted('payments flow', ['tilki'], 9, 12)).toBe(false);
-    expect(peerBlockWanted('payments flow', ['tilki'], 14, 12)).toBe(true);
-    expect(peerBlockWanted('payments flow', ['tilki'], 3, 0)).toBe(true);
+  it('an unnamed peer is never shown, however its files score', () => {
+    expect(peerNamed('payments flow, wave map, fan-out agents', ['harbor'])).toBe(false);
   });
-  it('a name inside another word is not a mention', () => {
-    expect(peerBlockWanted('the tilkiness of it', ['tilki'], 1, 5)).toBe(false);
+  it('a name inside another word is not a mention, and a too-short name never is', () => {
+    expect(peerNamed('the harbored doubt', ['harbor'])).toBe(false);
+    expect(peerNamed('go ab now', ['ab'])).toBe(false);
   });
 });
 

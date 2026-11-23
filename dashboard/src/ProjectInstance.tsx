@@ -571,7 +571,7 @@ export interface ProjectInstanceProps {
   onDrawerIntentConsumed?: (vault: string, nonce: number) => void;
   /** New shell: "Üyeleri yönet" was asked for this project from the drawer while it was not on
    *  screen (a nonce); the modal opens once this instance is active. */
-  pendingManage?: { nonce: number; create?: boolean } | null;
+  pendingManage?: { nonce: number; create?: boolean; global?: boolean } | null;
   onManageConsumed?: (vault: string, nonce: number) => void;
 }
 
@@ -626,7 +626,7 @@ export function ProjectInstance({
   useEffect(() => {
     if (pendingManage === null || !isActive) return;
     onManageConsumed?.(vault, pendingManage.nonce);
-    openManage(pendingManage.create ? { create: true } : {});
+    openManage(pendingManage.create ? { create: true, ...(pendingManage.global ? { global: true } : {}) } : {});
   }, [pendingManage, isActive, vault, onManageConsumed, openManage]);
   const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
   const consumeStart = useCallback((nonce: number) => onStartConsumed?.(vault, nonce), [onStartConsumed, vault]);

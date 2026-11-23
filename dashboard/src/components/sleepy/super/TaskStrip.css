@@ -103,10 +103,11 @@
 .super-task-strip .djob-btn:disabled { opacity: 0.6; cursor: default; }
 .super-task-strip-error { margin: 0; font-size: var(--font-size-xs); color: var(--color-error); }
 
-/* ── The member's head in the centre (mockup r8-08): face, name, "job · tek konuşma" ──
-   One row, nothing overlaps: the member's head takes what the buttons leave (basis 0) and gives
-   way first (subtitle, then the model chip and the tool note); the buttons never shrink under
-   their own width (main's ⋯ may, it shares the row with less). */
+/* ── The member's head in the centre (owner 2026-11-17, option A): one row ──
+   A global member's: "<logo> <project> › <face> <name> (Global)", then the model chip and
+   Profil at the end. The project name never hides (at most ~35% of the row, cut with an
+   ellipsis); the member's name keeps at least its first word. What gives way, in order: the
+   tool note, then the model chip and the Global chip. The buttons never shrink. */
 .super-member-head {
   display: flex;
   align-items: center;
@@ -116,35 +117,65 @@
   overflow: hidden;
 }
 .super-member-head > * { flex: none; }
-.super-member-head > .super-member-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.super-member-head > .super-member-sub { flex: 1 1 0; }
+.super-member-head > .super-member-project { flex: 0 1 auto; max-width: 35%; min-width: 3.5em; }
+.super-member-head > .super-member-name { flex: 0 1 auto; min-width: 4.5em; overflow: hidden; text-overflow: ellipsis; }
+.super-member-head > .super-member-gap { flex: 1 1 0; min-width: 0; }
 .super-member-head > .super-member-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-centre-head:has(.super-member-head) .super-head-more,
 .super-centre-head:has(.super-member-head) .super-agenda-open { flex: none; }
+/* The model chip goes before the project name is ever cut (the desktop centre is ~560px wide). */
 @container super-centre (max-width: 719px) {
-  .super-member-head .super-member-sub,
-  .super-member-head .super-member-note { display: none; }
+  .super-member-head .super-member-note,
+  .super-member-head .super-member-model { display: none; }
 }
 @container super-centre (max-width: 559px) {
-  .super-member-head .super-member-model { display: none; }
-  .super-member-head .aiteam-autonomy { display: none; }
+  .super-member-head .super-member-global { display: none; }
   .super-centre-head:has(.super-member-head) .super-fresh-btn { padding: 0 var(--space-1); }
   .super-centre-head:has(.super-member-head) .super-fresh-btn-label { display: none; }
 }
-@container super-centre (max-width: 419px) {
-  .super-member-head .super-member-chip { display: none; }
+.super-member-project {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.super-member-project .vault-logo { flex: none; border-radius: var(--radius-sm); }
+.super-member-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.super-member-sep {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
 }
 .super-member-name {
   font-weight: 600;
   color: var(--color-text);
   white-space: nowrap;
 }
-.super-member-sub {
+/* The phone stage's job line (PhoneMemberStage; the desktop head has none). */
+.super-member-head > .super-member-sub {
+  flex: 1 1 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.super-member-global {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
   white-space: nowrap;
 }
 .super-member-model {
@@ -171,15 +202,6 @@
   white-space: nowrap;
 }
 .super-member-btn:hover { border-color: var(--color-border-hover); }
-.super-member-chip select {
-  font: inherit;
-  font-size: var(--font-size-xs);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-}
 
 /* ── Above the centre chat: the strip, the approval band, a refused open ── */
 .super-member-top {
