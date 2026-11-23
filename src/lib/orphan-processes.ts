@@ -117,7 +117,7 @@ export function createRunPs(
 
 export const runPs: RunPs = createRunPs();
 
-const TABLE_ARGS = ['-axww', '-o', 'uid=,pid=,ppid=,pgid=,lstart=,args='] as const;
+export const TABLE_ARGS = ['-axww', '-o', 'uid=,pid=,ppid=,pgid=,lstart=,args='] as const;
 
 // macOS pads the lstart column (5 spaces before args); `\s+` eats the padding, trailing
 // whitespace in args is kept (`next-server (v16.1.1) `).
