@@ -606,3 +606,43 @@
   background: var(--color-accent);
 }
 .window-chrome[data-shell="new"][data-touch="true"] .ns-tab { min-height: var(--touch-target); }
+
+/* ── The bar gives way, in order (useBarSqueeze.ts sets `data-squeeze` from a measurement). The menu
+   tabs and the project label are what the owner reads first: they are never cut, never overlap,
+   never wrap. The sleep tracker shrinks first, then the zoom icon goes, and only then the
+   project's name shortens. Levels 0–3 keep both clusters at their full width so the measurement
+   sees the real need; level 4 lets the left cluster shrink through the project name alone. ── */
+
+.ns-titlebar[data-squeeze] .ns-tb-left,
+.ns-titlebar[data-squeeze] .ns-tb-right { flex: none; }
+.ns-titlebar[data-squeeze] .ns-tb-left { margin-right: var(--space-3); }
+.ns-titlebar[data-squeeze] .ns-tb-tabs { flex: none; }
+.ns-titlebar[data-squeeze] .ns-tb-picker { flex: none; }
+
+/* 1: the tracker drops its word: face, count, bar. */
+.ns-titlebar[data-squeeze="1"] .sleep-tracker-level,
+.ns-titlebar[data-squeeze="2"] .sleep-tracker-level,
+.ns-titlebar[data-squeeze="3"] .sleep-tracker-level,
+.ns-titlebar[data-squeeze="4"] .sleep-tracker-level { display: none; }
+
+/* 2: the face and a small coloured bar; the full reading is the button's title and its label. */
+.ns-titlebar[data-squeeze="2"] .sleep-tracker-top,
+.ns-titlebar[data-squeeze="3"] .sleep-tracker-top,
+.ns-titlebar[data-squeeze="4"] .sleep-tracker-top { display: none; }
+.ns-titlebar[data-squeeze="2"] .sleep-tracker-body,
+.ns-titlebar[data-squeeze="3"] .sleep-tracker-body,
+.ns-titlebar[data-squeeze="4"] .sleep-tracker-body { min-width: 22px; }
+.ns-titlebar[data-squeeze="2"] .sleep-tracker-bar,
+.ns-titlebar[data-squeeze="3"] .sleep-tracker-bar,
+.ns-titlebar[data-squeeze="4"] .sleep-tracker-bar { height: 5px; }
+.ns-titlebar[data-squeeze="2"] .sleep-tracker-wrap,
+.ns-titlebar[data-squeeze="3"] .sleep-tracker-wrap,
+.ns-titlebar[data-squeeze="4"] .sleep-tracker-wrap { margin-right: 0; }
+
+/* 3: the zoom icon goes (Settings › General keeps the control). */
+.ns-titlebar[data-squeeze="3"] .ns-zoom,
+.ns-titlebar[data-squeeze="4"] .ns-zoom { display: none; }
+
+/* 4: the project's name shortens with an ellipsis; its logo stays. */
+.ns-titlebar[data-squeeze="4"] .ns-tb-left { flex: 0 1 auto; min-width: 0; }
+.ns-titlebar[data-squeeze="4"] .ns-tb-picker { flex: 0 1 auto; min-width: 0; }
