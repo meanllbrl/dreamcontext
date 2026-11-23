@@ -14,13 +14,23 @@ import { useLayoutEffect, type RefObject } from 'react';
  */
 export const BAR_SQUEEZE_MAX = 5;
 
-/** True while what the bar holds is wider than the bar (levels 0–3 never let a cluster shrink). */
-function overflows(bar: Pick<HTMLElement, 'scrollWidth' | 'clientWidth'>): boolean {
-  return bar.scrollWidth > bar.clientWidth;
+type BarLike = Pick<HTMLElement, 'scrollWidth' | 'clientWidth'> & { querySelector?: HTMLElement['querySelector'] };
+
+/**
+ * True while what the bar holds is wider than the bar (levels 0–3 never let a cluster shrink), or
+ * while the last menu tab reaches under the right cluster: the bar's own scroll width cannot see
+ * that, because at the last levels the left cluster shrinks to fit the bar and the tabs spill
+ * into the cluster beside them instead of past the bar's edge (390 px, measured 2026-11-23).
+ */
+function overflows(bar: BarLike): boolean {
+  if (bar.scrollWidth > bar.clientWidth) return true;
+  const lastTab = bar.querySelector?.('.ns-tabs')?.lastElementChild;
+  const right = bar.querySelector?.('.ns-tb-right');
+  return !!lastTab && !!right && lastTab.getBoundingClientRect().right > right.getBoundingClientRect().left + 0.5;
 }
 
 /** The smallest level at which the bar's contents fit, written to `data-squeeze` (exported for the test). */
-export function fitBar(bar: Pick<HTMLElement, 'setAttribute' | 'scrollWidth' | 'clientWidth'>): number {
+export function fitBar(bar: Pick<HTMLElement, 'setAttribute'> & BarLike): number {
   let level = 0;
   for (; level < BAR_SQUEEZE_MAX; level++) {
     bar.setAttribute('data-squeeze', String(level));

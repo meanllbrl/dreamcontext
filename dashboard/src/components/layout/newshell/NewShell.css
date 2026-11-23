@@ -655,5 +655,7 @@
 /* 5: a phone-width window. The tracker (its reading stays in Settings and on the Sleep page) and
    the project's name make room; the tabs keep every word and only sit closer. */
 .ns-titlebar[data-squeeze="5"] .sleep-tracker-wrap { display: none; }
-.ns-titlebar[data-squeeze="5"] .ns-tb-tabs .ns-tab { padding: 0 var(--space-2); }
+.ns-titlebar[data-squeeze="5"] .ns-tb-tabs .ns-tab { padding: 0 var(--space-1); font-size: var(--font-size-xs); }
 .ns-titlebar[data-squeeze="5"] .ns-tabs { gap: 0; }
+.ns-titlebar[data-squeeze="5"] .ns-tb-divider { display: none; }
+.ns-titlebar[data-squeeze="5"] .ns-tb-left { margin-right: 0; }
