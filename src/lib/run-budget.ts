@@ -358,7 +358,7 @@ export function directHeavy(command: string): HeavyKind | null {
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Any command that changes the working folder, in any position or spelling. */
-const CHDIR = /(?:^|[\s;&|({])(?:(?:builtin|command)\s+)?(?:cd|pushd|popd)(?=[\s;&|)}]|$)/;
+const CHDIR = /(?:^|[^\w./-])(?:cd|pushd|popd)(?![\w./-])/;
 
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
