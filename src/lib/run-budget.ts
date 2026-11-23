@@ -357,6 +357,9 @@ export function directHeavy(command: string): HeavyKind | null {
 /** POSIX single quotes, the only form that keeps text inert when pasted back into a shell. */
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
+/** Any command that changes the working folder, in any position or spelling. */
+const CHDIR = /(?:^|[\s;&|({])(?:(?:builtin|command)\s+)?(?:cd|pushd|popd)(?=[\s;&|)}]|$)/;
+
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
  * hides the check's exit code, so that run could never keep a receipt (lib/check-receipt.ts):
@@ -368,14 +371,14 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
   const segments = shellSegments(command);
   const suite = segments.find((seg) => stepOfSegment(seg, {})?.kind === 'suite' && !stepOfSegment(seg, {})?.partial);
   if (suite) {
+    // The leading `cd <bare dir> &&` is where the suite runs: kept. ANY other folder change (mid-chain, `;`,
+    // quoted or computed folder, `{ cd }`, pushd/popd, `builtin cd`) cannot be kept in the suite form, and a
+    // red record belongs to the session folder: dropping it would run the suite in the wrong folder, so the
+    // form quotes the whole command instead. Over-matching (a `cd` word inside an argument) is safe: the whole form.
+    const cd = /^\s*(cd\s+[^\s'"$`;&|(){}\\]+)\s*&&/.exec(command)?.[1];
+    const rest = cd ? command.replace(/^\s*cd\s+[^\s'"$`;&|(){}\\]+\s*&&/, '') : command;
+    if (CHDIR.test(rest) || (ctx.redOpen && cd)) return `dreamcontext builder heavy -- ${shellQuote(command)}`;
     if (ctx.redOpen) return 'dreamcontext builder test --failed';
-    // A leading `cd <dir> &&` is where the suite runs: kept. A build in the chain runs first, alone.
-    const cd = /^\s*(cd\s+[^\s'"$`;&|()]+)\s*&&/.exec(command)?.[1];
-    // Any other cd (mid-chain, before `;`, quoted folder) cannot be kept in the suite form: dropping it
-    // would run the suite in the wrong folder, so the form quotes the whole command instead.
-    if (segments.filter((seg) => /^\(*\s*cd(?:\s|$)/.test(seg)).length > (cd ? 1 : 0)) {
-      return `dreamcontext builder heavy -- ${shellQuote(command)}`;
-    }
     const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
     const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
     const first = build ? `dreamcontext builder heavy -- ${shellQuote(`${cd ? `${cd} && ` : ''}${build}`)}, then ` : '';

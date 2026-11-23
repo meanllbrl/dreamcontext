@@ -102,6 +102,19 @@ describe('the heavy-step gate', () => {
       }
       expect(heavySuggestion('cd pkg && npm test')).toContain("--detach -- 'cd pkg && npm test'");
     });
+    it('class: any folder change the suite form cannot keep quotes the whole command, red record or not', () => {
+      const cmds = ['{ cd pkg && npm test; }', '{ cd pkg && npm run build && npm test; }', 'pushd pkg && npm test', 'pushd "a b" && npm test', 'builtin cd pkg && npm test', 'command cd pkg && npm test',
+        'cd a && cd b && npm test', 'cd $(git rev-parse --show-toplevel) && npm test', 'cd "a b" && npm test', 'cd pkg ; npm test', 'npm ci && cd pkg && npm test'];
+      for (const cmd of cmds) for (const redOpen of [false, true]) {
+        const s = heavySuggestion(cmd, { redOpen });
+        expect(s, cmd).toBe(`dreamcontext builder heavy -- '${cmd}'`);
+      }
+      // A red record with a leading cd belongs to the session folder, not the cd target.
+      expect(heavySuggestion('cd ../other && npm test', { redOpen: true })).toBe("dreamcontext builder heavy -- 'cd ../other && npm test'");
+      // No folder change: the suite form and the red shortcut stay.
+      expect(heavySuggestion('npm test', { redOpen: true })).toBe('dreamcontext builder test --failed');
+      expect(heavySuggestion('cd pkg && npm run build && npm test')).toContain("--detach -- 'cd pkg && npm test'");
+    });
     it('names the part of the reported kind', () => {
       expect(lead('npx tsc --noEmit && npm run build')).toContain('`npm run build` (build)');
     });
