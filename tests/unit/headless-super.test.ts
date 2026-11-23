@@ -262,6 +262,31 @@ describe('the wake for team mail (no window)', () => {
     await passGrace(root, 'm:rota');
     await vi.waitFor(() => expect(spawned[0].stdin.write.mock.calls.some(([t]) => String(t).includes('q-mreq-0000000c'))).toBe(true), { timeout: 5000 });
   });
+
+  it("a stopped member whose child the relaunch cut is started as that member (no window, no request, no Telegram message) and the restart written to it", async () => {
+    const { createAgent } = await import('../../src/lib/agents/store.js');
+    const { MEMBER_SUPER_DIR } = await import('../../src/lib/super/store.js');
+    createAgent(root, { slug: 'rota', title: 'Rota', prompt: 'Rota works.' }, { approve: { now: new Date() } });
+    _setHeadlessGateForTests(() => null);
+    const RS = randomUUID();
+    const CH = randomUUID();
+    mkdirSync(join(root, MEMBER_SUPER_DIR), { recursive: true });
+    writeFileSync(join(root, MEMBER_SUPER_DIR, 'rota.json'), JSON.stringify({
+      ...emptySuperState(), session: RS, enabled: true, member: 'rota',
+      children: { [CH]: { sessionId: CH, brief: 'neon screens', startedAt: Date.now() - 120_000, row: 'working', resuming: Date.now() - 40_000, awaited: true, origin: 'vkf6e4' } },
+      queue: [{ id: 'q-rst-0000002a', sessionId: CH, kind: 'restarted', state: 'pending', createdAt: Date.now() - inboxMod.CHILD_WAKE_GRACE_MS - 1_000 }],
+    }));
+    resetSuperIndex();
+    await readSuperState(root, 'm:rota');
+    inboxMod.wireSuperInbox();
+    wireSuperWake({ wake: true });
+    await inboxMod.pumpSuper(root, 'm:rota');
+    await vi.waitFor(() => expect(spawned).toHaveLength(1), { timeout: 5000 });
+    const log = readFileSync(join(logHome, '.dreamcontext', 'logs', 'window-open.log'), 'utf-8');
+    expect(log).toMatch(/"member":"rota"[^\n]*"cause":"child"/);
+    await passGrace(root, 'm:rota');
+    await vi.waitFor(() => expect(spawned[0].stdin.write.mock.calls.some(([t]) => String(t).includes('q-rst-0000002a'))).toBe(true), { timeout: 5000 });
+  });
 });
 
 // The wake's bounds (end review r1): only mail the next batch would deliver wakes; a member
@@ -292,13 +317,59 @@ describe('the wake for team mail: what wakes and how often', () => {
     inboxMod.setSuperWaker(async (o) => { calls.push(o.superId); return 'live'; });
     await memberRecord([
       { id: 'q-req-00000010', kind: 'request', state: 'delivered', createdAt: Date.now() - 5000, acceptedAt: Date.now() - 4000, text: 'Plan the routes.' },
-      { id: 'q-done-00000011', sessionId: CH, kind: 'done', state: 'pending', createdAt: Date.now() },
+      { id: 'q-done-00000011', sessionId: CH, kind: 'done', state: 'pending', createdAt: Date.now() - inboxMod.CHILD_WAKE_GRACE_MS - 1_000 },
     ], kids);
     await inboxMod.pumpSuper(root, 'm:rota');
     expect(calls).toEqual(['m:rota']);
     const state = await readSuperState(root, 'm:rota');
-    expect(inboxMod.wakeCause(state)).toBe('team');
+    expect(inboxMod.wakeCause(state)).toBe('child');
     expect(inboxMod.wakeCause({ ...state, queue: state.queue.filter((q) => q.kind !== 'request') })).toBeNull();
+  });
+
+  // Owner 2026-11-22 ("AI team üyeleri açılmıyor"): Ege's child, cut by the app's relaunch at
+  // 17:42, waited `restarted` for 33 minutes with no window, until he wrote to Ege on Telegram.
+  it("a stopped member is woken by its own child's events: a relaunch's cut child, a question, a result he waits on (after the window's grace)", async () => {
+    const CH = randomUUID();
+    const kids = { [CH]: { sessionId: CH, brief: 'neon screens', startedAt: Date.now() - 60_000, row: 'working', awaited: true, origin: 'vkf6e4' } };
+    const calls: Array<{ superId: string; member: string | null; cause: string }> = [];
+    inboxMod.setSuperWaker(async (o) => { calls.push({ superId: o.superId, member: o.member, cause: o.cause }); return 'live'; });
+    await memberRecord([{ id: 'q-rst-00000020', sessionId: CH, kind: 'restarted', state: 'pending', createdAt: Date.now() }], kids);
+    // Inside the grace a window coming up gets it first: nothing started yet.
+    await inboxMod.pumpSuper(root, 'm:rota');
+    expect(calls).toEqual([]);
+    const t = Date.now() + inboxMod.CHILD_WAKE_GRACE_MS + 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    await inboxMod.pumpSuper(root, 'm:rota');
+    expect(calls).toEqual([{ superId: 'm:rota', member: 'rota', cause: 'child' }]);
+    // The same rule for each kind that needs the member's turn, and none for a result nobody waits on.
+    const s = await readSuperState(root, 'm:rota');
+    const only = (q: Record<string, unknown>, ch: Record<string, unknown> = kids[CH]) => ({ ...s, children: { [CH]: ch }, queue: [{ sessionId: CH, state: 'pending', createdAt: 0, ...q }] }) as never;
+    expect(inboxMod.wakeCause(only({ id: 'q-stk-00000022', kind: 'stuck' }, { ...kids[CH], row: 'stuck' }))).toBe('child');
+    expect(inboxMod.wakeCause(only({ id: 'q-don-00000023', kind: 'done' }, { ...kids[CH], row: 'done' }))).toBe('child');
+    expect(inboxMod.wakeCause(only({ id: 'q-gon-00000024', kind: 'gone' }, { ...kids[CH], row: 'gone' }))).toBe('child');
+    const quiet = { ...kids[CH], awaited: undefined, origin: undefined, row: 'done' };
+    expect(inboxMod.wakeCause(only({ id: 'q-don-00000025', kind: 'done' }, quiet))).toBeNull();
+    expect(inboxMod.wakeCause(only({ id: 'q-gon-00000026', kind: 'gone' }, { ...quiet, row: 'gone' }))).toBeNull();
+    // No longer true (the child moved on, its question no longer asked): wakes nothing.
+    expect(inboxMod.wakeCause(only({ id: 'q-stk-00000029', kind: 'stuck' }))).toBeNull();
+    expect(inboxMod.wakeCause(only({ id: 'q-qst-00000021', kind: 'question', text: 'Which shade?' }))).toBeNull();
+    // Another session's item (not its child) never wakes it.
+    expect(inboxMod.wakeCause({ ...s, children: {}, queue: [{ id: 'q-rst-00000027', sessionId: CH, kind: 'restarted', state: 'pending', createdAt: 0 }] } as never)).toBeNull();
+  });
+
+  it("main's Super goes through the same gate: its awaited child's done wakes it with no window", async () => {
+    const CH = randomUUID();
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
+      ...emptySuperState(), session: SID, enabled: true,
+      children: { [CH]: { sessionId: CH, brief: 'routes', startedAt: Date.now() - 60_000, row: 'done', awaited: true, origin: 'abc123' } },
+      queue: [{ id: 'q-don-00000028', sessionId: CH, kind: 'done', state: 'pending', createdAt: Date.now() - inboxMod.CHILD_WAKE_GRACE_MS - 1_000 }],
+    }));
+    resetSuperIndex();
+    await readSuperState(root);
+    const calls: Array<{ superId: string; cause: string }> = [];
+    inboxMod.setSuperWaker(async (o) => { calls.push({ superId: o.superId, cause: o.cause }); return 'live'; });
+    await inboxMod.pumpSuper(root);
+    expect(calls).toEqual([{ superId: 'main', cause: 'child' }]);
   });
 
   it('a team question waiting behind his own open question wakes nothing', async () => {

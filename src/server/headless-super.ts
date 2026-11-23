@@ -81,7 +81,7 @@ export interface HeadlessSuperOpts {
   home?: string;
   /** Tests: how long to wait for the injector. */
   waitMs?: number;
-  /** Why it is woken, for the open log: his Telegram message, or team mail. */
+  /** Why it is woken, for the open log: his Telegram message, team mail, or its own child's event. */
   cause?: SuperWakeCause;
 }
 
