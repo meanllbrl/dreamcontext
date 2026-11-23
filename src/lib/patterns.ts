@@ -66,7 +66,7 @@ import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import matter from 'gray-matter';
 import { foldAscii } from './fold-ascii.js';
 import { HOOK_OUTPUT_MAX_CHARS } from './snapshot-budget.js';
-import { realPath } from './real-path.js';
+import { keyPath, realPath } from './real-path.js';
 
 // ─── Folding ────────────────────────────────────────────────────────────────
 
@@ -823,11 +823,20 @@ export function matchPatterns(prompt: string, patterns: PatternDoc[]): PatternMa
  * the same skill listing, with its description. Measured 2026-11-12 (audit
  * MM-10): 63 shims are ~12,200 chars, a fifth of the listing, in every session
  * and every Explore/general sub-agent, and the model invoked one 15 times in
- * 955 sessions. Whether to keep them is the owner's call (the audit asks him);
- * until then they stay, and the prompt hook remains the channel that fires a
- * pattern deterministically.
+ * 955 sessions. The owner kept them for the menu (2026-11-23), so each shim
+ * carries `disable-model-invocation: true`: Claude Code keeps it in the user's
+ * `/` menu and leaves it out of the model's listing (measured on a bare session
+ * with the 63 shims: +4,484 input tokens without the field, +2 with it, and
+ * `/pattern-…` still expands). The prompt hook remains the channel that fires a
+ * pattern on its own words, and `/patterns` the one that lists them.
  */
 const SHIM_MARKER = '<!-- dreamcontext:pattern-shim -->';
+
+/**
+ * The shim's format. Part of {@link patternsFingerprint}: a format change re-syncs every
+ * project's shims on its next session, with no `dreamcontext update` to run.
+ */
+export const SHIM_FORMAT = 2;
 
 export function commandsDir(projectRoot: string): string {
   return join(projectRoot, '.claude', 'commands');
@@ -837,6 +846,7 @@ function shimBody(p: PatternDoc): string {
   const desc = p.description ? `${p.name} — ${p.description}` : p.name;
   return `---
 description: ${JSON.stringify(desc.length > 180 ? `${desc.slice(0, 179)}…` : desc)}
+disable-model-invocation: true
 ---
 ${SHIM_MARKER}
 
@@ -1032,6 +1042,7 @@ export function patternsFingerprint(contextRoot: string, projectRoot?: string): 
   // Since the whole promise of this cache is "you never run a command", the
   // cache has to notice when its own output went missing.
   if (projectRoot) {
+    parts.push(`|shim-format:${SHIM_FORMAT}`);
     const cmds = commandsDir(projectRoot);
     if (existsSync(cmds)) {
       try {
@@ -1051,16 +1062,34 @@ export function patternsFingerprint(contextRoot: string, projectRoot?: string): 
  * asked whether they would have to re-run a command in every project, and the
  * answer has to be no. The fingerprint is cached next to the other machine-local
  * state, so the common case is one `stat` per pattern and no writes at all.
+ *
+ * The cache holds one fingerprint PER PROJECT ROOT (by its real path). One vault can
+ * serve two projects (a code repo whose `_dream_context` is a symlink to the brain's),
+ * and both see the same patterns and the same shim names: with one shared fingerprint,
+ * the first project to sync made the cache say "in sync" for the second, whose shims
+ * then never changed (end review 2026-11-23, the `disable-model-invocation` rollout).
  */
+type ShimCache = { roots?: Record<string, string> };
+
+/** Real paths a cache keeps at most: a dead root is pruned first, then the oldest. */
+const SHIM_CACHE_MAX_ROOTS = 32;
+
+function readShimCache(cachePath: string): ShimCache {
+  try {
+    const raw = JSON.parse(readFileSync(cachePath, 'utf-8')) as ShimCache;
+    return raw && typeof raw.roots === 'object' && raw.roots !== null && !Array.isArray(raw.roots) ? raw : {};
+  } catch {
+    return {};
+  }
+}
 export function syncPatternShimsIfStale(projectRoot: string, contextRoot: string): ShimSyncResult | null {
   const cachePath = join(contextRoot, 'state', '.patterns-shims.json');
   const fingerprint = patternsFingerprint(contextRoot, projectRoot);
-  try {
-    const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as { fingerprint?: string };
-    if (cached.fingerprint === fingerprint) return null;
-  } catch {
-    // No cache, or an unreadable one — fall through and sync.
-  }
+  // A stored key, so symlinks resolved and the case kept (real-path.ts); a missing root keys as given.
+  let root: string;
+  try { root = keyPath(projectRoot); } catch { root = projectRoot; }
+  // No cache, an unreadable one, or one an older version wrote (no `roots`): sync.
+  if (readShimCache(cachePath).roots?.[root] === fingerprint) return null;
 
   // Two Claude sessions in one checkout both hit SessionStart, and this is a
   // read-compare-write over shared files. `knowledge/patterns/
@@ -1074,10 +1103,7 @@ export function syncPatternShimsIfStale(projectRoot: string, contextRoot: string
   try {
     // Re-read INSIDE the lock: the holder we queued behind may have just done
     // the work, and redoing it would rewrite files for nothing.
-    try {
-      const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as { fingerprint?: string };
-      if (cached.fingerprint === fingerprint) return null;
-    } catch { /* still no usable cache */ }
+    if (readShimCache(cachePath).roots?.[root] === fingerprint) return null;
 
     const result = syncPatternShims(projectRoot, contextRoot);
     try {
@@ -1088,8 +1114,13 @@ export function syncPatternShimsIfStale(projectRoot: string, contextRoot: string
       // nothing. (Caught by the M6 regression test, which is the point of it.)
       const settled = patternsFingerprint(contextRoot, projectRoot);
       // Write-then-rename so a concurrent reader never sees a half-written file.
+      const roots = { ...(readShimCache(cachePath).roots ?? {}) };
+      delete roots[root];
+      for (const r of Object.keys(roots)) if (!existsSync(r)) delete roots[r];
+      // Insertion order is age order: the newest root goes last, the oldest is dropped first.
+      const kept = Object.entries(roots).slice(-(SHIM_CACHE_MAX_ROOTS - 1));
       const tmp = `${cachePath}.${process.pid}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify({ fingerprint: settled }, null, 2)}\n`, 'utf-8');
+      writeFileSync(tmp, `${JSON.stringify({ roots: Object.fromEntries([...kept, [root, settled]]) }, null, 2)}\n`, 'utf-8');
       renameSync(tmp, cachePath);
     } catch {
       // A vault we cannot write to still got its shims; it re-checks next time.

@@ -29,6 +29,10 @@
  * again, cut prose before you raise the bound.
  */
 
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { AppUpdateOrigin } from '../lib/apps/assistant.js';
 import { ASK_RULES_SHORT } from '../lib/ask-rules.js';
 
@@ -327,6 +331,104 @@ ${BRIEFING_VOICE_TAKE}
 
 ${BRIEFING_PICTURES}
 `;
+
+// ─── The lean surface a Super Agent's child gets ─────────────────────────────────────────
+
+/**
+ * The full surface text, as a file a lean session reads when it needs a card's detail. It IS
+ * {@link CHAT_SURFACE_BRIEFING}, under one header: nothing is copied by hand, so the reference
+ * cannot drift from what an owner's own chat is told.
+ */
+export const CHAT_SURFACE_REFERENCE = `<!-- dreamcontext: the full Chat surface reference. Generated on every chat spawn; edits are overwritten. -->
+
+${CHAT_SURFACE_BRIEFING}`;
+
+/**
+ * The reference's file name, under `~/.dreamcontext/chat/`, never in the project. It carries the
+ * text's hash: a session reads the text of the version that briefed it, even when a resume
+ * restores an older prompt or two dreamcontext versions run on one Mac (end review 2026-11-23).
+ */
+export const CHAT_SURFACE_REFERENCE_FILE = `surface-reference-${createHash('sha256').update(CHAT_SURFACE_REFERENCE).digest('hex').slice(0, 12)}.md`;
+
+/** The folder the reference files live in. */
+export function chatSurfaceReferenceDir(home: string = process.env.HOME || homedir()): string {
+  return join(home, '.dreamcontext', 'chat');
+}
+
+/**
+ * The Claude Code permission rule that lets a chat read any version's reference without a prompt:
+ * the absolute form (`//` + the path, a Windows drive as `//c/…`), only `surface-reference-*.md`.
+ */
+export function chatSurfaceReferenceReadRule(home?: string): string {
+  const dir = chatSurfaceReferenceDir(home).replace(/\\/g, '/');
+  const abs = /^[A-Za-z]:\//.test(dir) ? `/${dir[0].toLowerCase()}${dir.slice(2)}` : dir;
+  return `Read(/${abs}/surface-reference-*.md)`;
+}
+
+/**
+ * The surface briefing for a Super Agent's delegated child (task her-oturumun-sabit-girdisi-
+ * kuculur…, measured 2026-11-23: the full text cost every child ~8k tokens on every call, while
+ * a child mostly writes prose, a pin and its last reply). It keeps the CONTRACT (each card's
+ * one-line rule, its example, the asking and learning rules) and points at the reference for
+ * every field and the rationale. Nothing is dropped: `tests/unit/super-child-surface.test.ts`
+ * splits the replaced sections of the full text into units and fails on any unit that is
+ * neither here nor ledgered to the reference (pattern condense-only-behind-a-nothing-lost-ledger).
+ */
+export function superChildSurfaceBriefing(referencePath: string): string {
+  return `# Surface: dreamcontext Chat (not a terminal)
+
+Your reply renders as markdown in the dreamcontext desktop app's Chat view, where some of what you write becomes a real object the user can see and click. Paths are project-relative (an absolute one costs one consent click); a path in backticks is a chip that opens it. \`![caption](docs/shot.png)\` draws a picture, \`![board](path/to/x.excalidraw.md)\` the live board (write that instead of saying where the board is); video, audio and PDF are a LINK (\`[demo](tmp/demo.mp4)\`) that plays or opens in place. \`==phrase==\` marks a few load-bearing phrases (\`==!broken==\` red, \`==+confirmed==\` green), never a whole sentence. A sub-agent's report is ALREADY ON SCREEN as its own card: name the agent and the one thing it changes, never re-type it.
+
+**Full reference: \`${referencePath}\`** has every card, button and field with its examples and reasons. Read it before you send a kind or a field not shown here.
+
+**Prose first.** A \`dream-html\` block only when it is CLEARER than the words: a diagram that branches, merges or loops (a 2-4 step chain is a sentence), an interactive view, or a deck; never a short answer, a status or a list of findings. Before you write one, load the \`draw\` skill and read its \`references/chat-html.md\`; never guess a class. A drawing to KEEP (board, Excalidraw file) is the \`draw\` skill. Buttons: a fenced \`dream-actions\` JSON array, \`[{"label":"Open the task","action":"task","id":"agent-surface-polish"}]\` (actions \`task|knowledge|core\` + \`id\`, \`file|board|reveal\` + \`path\`, \`ask\` + \`text\`, \`url\`, \`develop\` + task \`id\`), at most ~4, only for a real next step. Only name paths that exist.
+
+## Asking — a card read cold
+
+The user reaches your AskUserQuestion card from a notification, never from your chat, so it stands alone: \`title\` names the work and the decision point; \`question\` and \`description\` say it in plain words, with the concrete case ON the card (never "above"); each option's \`label\` is what happens, its \`description\` the cost; things to look at get a \`preview\`. "Unclear? Ask again" and "Already answered" come back as denials: re-ask with more context, or find his words and act; never the same card.
+
+## \`dream-view\` cards (one JSON object in a fenced \`dream-view\` block)
+
+- **A credential — never ask for it in prose:** \`{"type":"secret","id":"firebase","title":"Firebase CI token","file":".env","fields":[{"key":"FIREBASE_TOKEN","label":"Token","hint":"printed by firebase login:ci"}]}\`. The APP writes it into the \`.env\`; you never see the value: use the key by NAME, never \`cat\` or echo it, and say you cannot see it.
+- **A command only the USER can run** (browser login, OTP, sudo, a \`y/n\`): \`{"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}\`. ONE line (\`&&\`), no absolute \`cwd\`; never an interactive command through Bash, never "run this in your terminal".
+- **An MCP server a prompt line says this chat lacks**, only then: \`{"type":"mcp","id":"report-sources","why":"PostHog numbers","servers":["posthog"]}\`.
+- **A fact that must not scroll away** (a dev server): \`{"type":"pin","id":"dev","weight":"tag","facts":[{"label":":5173","url":"http://localhost:5173"}]}\`; it does not expire, so drop it once it is gone: \`{"type":"pin","id":"dev","drop":true}\`. Never a branch, a to-do or a blocker.
+- **The checkout your work is in**, when you stand elsewhere: \`{"type":"checkout","path":"/Users/you/.claude-worktrees/roster-union"}\`; withdraw: \`{"type":"checkout","reset":true}\`.
+- **This tab's name**, once you understand the work (2-5 plain words in the user's language): \`{"type":"title","text":"Checkout redesign"}\`.
+- **A number a Lab insight tracks:** \`{"type":"insight","id":"weekly-active-users"}\`, never its figures retyped into HTML. **Steps in ANOTHER app** the user ticks off: \`{"type":"checklist","id":"asc-key","title":"App Store Connect key","items":[{"id":"1","text":"Open Users and Access"}]}\`. **An agent's thread:** \`{"type":"agent-thread","slug":"daily-digest"}\`.
+- A card a command printed (\`automation\`, \`app-request\`, \`learned\`): paste it as is. A later card of the same kind (run, secret, checklist, mcp) replaces your open one: what you need now goes in ONE message.
+
+## Rules, tools, scripts
+
+- He states a rule that outlives this job (always, never, from now on, a correction of a repeated habit): \`dreamcontext learn "<the rule>" --scope me|project|member --quote "<his exact words>"\` (\`--same <id>\` or \`--replaces <id>\` for one it has), never stricter than his words, then paste its \`{"type":"learned","id":"k7m2q6xw4b"}\` receipt (the id from its LEARNED line). An instruction for the job at hand is no rule; unsure: do not record. \`me\` only for how to work with him in general. Never write his rules into Claude's or Codex's own memory files.
+- Schedules go to \`dreamcontext automations\`, lasting work to \`dreamcontext tasks\`, facts to the brain. \`dreamcontext window\` drives this chat surface only on the user's word.
+${BRIEFING_SHELL.replace('## Scripts\n\n', '- ')}
+- A \`<voice-take ref=…>\` message that reads as nonsense: \`dreamcontext voice retry <ref>\` once, act only on sensible text, quoting it in one line before anything irreversible. A \`[Picture N: <path>]\` line: open each path, answer each picture by its number.
+`;
+}
+
+/**
+ * Writes {@link CHAT_SURFACE_REFERENCE} to `<home>/.dreamcontext/chat/<CHAT_SURFACE_REFERENCE_FILE>`
+ * and returns its path, or null when it cannot be written (the caller then falls back to the full
+ * briefing, never to a lean text pointing at nothing). Checked on every spawn, so a deleted file
+ * comes back; never deleted, so a resumed session finds the text it was born with.
+ * Write-then-rename, so a concurrent spawn never reads half a file.
+ */
+export function writeChatSurfaceReference(home: string = process.env.HOME || homedir()): string | null {
+  const dir = chatSurfaceReferenceDir(home);
+  const file = join(dir, CHAT_SURFACE_REFERENCE_FILE);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    try { if (readFileSync(file, 'utf-8') === CHAT_SURFACE_REFERENCE) return file; } catch { /* absent: write it */ }
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(tmp, CHAT_SURFACE_REFERENCE, { encoding: 'utf-8', mode: 0o644 });
+    renameSync(tmp, file);
+    return file;
+  } catch {
+    try { rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
+    return null;
+  }
+}
 
 /**
  * Added after {@link CHAT_SURFACE_BRIEFING} in an app's own window. That window is a smaller

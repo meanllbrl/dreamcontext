@@ -38,7 +38,7 @@ import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRu
 import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
-import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
+import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING, chatSurfaceReferenceReadRule, superChildSurfaceBriefing, writeChatSurfaceReference } from '../chat-surface.js';
 import { CardFeedbackTracker, endedClean, feedbackTurn } from '../card-feedback.js';
 import { onUndelivered, takeUndelivered, undeliveredNote } from '../../lib/super/undelivered.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
@@ -2819,8 +2819,13 @@ export function startChatSession(
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock, superToolsSpawn].filter(Boolean).join('\n\n');
-    // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
-    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}${leanMcpOffer ? `\n${leanMcpOffer}` : ''}` : CHAT_SURFACE_BRIEFING;
+    // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent, and
+    // gets the lean surface: each card's rule and example, the full text as a file it reads when it
+    // needs more (measured ~8k tokens less on every call). No reference file: the full text.
+    const childReference = !app && opts.leanMcp ? writeChatSurfaceReference() : null;
+    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}`
+      : opts.leanMcp ? `${childReference ? superChildSurfaceBriefing(childReference) : CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}${leanMcpOffer ? `\n${leanMcpOffer}` : ''}`
+        : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
@@ -2894,6 +2899,10 @@ export function startChatSession(
   }
   // An app chat's gates ride here, AFTER the mode note's assign, which a plain assign of its
   // own would drop: the Bash gate (own assistant) and the file gate (own assistant and member). The carve-out for builders is not an app chat's business.
+  // A lean child's surface reference lives outside the project: reading it never asks. On every
+  // chat but an app's, since a conversation born lean can come back on a spawn that is not (a
+  // handed-over child resumes with the prompt that names the file).
+  if (!app) spawnSettings.permissions = { allow: [chatSurfaceReferenceReadRule()] };
   if (app) delete spawnSettings.autoMode;
   if (app?.hooks) spawnSettings.hooks = { ...(spawnSettings.hooks as Record<string, unknown> | undefined), ...app.hooks };
   // A lean child given a claude.ai connector: Claude Code's own MCP allowlist instead of
