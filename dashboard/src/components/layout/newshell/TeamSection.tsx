@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { AgentAvatar } from '../../agents/AgentAvatar';
+import { TeamIcon } from '../../aiteam/TeamIcons';
 import { ekipApprovalCount, ekipAsking, ekipAskingCount, ekipUnreadCount, ekipWorkingCount, type EkipMember } from '../../aiteam/teamModel';
 import { photoVaultOf } from './TeamList';
 import { StatusMark, askRow, markWords, type MarkState } from './StatusMark';
@@ -14,7 +15,8 @@ import './TeamList.css';
  * the row the red asking row), and while a member's stage is open the folded row is the selected
  * one. On hover or focus a "⋯" offers Manage members and New member; no link under the list. Up to 8 members the list is plain; over 8 it is a box 8 rows tall that scrolls inside;
  * over 12 a search field sits above it. Rows open the member's stage; no switch here (r3 R2: it
- * lives on the member's stage). The open state is remembered per project (and for Global).
+ * lives on the member's stage). The open state is remembered per project. A member of all
+ * projects is in every project's list, after its own members, with a globe at its row's end.
  * The phone keeps its bottom sheet (`TeamList sheet`); this is the desktop's row.
  */
 
@@ -23,8 +25,7 @@ export const TEAM_BOX_ROWS = 8;
 /** Members before a search field appears. */
 export const TEAM_SEARCH_OVER = 12;
 
-export const teamOpenKey = (kind: 'project' | 'global', vault: string | null | undefined): string =>
-  kind === 'global' ? 'dc.drawer.team.global' : `dc.drawer.team.${vault ?? ''}`;
+export const teamOpenKey = (vault: string | null | undefined): string => `dc.drawer.team.${vault ?? ''}`;
 
 function readOpen(key: string): boolean {
   try { return window.localStorage.getItem(key) === '1'; } catch { return false; }
@@ -74,7 +75,8 @@ function SuperBadge({ m }: { m: EkipMember }) {
 function MemberRow({ m, vault, onOpen, current = false }: { m: EkipMember; vault?: string | null; onOpen(m: EkipMember): void; current?: boolean }) {
   const { t } = useI18n();
   const mark = memberMark(m);
-  const words = markWords(t, mark);
+  // A label that replaces the row's content still says it works in all projects.
+  const words = [m.global ? t('drawer.team.globalMember') : '', markWords(t, mark)].filter(Boolean).join(', ');
   return (
     <li className="ns-team-mrow-li">
       <button type="button" className={`ns-team-mrow${current ? ' is-sel' : ''}`} aria-current={current ? 'page' : undefined} data-testid="team-list-member" data-slug={m.slug}
@@ -86,6 +88,11 @@ function MemberRow({ m, vault, onOpen, current = false }: { m: EkipMember; vault
           <SuperBadge m={m} />
         </span>
         <span className="ns-team-mname">{m.title}</span>
+        {m.global && (
+          <span className="ns-team-global-mark" data-testid="team-member-global" title={t('drawer.team.globalMember')} aria-label={t('drawer.team.globalMember')} role="img">
+            <TeamIcon name="globe" size={13} />
+          </span>
+        )}
         <MemberMark m={m} />
       </button>
     </li>
@@ -94,7 +101,6 @@ function MemberRow({ m, vault, onOpen, current = false }: { m: EkipMember; vault
 
 export interface TeamSectionProps {
   members: readonly EkipMember[];
-  kind: 'project' | 'global';
   vault?: string | null;
   label: string;
   /** Slug of the member whose stage is on screen: its row is the selected one (the Team row itself never is). */
@@ -106,11 +112,13 @@ export interface TeamSectionProps {
   onManage?(): void;
   /** "Yeni üye" (the row's "⋯"): the members flow on its create step. */
   onNewMember?(): void;
+  /** "Tüm projelerde çalışan üye" (the row's "⋯"): the same step with "All projects" picked. */
+  onNewGlobalMember?(): void;
 }
 
 export function TeamSection(p: TeamSectionProps) {
   const { t, locale } = useI18n();
-  const key = teamOpenKey(p.kind, p.vault);
+  const key = teamOpenKey(p.vault);
   const [open, setOpen] = useState(() => readOpen(key));
   const [query, setQuery] = useState('');
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -223,6 +231,11 @@ export function TeamSection(p: TeamSectionProps) {
               {t('drawer.team.newMember')}
             </button>
           )}
+          {p.onNewGlobalMember && (
+            <button type="button" role="menuitem" className="ns-team-menu-item" data-testid="team-new-global-member" onClick={() => { closeMenu(false); p.onNewGlobalMember?.(); }}>
+              <TeamIcon name="globe" size={13} />{t('drawer.team.newGlobalMember')}
+            </button>
+          )}
         </div>
       )}
 
@@ -234,7 +247,7 @@ export function TeamSection(p: TeamSectionProps) {
               aria-label={t('drawer.team.search').replace('{n}', String(p.members.length))}
               onChange={(e) => setQuery(e.target.value)} />
           )}
-          <ul ref={listRef} className={`ns-team-mlist${boxed ? ' is-box' : ''}`} data-testid={p.kind === 'global' ? 'global-team-list' : 'team-list'}
+          <ul ref={listRef} className={`ns-team-mlist${boxed ? ' is-box' : ''}`} data-testid="team-list"
             data-boxed={boxed ? 'true' : undefined} style={boxed ? { maxHeight: `calc(${TEAM_BOX_ROWS} * var(--ns-team-mrow-h))` } : undefined}>
             {shown.map((m) => <MemberRow key={m.slug} m={m} vault={p.vault} onOpen={p.onOpen} current={m.slug === p.openSlug} />)}
             {shown.length === 0 && <li className="ns-team-empty">{t('drawer.team.noMatch')}</li>}

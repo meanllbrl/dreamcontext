@@ -70,7 +70,7 @@ _dream_context/
 - Pattern (a reusable solution shape): a knowledge file under `knowledge/patterns/`.
 - Trigger (remind when X comes up): `dreamcontext trigger add <when> <remind>`.
 - Agent (who does the work; automations and tasks pick one): `dreamcontext agents create <slug>`. Not a person; approved by the owner on the Agents page.
-- Automation (runs on a schedule): `dreamcontext automations create <slug> --agent <agent>`. For "check every N, act only if X", a condition script is the better default: it runs first with no model, so a check that finds nothing costs no tokens. (`--condition '<sh>'`; Exit 0 = true, exit 1 = false, anything else = a loud error. A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script. The owner approves it on its card.)
+- Automation (runs on a schedule): `dreamcontext automations create <slug> --agent <agent>`. More work for an existing member is its routine (`--agent <member>`, `--mode call` on demand), never a new member. For "check every N, act only if X", a condition script is the better default: it runs first with no model, so a check that finds nothing costs no tokens. (`--condition '<sh>'`; Exit 0 = true, exit 1 = false, anything else = a loud error. A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script. The owner approves it on its card.)
 - Release or version: `dreamcontext core releases add`.
 - Person: `dreamcontext people add "<Name>" --email <address>`.
 - Board over tracked insights: `dreamcontext lab board create <slug> --title "<title>"`.

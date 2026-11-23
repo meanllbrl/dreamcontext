@@ -2,7 +2,8 @@
 /**
  * The drawer's Team rows, owner 2026-11-05 (three faults on the installed 0.41.1):
  *   1 every member with a photo shows its photo (the faces in the Team row too), a global
- *     member's in the Global row, a member with none keeps its figure.
+ *     member's in the project's own list (owner 2026-11-17: no Global row), a member with none
+ *     keeps its figure.
  *   2 a "Super için" member's name is never cut by its mark (a glyph on its face, its tooltip says it):
  *     the owner's "Pacioli" read "P...", at the 200px drawer and wide.
  *   3 opening Team shows no row at work unless the member is: the first 2s after the click are
@@ -81,13 +82,10 @@ const uploadPhoto = (page, vault, slug, colour) => page.evaluate(async ([v, s, c
 }, [vault, slug, colour]);
 
 const teamRow = (page) => page.locator(`[data-testid="drawer-team-row"][data-vault="${VAULT}"]:visible`).first();
-const globalRow = (page) => page.locator('[data-testid="drawer-global-team-row"]:visible').first();
-
-async function load(page, base, { open = false, globalOpen = false } = {}) {
-  await page.evaluate(([k, o, g]) => {
+async function load(page, base, { open = false } = {}) {
+  await page.evaluate(([k, o]) => {
     if (o) localStorage.setItem(k, '1'); else localStorage.removeItem(k);
-    if (g) localStorage.setItem('dc.drawer.team.global', '1'); else localStorage.removeItem('dc.drawer.team.global');
-  }, [`dc.drawer.team.${VAULT}`, open, globalOpen]);
+  }, [`dc.drawer.team.${VAULT}`, open]);
   await page.goto(`${base}/?vault=${VAULT}`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(100); }
@@ -151,9 +149,10 @@ async function run(base) {
   }
 
   console.log('── 1 photos');
-  ok('1 the Team row is there', await load(page, base, { open: true, globalOpen: true }));
+  ok('1 the Team row is there', await load(page, base, { open: true }));
   const list = '[data-testid="team-list"]:visible';
-  await until(page, async () => (await page.locator(`${list} [data-testid="team-list-member"]`).count()) === 5, 10000);
+  // Five own members and the global one, in the project's own list.
+  await until(page, async () => (await page.locator(`${list} [data-testid="team-list-member"]`).count()) === 6, 10000);
   await page.waitForTimeout(1200);
   const got = await faces(page, list);
   for (const [slug, , colour, scope] of MEMBERS) {
@@ -169,10 +168,9 @@ async function run(base) {
   const doc = stamped.find((x) => x.slug === 'doctor')?.face;
   const drawn = await page.locator(`${list} [data-slug="doctor"] .agent-figure`).evaluate((el) => ({ shape: Number(el.getAttribute('data-shape')), tone: el.getAttribute('data-tone') })).catch(() => null);
   ok('1 Doctor (no photo) wears its stamped figure', !!doc && !!drawn && drawn.shape === doc.shape && drawn.tone === TONES[doc.color], JSON.stringify({ doc, drawn }));
-  const gl = '[data-testid="global-team-list"]:visible';
-  ok('1 the Global row is there', await until(page, async () => (await page.locator(`${gl} [data-testid="team-list-member"]`).count()) === 1, 10000));
-  const gf = await faces(page, gl);
-  ok('1 the global member (no photo possible) keeps its figure', gf[0]?.photo === false && (await page.locator(`${gl} .agent-av--figure`).count()) === 1, JSON.stringify(gf));
+  const g = got.find((x) => x.slug === 'social-media');
+  ok('1 the global member is in the project\'s list with its globe, and keeps its figure',
+    g?.photo === false && (await page.locator(`${list} [data-slug="social-media"] [data-testid="team-member-global"]`).count()) === 1, JSON.stringify(g));
 
   console.log('── 2 the "Super için" mark');
   for (const theme of ['dark', 'light']) {
@@ -199,7 +197,7 @@ async function run(base) {
   ok('2 the mark still names "For Super"', /For Super/.test(label ?? ''), String(label));
 
   console.log('── 3 opening Team');
-  ok('3 folded first', await load(page, base, { open: false, globalOpen: false }));
+  ok('3 folded first', await load(page, base, { open: false }));
   await page.waitForTimeout(3000);
   const before = summaryHits.length;
   // Sample every frame for 2s from the click: which rows show a mark of work, a spinner or a pending face.

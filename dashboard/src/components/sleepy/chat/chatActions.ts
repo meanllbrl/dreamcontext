@@ -65,7 +65,9 @@ export interface ChatAction {
 /** One rendered block, in the order the answer wrote it. */
 export type ChatBlock =
   | { kind: 'view'; view: ChatViewSpec }
-  | { kind: 'html'; html: string };
+  | { kind: 'html'; html: string }
+  /** A spoken summary the agent wrote for the ear (`dream-voice <title>`): a voice card. */
+  | { kind: 'voice'; title: string; text: string };
 
 /**
  * One renderable RUN of an answer, in the order it was written — the unit the transcript
@@ -87,6 +89,7 @@ export type ChatSegment =
   | { kind: 'prose'; text: string }
   | { kind: 'view'; view: ChatViewSpec }
   | { kind: 'html'; html: string }
+  | { kind: 'voice'; title: string; text: string }
   /** A fence that hasn't closed yet. `partial` is the source written so far — empty for a
    *  `view`, whose payload is JSON and has nothing legible to show mid-stream. */
   | { kind: 'pending'; fence: 'html' | 'view'; partial: string }
@@ -179,12 +182,12 @@ const ACTION_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-actions[ \t]*\r?\n([\s\S]
  * with both drawings above both explanations. Two sequential `.replace()` calls would lose
  * exactly that — every view before every html, whatever the author intended.
  */
-const BLOCK_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-(view|html)[ \t]*\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
+const BLOCK_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-(view|html|voice)(?:[ \t]([^`~\r\n]*))?\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
 /** Any fence still streaming — opened, never closed. Only ever the LAST thing in the text.
  *  One alternation covers all three names so a still-writing `dream-view` or `dream-html`
  *  (either can run 10-20KB before it closes) is hidden exactly like a still-writing
  *  `dream-actions` always has been — half-written markup must never flash on screen. */
-const OPEN_FENCE_RE = /^[ \t]*(```|~~~)[ \t]*dream-(actions|view|html)[ \t]*(\r?\n[\s\S]*)?$/im;
+const OPEN_FENCE_RE = /^[ \t]*(```|~~~)[ \t]*dream-(?:(actions|view|html)[ \t]*|(voice)(?:[ \t][^`~\r\n]*)?)(\r?\n[\s\S]*)?$/im;
 /** `![alt](x.excalidraw.md)` or `[alt](x.excalidraw)` — the board form. */
 const BOARD_REF_RE = /!?\[[^\]]*\]\(\s*<?([^)\s>]+\.excalidraw(?:\.md)?)>?\s*\)/gi;
 
@@ -335,7 +338,13 @@ export function parseChatActions(raw: string, opts?: { sectionAt?: readonly numb
   // The two block fences share one pass so `blocks` comes out in WRITTEN order. The caps
   // are counted per kind, because they bound different things: how many objects the app is
   // asked to build, and how many sandboxes it is asked to mount.
-  body = body.replace(BLOCK_FENCE_RE, (_m, _indent, _fence, name: string, payload: string) => {
+  body = body.replace(BLOCK_FENCE_RE, (_m, _indent, _fence, name: string, title: string | undefined, payload: string) => {
+    if (name.toLowerCase() === 'voice') {
+      const text = payload.trim();
+      if (!text) return '';
+      blocks.push({ kind: 'voice', title: (title ?? '').trim().slice(0, 400), text });
+      return blockSlot(blocks.length - 1);
+    }
     if (name.toLowerCase() === 'view') {
       if (viewCount >= MAX_VIEWS_PER_MESSAGE) {
         notices.push(`An answer asked for more than ${MAX_VIEWS_PER_MESSAGE} views — the extra ones were dropped.`);
@@ -377,7 +386,7 @@ export function parseChatActions(raw: string, opts?: { sectionAt?: readonly numb
   const openName = openMatch?.[2]?.toLowerCase();
   const pendingFence: 'html' | 'view' | null =
     openName === 'html' ? 'html' : openName === 'view' ? 'view' : null;
-  const pendingPartial = pendingFence === 'html' ? (openMatch?.[3] ?? '') : '';
+  const pendingPartial = pendingFence === 'html' ? (openMatch?.[4] ?? '') : '';
   body = body.replace(OPEN_FENCE_RE, '');
 
   const boards: string[] = [];

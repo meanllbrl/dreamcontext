@@ -2,7 +2,8 @@
  * A picture question presents its option pictures on the Super stage by itself and puts them
  * back after the answer (task a-picture-question…, D1-D9):
  *
- *  - which cards: `--show` > the option previews' project pictures > the recent set; ≤ 8;
+ *  - which cards: `--show` > the option previews' project pictures, nothing else (no time guess,
+ *    owner 2026-11-17); ≤ 8;
  *  - `settleAskShows` on every write: presented at the head (never over the owner's own view),
  *    put back on any close (the stage floats, the pictures to Others, a group as its tile);
  *  - the routes: `ask` / `queue ask` answer `show`, refuse without opening a card, mirror new
@@ -27,6 +28,7 @@ vi.mock('../../src/server/routes/agent-chat-live.js', async (orig) => {
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { START_ASK_NOTE } from '../../src/lib/super/ask-summary.js';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, readPendingQuestion, registerChat } from '../../src/lib/assistant/chat-registry.js';
@@ -35,7 +37,7 @@ import {
   MAX_ASK_SHOWS, MAX_CONTAINERS, OWNER_VIEW_HOLD_MS, SUPER_STATE_VERSION, emptySuperState, imagesInPreviews, ownerViewHeld, presentCards, resolvePresent,
   type AskShow, type SuperContainer, type SuperGroup, type SuperQueueItem, type SuperState,
 } from '../../src/lib/super/types.js';
-import { recentAskCards, recordAskShow, settleAskShows } from '../../src/lib/super/ask-show.js';
+import { recordAskShow, settleAskShows } from '../../src/lib/super/ask-show.js';
 import { decodeEntities, openImageCards, resolvePreviewImages } from '../../src/lib/super/ask-show-src.js';
 import { _resetSuperInbox, superQueueHead } from '../../src/lib/super/inbox.js';
 import { applySignal } from '../../src/lib/super/proactive.js';
@@ -112,23 +114,6 @@ describe('resolvePreviewImages (a real project on disk)', () => {
   });
   it('entities are decoded', () => {
     expect(decodeEntities('a&amp;b&#46;&#x2e;')).toBe('a&b..');
-  });
-});
-
-describe('recentAskCards', () => {
-  const now = 1_000_000_000;
-  it('a child: the pictures shown for it in the last 10 minutes', () => {
-    const s = stage({
-      children: { c1: { sessionId: 'c1', brief: '', adopted: false, startedAt: 1 } },
-      containers: [img('image-a', { forChild: 'c1', forAt: now - 60_000 }), img('image-b', { forChild: 'c1', forAt: now - 11 * 60_000 }), img('image-c')],
-    });
-    expect(recentAskCards(s, { child: 'c1' }, now)).toEqual(['image-a']);
-  });
-  it('the super: its last set (the group) within 10 minutes, nothing after', () => {
-    const s = stage({ containers: [img('image-a'), img('image-b')], groups: [{ id: 'grp-x', name: 'Images', cards: ['image-a', 'image-b'], place: 'float' }] });
-    expect(recentAskCards(s, { chain: { at: now - 1000, card: 'image-a', group: 'grp-x' } }, now)).toEqual(['image-a', 'image-b']);
-    expect(recentAskCards(s, { chain: { at: now - 11 * 60_000, card: 'image-a', group: 'grp-x' } }, now)).toEqual([]);
-    expect(recentAskCards(s, { chain: undefined }, now)).toEqual([]);
   });
 });
 
@@ -527,8 +512,9 @@ describe('super ask presents its pictures and answers show', () => {
     // Only the readable card is pointed at; a picture stays the picture question's own.
     let s = await readSuperState(root);
     expect(s.queue.find((q) => q.id === r.json.item)?.read).toEqual(['web-plan']);
-    // A start question showing a report card has its summary: no warning.
-    expect(r.json.warning).toBeUndefined();
+    // A start question showing a report card has its summary: no missing-summary warning, only
+    // the soru-azaltma note that a start of asked work needs no card (ask-summary.ts START_ASK_NOTE).
+    expect(r.json.warning).toBe(START_ASK_NOTE);
     expect((await verb('queue-done', { item: r.json.item })).status).toBe(200);
     s = await readSuperState(root);
     expect(s.containers.find((c) => c.id === 'web-plan')).toMatchObject({ place: 'float' });
@@ -555,15 +541,41 @@ describe('super ask presents its pictures and answers show', () => {
     expect(s.queue.find((q) => q.id === 'q-2')?.read).toBeUndefined();
     expect(s.queue.find((q) => q.id === 'q-3')?.read).toBeUndefined();
   });
-  it('the Super forgot everything: its last picture set within 10 minutes (recent)', async () => {
+  it('pictures the Super just opened for a job are not a plain question\'s: no time guess (owner 2026-11-17)', async () => {
+    // The Super opens a job's pictures, then asks something unrelated with no --show and no
+    // previews: nothing is presented beside the question.
     makeVault();
     expect((await verb('open', { kind: 'image', refs: ['mock/a.png', 'mock/b.png'] })).status).toBe(200);
     expect(mirror.frames).toHaveLength(1);
-    const r = await verb('ask', { text: 'Which one?', options: ['A', 'B'] });
-    expect(r.json.show).toMatchObject({ via: 'recent', state: 'presented' });
-    expect((r.json.show as Show).cards).toHaveLength(2);
-    // Its own `open` already sent these to the phone: the question sends them no second time.
+    const r = await verb('ask', { text: 'Start the Telegram group plan?', options: ['Yes', 'No'] });
+    expect(r.status).toBe(200);
+    expect(r.json.show).toMatchObject({ cards: [], state: 'none' });
+    const s = await readSuperState(root);
+    expect(s.askShows).toBeUndefined();
+    expect(s.view.ask).toBeUndefined();
     expect(mirror.frames).toHaveLength(1);
+  });
+  it('the same just-opened pictures named with --show are the question\'s', async () => {
+    makeVault();
+    await verb('open', { kind: 'image', refs: ['mock/a.png', 'mock/b.png'] });
+    const ids = (await readSuperState(root)).containers.filter((c) => c.kind === 'image').map((c) => c.id);
+    const r = await verb('ask', { text: 'Which one?', options: ['A', 'B'], show: ids });
+    expect(r.json.show).toMatchObject({ via: 'show', state: 'presented', cards: ids });
+  });
+  it('an answered picture question\'s pictures never come back beside the next, unrelated question (owner 2026-11-17)', async () => {
+    // The live case: the agenda A/B question showed its two pictures and was answered; three
+    // minutes later a plain question about a Telegram group got those old pictures beside it.
+    makeVault();
+    const first = await verb('ask', pictureAsk(['mock/a.png', 'mock/b.png']));
+    expect(first.json.show).toMatchObject({ via: 'preview', state: 'presented' });
+    expect((await verb('queue-done', { item: first.json.item })).status).toBe(200);
+    const next = await verb('ask', { text: 'Start the Telegram group plan?', options: ['Yes', 'No'] });
+    expect(next.status).toBe(200);
+    expect(next.json.show).toMatchObject({ cards: [], state: 'none' });
+    const s = await readSuperState(root);
+    expect(s.view).toEqual({ mode: 'float' });
+    expect(s.askShows).toBeUndefined();
+    expect(s.presentQueue?.items ?? []).toEqual([]);
   });
   it('a restart keeps a presented question on the record, and its close after the restart puts the pictures back', async () => {
     makeVault();
@@ -652,8 +664,9 @@ describe('super queue ask: a child\'s pictures', () => {
     });
     await verb('open', { kind: 'image', refs: ['mock/c.png', 'mock/d.png'], for: 'c1' });
     await verb('stack', { container: (await readSuperState(root)).groups[0].id });
-    const first = await verb('queue-ask', { item: 'q-c1', text: 'Which?' });
-    expect(first.json.show).toMatchObject({ via: 'recent', state: 'presented' });
+    const pics = (await readSuperState(root)).containers.filter((c) => c.kind === 'image').map((c) => c.id);
+    const first = await verb('queue-ask', { item: 'q-c1', text: 'Which?', show: pics });
+    expect(first.json.show).toMatchObject({ via: 'show', state: 'presented' });
     const again = await verb('queue-ask', { item: 'q-c1', text: 'Which, again?', noShow: true });
     expect(again.json.show).toMatchObject({ state: 'presented', cards: (first.json.show as Show).cards });
     expect((await readSuperState(root)).view.ask).toBe('q-c1');
@@ -676,7 +689,7 @@ describe('super queue ask: a child\'s pictures', () => {
     expect(s.view.mode).toBe('float');
     expect(s.groups[0]?.place ?? s.containers[0].place).toBe('others');
   });
-  it('a worktree child\'s preview outside the project is skipped and reported; its --for pictures are the fallback', async () => {
+  it('a worktree child\'s preview outside the project is skipped and reported; its --for pictures are no fallback', async () => {
     const wt = mkdtempSync(join(tmpdir(), 'super-ask-show-wt-'));
     writeFileSync(join(wt, 'shot.png'), 'x');
     makeVault({
@@ -687,7 +700,7 @@ describe('super queue ask: a child\'s pictures', () => {
     const h = registerChat({ sessionId: 'c1', conversationId: null, vault: 'acme', mode: 'basic' });
     h.observe({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which?', options: [{ label: 'A', preview: '<img src="shot.png">' }] }] } } });
     const r = await verb('queue-ask', { item: 'q-c1', text: 'Which?' });
-    expect(r.json.show).toMatchObject({ via: 'recent', skipped: ['shot.png'], state: 'presented' });
+    expect(r.json.show).toMatchObject({ cards: [], skipped: ['shot.png'], state: 'none' });
     rmSync(wt, { recursive: true, force: true });
   });
 });

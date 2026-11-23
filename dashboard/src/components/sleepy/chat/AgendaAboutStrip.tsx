@@ -2,17 +2,22 @@ import { useI18n } from '../../../context/I18nContext';
 import { agendaAboutStrip, type AgendaAbout, type MessageAbout } from '../super/superHandover';
 import type { ReplyHead } from './replyLinks';
 import { useSuperEventContext, useSuperQuestions } from '../super/superJobsStore';
+import { useThreadFilter } from '../super/superThreadFilter';
 
 /** "About: <the agenda line>" above a message written about it. A question names whose it is
- *  only while the live record still has it open. */
+ *  only while the live record still has it open. Drawn nowhere while the chat shows only that
+ *  line's thread: the "Only:" strip on top says it once (owner 2026-11-17). */
 export function AgendaAboutStrip({ about, superSid }: { about: AgendaAbout; superSid: string | null }) {
   const { t } = useI18n();
+  const filter = useThreadFilter(superSid);
   const view = useSuperQuestions(about.kind === 'item' ? superSid : null);
   const ctx = useSuperEventContext(about.kind === 'item' ? superSid : null);
   const strip = agendaAboutStrip(about, [...(view?.open ?? []), ...(view?.members ?? [])], (sid) => ctx?.titleFor(sid) ?? '', {
     about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
     superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
   });
+  const key = filter?.key;
+  if (key && (about.kind === 'note' ? key.note : about.kind === 'item' ? key.item : key.owed) === about.id) return null;
   return (
     <div className="chat-msg-about" data-testid="chat-msg-about" data-kind={about.kind}>
       <span className="chat-msg-about-dot" aria-hidden />

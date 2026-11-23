@@ -141,4 +141,12 @@ describe('a member corrects its own instructions from his feedback', () => {
     expect(brief).toContain('--quote "<his exact words>"');
     expect(brief).toContain('Yourself only');
   });
+
+  it('its briefing has it READ what waits on him before answering, and send the card with Onayla (owner 2026-11-19)', () => {
+    const brief = superMemberSection({ slug: 'doctor', title: 'Doctor', field: 'logs' });
+    expect(brief).toContain('never answer from memory');
+    expect(brief).toContain('dreamcontext automations list --agent doctor');
+    expect(brief).toContain('dreamcontext automations questions');
+    expect(brief).toContain('{"type":"automation","slug":"<routine>"}');
+  });
 });

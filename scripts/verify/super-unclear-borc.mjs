@@ -270,7 +270,8 @@ async function main() {
     ok('the agenda counts 1 waiting on him (the card)', await until(page, async () => (await waitingN()) === 1, 15000), String(await waitingN()));
     await page.mouse.move(5, 5);
     await shot(page, '01-card-open-1440.png');
-    await first.locator('.chat-surveycard-unclear').first().click();
+    await first.locator('.chat-surveycard-more-btn').first().click();
+    await first.locator('[role="menuitem"]').nth(0).click();
     ok('"Unclear? Ask again" sends the unclear note to the Super', await until(page, async () => reports().some((r) => r.kind === 'card-note' && r.note === 'unclear'), 20000));
     ok('…which re-asks with a new card', await until(page, async () => reports().some((r) => r.kind === 'reasked' && r.status === 0), 20000), JSON.stringify(reports().slice(-3)));
     const second = cardOf('Logonun rengi mor mu');
@@ -285,7 +286,8 @@ async function main() {
     await shot(page, '02-after-reask-1440.png');
 
     // ── 2. "Already answered" on the new card: no debt, the count goes to 0 ──────────────
-    await second.locator('.chat-surveycard-unclear').nth(1).click();
+    await second.locator('.chat-surveycard-more-btn').first().click();
+    await second.locator('[role="menuitem"]').nth(1).click();
     ok('"Already answered" reaches the Super', await until(page, async () => reports().some((r) => r.kind === 'card-note' && r.note === 'already'), 20000));
     await page.waitForTimeout(8000);
     ok('no debt opened for the already tap', openOwed().length === 0, JSON.stringify(owed()));

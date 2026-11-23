@@ -230,10 +230,62 @@ const readoptStart = rustRecord('readopt', true)(async (m, rec, req, res) => {
   if (out === 'ok') sendJson(res, 200, { ok: true }); else refuse(res, 409, 'mismatch', 'What was shown changed.');
 });
 
+// ── Groups (tg-grup, D3) ──
+
+/** Rust: what the native group-bind confirm shows. Desktop + loopback. */
+const groupPreview = async (req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> => {
+  if (!isDesktop() || !isLoopback(req)) { refuse(res, 403, 'desktop_only', 'Desktop only.'); return; }
+  const h = hubOr(res);
+  if (!h) return;
+  if (!PAIRING_ID_RE.test(params.id ?? '')) { refuse(res, 400, 'bad_id', 'Malformed id.'); return; }
+  const ctx = h.groupBindContext(params.id);
+  if (ctx?.contextRoot && !existsSync(ctx.contextRoot)) { refuse(res, 410, 'vault_gone', 'That project is gone.'); return; }
+  const p = h.groupBindPreview(params.id);
+  if (!p) { refuse(res, 404, 'not_found', 'No such group request.'); return; }
+  sendJson(res, 200, p);
+};
+
+/** Rust: the owner's Bağla on the native confirm. Needs the owner key; binds only what was shown. */
+const groupConfirm = async (req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> => {
+  if (!isDesktop() || !isLoopback(req) || !fromOwnerPage(req)) { refuse(res, 403, 'owner_key_required', 'Only the Mac app\'s own confirm can bind a group.'); return; }
+  const h = hubOr(res);
+  if (!h) return;
+  if (!PAIRING_ID_RE.test(params.id ?? '')) { refuse(res, 400, 'bad_id', 'Malformed id.'); return; }
+  const ctx = h.groupBindContext(params.id);
+  if (!ctx) { refuse(res, 409, 'gone', 'This group request is no longer valid.'); return; }
+  if (ctx.contextRoot && !existsSync(ctx.contextRoot)) { refuse(res, 410, 'vault_gone', 'That project is gone.'); return; }
+  const body = (await parseJsonBody(req).catch(() => null)) ?? {};
+  const botId = Number(body.botId);
+  const chatId = Number(body.chatId);
+  if (!Number.isSafeInteger(botId) || !Number.isSafeInteger(chatId)) { refuse(res, 400, 'bad_body', 'Body must be { botId, chatId }.'); return; }
+  try {
+    const out = await h.confirmGroupBind(params.id, { botId, chatId });
+    if (out === 'ok') sendJson(res, 200, { ok: true });
+    else refuse(res, 409, out, out === 'mismatch' ? 'The group request changed since it was shown.' : 'This group request is no longer valid.');
+  } catch (err) { sendHubError(res, err); }
+};
+
+/** Page: "Gruptan çıkar" in Settings › Telegram. The bot leaves; the room stops. */
+const groupRemove: Handler = async (req, res, params, contextRoot) => {
+  if (!fromPageHeaders(req)) { refuse(res, 403, 'owner_page_only', 'Only the owner, in the app, removes a group.'); return; }
+  const h = hubOr(res);
+  if (!h) return;
+  const scope = scopeOfTarget(contextRoot, params.target);
+  if (!scope) { refuse(res, 404, 'not_found', 'No such Super or member here.'); return; }
+  const chatId = Number(params.chatId);
+  if (!/^-\d{1,20}$/.test(params.chatId ?? '') || !Number.isSafeInteger(chatId)) { refuse(res, 400, 'bad_id', 'Malformed group id.'); return; }
+  try {
+    const ok = await h.removeGroupOf(scope, params.target, chatId);
+    if (ok) sendJson(res, 200, { ok: true }); else refuse(res, 404, 'not_found', 'That group is not bound to this bot.');
+  } catch (err) { sendHubError(res, err); }
+};
+
 /** Every Telegram route. Order: the specific id routes before `:target`. */
 export function registerTelegramRoutes(router: Router): void {
   router.get('/api/telegram-pairing/:id', pairingPreview);
   router.post('/api/telegram-pairing/:id/confirm', pairingConfirm);
+  router.get('/api/telegram-group/:id', groupPreview);
+  router.post('/api/telegram-group/:id/confirm', groupConfirm);
   router.get('/api/telegram-manager/status', managerStatus);
   router.post('/api/telegram-manager/bind', managerBind);
   router.delete('/api/telegram-manager', managerUnbind);
@@ -248,6 +300,7 @@ export function registerTelegramRoutes(router: Router): void {
   router.post('/api/telegram/:target/creation/request', creationRequest);
   router.post('/api/telegram/:target/readopt/request', readoptRequest);
   router.get('/api/telegram/:target/readopt', readoptAvailable);
+  router.delete('/api/telegram/:target/groups/:chatId', groupRemove);
   router.get('/api/telegram', status);
   router.post('/api/telegram/:target/bind', bind);
   router.delete('/api/telegram/:target', unbind);

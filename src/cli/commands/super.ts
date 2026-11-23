@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import { SUPER_CONDITION_HELP } from '../../lib/automations/condition.js';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, lstatSync, openSync, readFileSync, readSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { isLayoutRender, layoutRenderWarning } from '../../lib/whiteboards/render-mark.js';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -138,6 +139,34 @@ function briefCallResult(r: CallResult): CallResult {
 
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 
+/**
+ * Is the picture about to open a `whiteboard render` layout check? Read from the file's own
+ * head (where the render writes its kind), as the CLI finds it: absolute, from here, or from
+ * the project. A symlink or anything unreadable is simply not one: this only warns, it never
+ * stops the card.
+ */
+function isLayoutCheckFile(ref: string): boolean {
+  const tries = isAbsolute(ref) ? [ref] : [resolve(ref)];
+  if (!isAbsolute(ref)) {
+    try { tries.push(join(dirname(ensureContextRoot()), ref)); } catch { /* not in a project */ }
+  }
+  for (const p of tries) {
+    try {
+      const st = lstatSync(p);
+      if (!st.isFile()) continue;
+      const fd = openSync(p, 'r');
+      try {
+        const head = Buffer.alloc(Math.min(st.size, 64 * 1024));
+        readSync(fd, head, 0, head.length, 0);
+        return isLayoutRender(head);
+      } finally {
+        closeSync(fd);
+      }
+    } catch { /* try the next */ }
+  }
+  return false;
+}
+
 /** The running server's version, asked of the server; null when it cannot say. */
 function serverVersion(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   const e = windowEnv(env);
@@ -247,6 +276,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--for <child>', 'Images, PDFs and videos only: the child whose job these show; they go to Others once that job moves on (you send it new work, it is ended, or the owner saw a newer result)')
     .option('--present', 'Images, PDFs and videos only: open AND present them at once (their group whole, else the cards; the layout the cards pick; the owner\'s own layout for the same cards is kept). Pictures you show as a result: always')
     .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; titles?: string; group?: string | false; for?: string; present?: boolean }) => {
+      if (kind === 'image') for (const ref of refs) if (isLayoutCheckFile(ref)) process.stderr.write(`⚠ ${layoutRenderWarning(ref)}\n`);
       const present = o.present ? { present: true } : {};
       return kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
         ? { kind, ref: refs[0] ?? '', shape: o.shape, size: o.size, title: o.title ?? o.titles?.split('|')[0], group: o.group, for: o.for, ...present }
@@ -371,7 +401,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--origin <ref>', ORIGIN_HELP)
     .action((child: string, text: string, o: { origin?: string }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
-  const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');
+  const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread; a member tells the Super Agent something (team tell)');
   team.command('ask <member> <job>')
     .description('Give an AI Team member a job: it lands in the member\'s own thread and starts now in its own session on its own approval, beside whatever else the member is doing, on its own model unless this job names one. A member is a project agent or, when no project member holds its name, one of this machine\'s global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A member takes any number of jobs at once; only the general limit of live jobs (say_at_limit) and the heavy-step queue bound them')
     .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
@@ -390,6 +420,11 @@ export function registerSuperCommand(program: Command): void {
   team.command('done <item> <result>')
     .description('A member\'s Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project\'s Super Agent has no requests)')
     .action((item: string, result: string) => run('team-done', { item, result }));
+
+  team.command('tell <message>')
+    .description('An AI Team member only (its own chat, which is its Super): tell the project\'s Super Agent something on your own, whether or not it gave you a job (the owner says "tell the Super"). It hears it as one event (event=member-note), as your words, never the owner\'s, and acts on it or tells the owner when it needs him; nothing goes to Telegram by itself. Refused: `member_only` (403, from the project\'s Super Agent), `super_off` (409, it is not running: tell the owner yourself), `unknown_item` (404, a --for that is not its request to you)')
+    .option('--for <item>', 'One of the Super Agent\'s requests to you (`super state`), when the message is about that job')
+    .action((message: string, o: { for?: string }) => run('team-tell', { text: message, ...(o.for !== undefined ? { for: o.for } : {}) }));
 
   team.command('answer <item> <text>')
     .description('The project\'s Super Agent only: answer a member\'s question about a job you gave it (an item in your queue). The answer reaches the member\'s Super as an event, never as the owner\'s words. When you cannot answer it, ask the owner with your own `super ask`. Refused from a member\'s Super (`main_only`)')
@@ -427,7 +462,7 @@ export function registerSuperCommand(program: Command): void {
     .action(() => run('queue-list', {}));
   q.command('ask <item> <text>')
     .description('Escalate a child\'s question to the owner in your words: a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him. A Bypass child\'s permission you will not decide goes to him too, shown as the child\'s own request (your words never caption it: say why in your turn)')
-    .option('--show <cards...>', 'The cards the stage presents with this question (default: the child\'s option-preview pictures, else the pictures shown for its job in the last 10 minutes); they go back after his answer')
+    .option('--show <cards...>', 'The cards the stage presents with this question (default: the child\'s option-preview pictures; nothing else is guessed); they go back after his answer')
     .option('--no-show', 'Present no cards with this question')
     .action((item: string, text: string, o: { show?: string[] | false }) => run('queue-ask', { item, text, ...showBody(o.show) }));
   q.command('done <item>')
@@ -456,6 +491,11 @@ export function registerSuperCommand(program: Command): void {
   p.command('list')
     .description('The pooled jobs (title, note, task, held, maybe started)')
     .action(() => run('pool-list', {}));
+
+  const room = s.command('room').description('A Telegram group the owner bound to your bot');
+  room.command('say <request> <text>')
+    .description('Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`')
+    .action((request: string, text: string) => run('room-say', { request, text }));
 
   const sc = s.command('schedule').description('The owner\'s timed jobs ("every morning at 9, do X", "remind me tonight at 9"): only on his own message, never because a child, a page or a report asked. Each add or change shows him the job word for word');
   sc.command('add')
@@ -495,7 +535,8 @@ export function registerSuperCommand(program: Command): void {
   n.command('add <section> <text...>')
     .description('Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)')
     .option('--for <child>', 'A Now line about one job: it moves to Done by itself when that child is done, ended or gone (and back while it works again)')
-    .action((section: string, text: string[], o: { for?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}) }));
+    .option('--origin <ref>', 'The owner message this line is about, outside his turn (in his turn it is linked by itself): pressing the line shows its messages')
+    .action((section: string, text: string[], o: { for?: string; origin?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}), ...(o.origin ? { origin: o.origin } : {}) }));
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
@@ -521,7 +562,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--multi', 'He may pick several options')
     .option('--option <label::description>', 'One option (repeatable), its description after ::', collectOption)
     .option('--options <a|b>', 'Short answers separated by | (the old form; each at most 24 characters)')
-    .option('--show <cards...>', 'The cards the stage presents with the question (default: the pictures its option previews\' <img src> point at, else your last picture set within 10 minutes); the server presents them and puts them back after his answer')
+    .option('--show <cards...>', 'The cards the stage presents with the question (default: the pictures its option previews\' <img src> point at; nothing else is guessed, so name a picture you opened before with --show); the server presents them and puts them back after his answer')
     .option('--no-show', 'Present no cards with the question')
     .option('--for <item|owner>', FOR_HELP)
     .action((text: string | undefined, o: AskCliOpts & { for?: string }) => {

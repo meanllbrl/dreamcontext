@@ -2,8 +2,9 @@
  * The folder the owner SAW is the folder that runs or is written to (end review r2, class
  * shown-is-not-what-runs-on-the-bar, the dashboard half):
  *  - a run press mints its ticket with `root` = the drawn `folder.path`; a secret save carries it;
- *  - a `folder_changed` refusal shows ownerCard.folderChanged, reads the folder again, and is
- *    never pressed again by the card;
+ *  - a `folder_changed` refusal reads the folder again and asks "Are you sure?" in a sheet naming
+ *    the folder it is now (owner 2026-11-17); the card never presses again by itself, the sheet's
+ *    confirm presses with exactly that folder;
  *  - no folder drawn: no Run on the slot's run card, no Save on its secret card.
  * Also the end-r2 minors: the bar request's message says what the card offers, a slot-started
  * run says "on this Mac", the folder text draws the raw cwd.
@@ -16,8 +17,9 @@ import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/ser
 
 const { TEMPLATES } = vi.hoisted(() => ({
   TEMPLATES: {
-    'ownerCard.folderChanged': "This card's folder changed: it is now {name}. Look again, then press.",
-    'ownerCard.folderChangedReading': "This card's folder changed. Reading where it is now.",
+    'ownerCard.folderChangedReading': 'Checking where this card runs now.',
+    'ownerCard.folderConfirmTitle': 'Are you sure?',
+    'ownerCard.folderConfirmRun': 'This card will now run in {name}.',
     'ownerCard.folderUnknown': 'Where this card runs is not known yet, so it cannot be pressed here.',
     'ownerCard.cannotConfirm': "Can't confirm this card's folder from here. Do it on the Mac.",
   } as Record<string, string>,
@@ -65,7 +67,7 @@ describe('a press names the folder it drew', () => {
 
   it('RunCard presses with the folder it draws (its drawn root, never a re-resolved one)', () => {
     const src = read('components/sleepy/chat/RunCard.tsx');
-    expect(src).toMatch(/const root = drawnRootRef\.current;\s*if \(!root\) return \{ ok: false, error: 'no_folder'/);
+    expect(src).toMatch(/const root = confirmedRootRef\.current \?\? drawnRootRef\.current;\s*if \(!root\) return \{ ok: false, error: 'no_folder'/);
     expect(src).toMatch(/pressRun\(api, \{\s*session: target\.sessionId, card: target\.cardRef, action: ticketActionOf\(target\), shown: spec\.command, root,\s*\}/);
     expect(src).toMatch(/const drawnRoot = shownFolder\.folder\?\.path \?\? null;/);
   });
@@ -102,11 +104,11 @@ describe('folder_changed: the line, a fresh read, never a retry', () => {
     expect(isFolderChanged(new RequestError('x', 409, 'card_closed'))).toBe(false);
   });
 
-  it('the re-read SETTLES: another folder is "now <name>", none or the same one is "do it on the Mac"', () => {
+  it('the re-read SETTLES: another folder is "now" (no warning line: the sheet asks), none or the same one is "do it on the Mac"', () => {
     const moved = { path: '/w/other-repo', name: 'other-repo' };
     const now = settleFolderCheck(FOLDER.path, moved);
-    expect(folderLine(t, { check: now, spec: { cwd: 'web' }, unknown: false }))
-      .toBe("This card's folder changed: it is now other-repo · web. Look again, then press.");
+    expect(now).toEqual({ from: FOLDER.path, state: 'now', folder: moved });
+    expect(folderLine(t, { check: now, spec: { cwd: 'web' }, unknown: false })).toBeNull();
     expect(canPressWith(moved.path, now)).toBe(true);
     // A refusal whose folder is null, or a re-read that returns none: the plain line, no press, no "Reading".
     for (const read of [null, FOLDER]) {
@@ -141,6 +143,31 @@ describe('folder_changed: the line, a fresh read, never a retry', () => {
   });
 });
 
+describe('"Are you sure?" when the folder moved (owner 2026-11-17)', () => {
+  it('both cards open the app\'s own sheet on "now", naming the folder; its confirm presses with THAT folder', () => {
+    const run = read('components/sleepy/chat/RunCard.tsx');
+    expect(run).toMatch(/\{check\?\.state === 'now' && \(\s*<FolderConfirm\s*message=\{t\('ownerCard\.folderConfirmRun'\)\.replace\('\{name\}', cardFolderText\(check\.folder, spec\)/);
+    expect(run).toMatch(/onConfirm=\{\(\) => start\(check\.folder\.path\)\}\s*onCancel=\{\(\) => setCheck\(null\)\}/);
+    // The confirmed folder is that press's root: the Mac's ticket and the phone's URL alike.
+    expect(run).toMatch(/confirmedRootRef\.current = confirmed \?\? null;\s*const root = confirmed \?\? drawnRoot;/);
+    const secret = read('components/sleepy/chat/SecretCard.tsx');
+    expect(secret).toMatch(/onConfirm=\{\(\) => \{ void submit\(check\.folder\.path\); \}\}\s*onCancel=\{\(\) => setCheck\(null\)\}/);
+    expect(secret).toMatch(/const root = confirmed \?\? drawnRoot;/);
+    // Never the browser's confirm (a silent no-op in the desktop app).
+    expect(read('components/sleepy/chat/FolderConfirm.tsx')).not.toMatch(/window\.confirm\s*\(|[^.\w]confirm\(/);
+  });
+
+  it('the sheet says the folder and Are you sure, as a question with Cancel', async () => {
+    const { FolderConfirm } = await import('../../dashboard/src/components/sleepy/chat/FolderConfirm.js');
+    const html = renderToStaticMarkup(createElement(FolderConfirm, { message: t('ownerCard.folderConfirmRun').replace('{name}', 'other-repo'), confirmLabel: 'Run', onConfirm: () => {}, onCancel: () => {} }));
+    expect(html).toContain('role="alertdialog"');
+    expect(html).toContain('Are you sure?');
+    expect(html).toContain('This card will now run in other-repo.');
+    expect(has(html, 'folder-confirm-go')).toBe(true);
+    expect(has(html, 'folder-confirm-cancel')).toBe(true);
+  });
+});
+
 describe('no folder drawn: no press offered', () => {
   const runCard = (folder: typeof FOLDER | null) => renderToStaticMarkup(createElement(RunCard, { spec: RUN as never, host: { record: handleOf(RUN) }, folder }));
   const secretCard = (folder: typeof FOLDER | null, spec: object = SECRET) => renderToStaticMarkup(createElement(SecretCard, { spec: spec as never, host: { record: handleOf(spec) }, folder }));
@@ -172,7 +199,7 @@ describe('the phone is shown the folder and presses with it (end review r3)', ()
 
   it('RunCard puts the drawn folder on the phone press and the phone attach', () => {
     const run = read('components/sleepy/chat/RunCard.tsx');
-    expect(run).toMatch(/rerun: closed, phone, \.\.\.\(phone && drawnRoot \? \{ root: drawnRoot \} : \{\}\) \}/);
+    expect(run).toMatch(/rerun: closed, phone, \.\.\.\(phone && root \? \{ root \} : \{\}\) \}/);
     expect(run).toMatch(/start: false, phone, \.\.\.\(phone && drawnRootRef\.current \? \{ root: drawnRootRef\.current \} : \{\}\) \}/);
     expect(run).toMatch(/const phoneFolder = phone \? phoneFolderState\(sessionId, record\?\.cardRef\) : null;\s*const given = folder !== undefined \? folder : phone \? phoneFolder!\.folder : undefined;/);
     expect(run).toMatch(/const pressable = canPressWith\(drawnRoot, check\);/);

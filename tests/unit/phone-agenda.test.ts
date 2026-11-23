@@ -214,7 +214,7 @@ describe('the wiring', () => {
     expect(surface).toMatch(/if \(!macPhone \|\| !expanded \|\| !mobileActive\) return undefined;/);
     expect(surface).toMatch(/\(s as ChatSession\)\.superMirror \? s as ChatSession : undefined/);
     // (Wave 3: a member's mirror shows its face and name before the chips; the chips' gate is the same.)
-    expect(surface).toMatch(/data-testid="chat-head-title"[\s\S]{0,1200}\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} onScreen=\{phoneSheetsOn\} \/>\}\n\s*\{phoneSuperChat && <PhoneSuperJobs jobs=\{phoneJobs\} onScreen=\{phoneSheetsOn\} \/>\}\n\s*<button\n\s*className="mchat-head-btn"/);
+    expect(surface).toMatch(/data-testid="chat-head-title"[\s\S]{0,1200}\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} onThread=\{threadPhoneRow\} threadRowKey=\{phoneThreadKey\} onScreen=\{phoneSheetsOn\} \/>\}\n\s*\{phoneSuperChat && <PhoneSuperJobs jobs=\{phoneJobs\} onScreen=\{phoneSheetsOn\} \/>\}\n\s*<button\n\s*className="mchat-head-btn"/);
     expect(surface).toMatch(/<\/div>\n\s*(?:\{macPhone && [^\n]*\n\s*)?\{body\}/);
   });
 

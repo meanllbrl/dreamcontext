@@ -45,6 +45,7 @@ export function newTurn(sessionId: string): void {
 export function forgetSession(sessionId: string): void {
   turns.delete(sessionId);
   for (const k of [...sent.keys()]) if (k.endsWith(`\0${sessionId}`)) sent.delete(k);
+  for (const l of ledgers) l.forget(sessionId);
 }
 
 /** A card's item: the same card, the same place in it, the same content. Content is the item's
@@ -95,4 +96,101 @@ export function freshCardOuts(chat: string, sessionId: string, list: readonly { 
     if (fresh.length) outs.push({ ...out, items: fresh });
   }
   return { outs, claimed, keyOf };
+}
+
+// ─── Text: one answer reaches the chat once per turn (owner 2026-11-17, "aynı mesajı iki kere
+// attın bak yine bunu fixle"). The Super wrote its answer under a `re:` mark, ran `super ask`, then
+// wrote the same answer again in other words as the turn's last text: text, card, text. Only that
+// shape is caught: a text written AFTER a question card of this turn that says largely what a text
+// written BEFORE the card said is not sent. Not byte equality: a re-worded repeat is caught by
+// word-set overlap (Jaccard, `SAME_TEXT`). Never a repeat: two texts answering different `re:`
+// refs, texts with no card between them (two job reports of one template), and a text that adds
+// a number, a `#ref` or a code span the earlier one did not have (a correction, another job).
+
+/** Jaccard over word sets at or above which a text counts as a repeat. The re-worded repeat of
+ *  2026-11-17 measured 0.77; a different short reply in the same turn 0.04. */
+export const SAME_TEXT = 0.6;
+/** Below this many distinct words a text is a repeat only when its words are identical. */
+export const SAME_TEXT_MIN_WORDS = 8;
+
+/** The words of a text: lowercased (Turkish casing), letters and digits only, two chars or more. */
+export function textWords(text: string): Set<string> {
+  return new Set(text.toLocaleLowerCase('tr').split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2));
+}
+
+/** Is `b` largely what `a` already said? */
+export function sameText(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (!a.size || !b.size) return false;
+  let both = 0;
+  for (const w of a) if (b.has(w)) both++;
+  if (Math.min(a.size, b.size) < SAME_TEXT_MIN_WORDS) return both === a.size && both === b.size;
+  return both / (a.size + b.size - both) >= SAME_TEXT;
+}
+
+/** What tells one report from another of the same shape: numbers, `#refs`, code spans. */
+export function textMarks(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/`[^`\n]+`|#[\p{L}\p{N}_-]+|[\p{L}\p{N}]*\d[\p{L}\p{N}]*/gu)) out.add(m[0].toLocaleLowerCase('tr'));
+  return out;
+}
+
+interface SentText { words: Set<string>; marks: Set<string>; refs: string[]; turn: number; cards: number }
+
+/** Every live ledger: a chat that is gone takes its texts with it (`forgetSession`). */
+const ledgers = new Set<TextLedger>();
+
+/** The texts one hub sent, per chat and Super session, with the turn each went in and how many
+ *  question cards of that turn were queued before it. A hub owns one (a fresh hub, a fresh
+ *  ledger); entries older than the previous turn are pruned on every claim, a session that is
+ *  gone is dropped whole. */
+export class TextLedger {
+  /** `${chat}\0${sessionId}` → the texts claimed. */
+  private readonly sent = new Map<string, SentText[]>();
+  /** sessionId → the question cards queued in its turn. */
+  private readonly cards = new Map<string, { turn: number; n: number }>();
+  constructor() { wire(); ledgers.add(this); }
+
+  /** A question card of the Super (`super ask`, `queue ask`) was queued for its chat now. */
+  noteCard(sessionId: string, turn = turnOf(sessionId)): void {
+    const c = this.cards.get(sessionId);
+    this.cards.set(sessionId, { turn, n: c?.turn === turn ? c.n + 1 : 1 });
+  }
+
+  /** How many question cards this turn queued so far (read as a text is written). */
+  cardsOf(sessionId: string, turn = turnOf(sessionId)): number {
+    const c = this.cards.get(sessionId);
+    return c?.turn === turn ? c.n : 0;
+  }
+
+  /** Claims this text, unless it is the repeat above. Returns the claim (to `release` if the send
+   *  fails) or null for a repeat. `cards` = `cardsOf` when the text was written. */
+  claim(chat: string, sessionId: string, text: string, refs: readonly string[], turn: number, cards: number): object | null {
+    const key = `${chat}\0${sessionId}`;
+    const list = (this.sent.get(key) ?? []).filter((t) => t.turn >= turn - 1);
+    const words = textWords(text);
+    const marks = textMarks(text);
+    const otherAnswer = (t: SentText) => t.refs.length > 0 && refs.length > 0 && !t.refs.some((r) => refs.includes(r));
+    const addsMarks = (t: SentText) => [...marks].some((m) => !t.marks.has(m));
+    if (list.some((t) => t.turn === turn && t.cards < cards && !otherAnswer(t) && !addsMarks(t) && sameText(t.words, words))) {
+      this.sent.set(key, list);
+      return null;
+    }
+    const claim: SentText = { words, marks, refs: [...refs], turn, cards };
+    list.push(claim);
+    this.sent.set(key, list);
+    return claim;
+  }
+
+  /** A claimed text that did not reach the chat: a later one saying the same may still go. */
+  release(chat: string, sessionId: string, claim: object | null): void {
+    if (!claim) return;
+    const list = this.sent.get(`${chat}\0${sessionId}`);
+    const i = list?.indexOf(claim as SentText) ?? -1;
+    if (list && i >= 0) list.splice(i, 1);
+  }
+
+  forget(sessionId: string): void {
+    this.cards.delete(sessionId);
+    for (const k of [...this.sent.keys()]) if (k.endsWith(`\0${sessionId}`)) this.sent.delete(k);
+  }
 }

@@ -1339,7 +1339,8 @@ describe('conditions through the CLI (kosullu-otomasyon L3)', () => {
   const SCRIPT = 'test -s orders/new.csv && cat orders/new.csv';
   const file = (slug: string) => join(projectDir, '_dream_context', 'automations', `${slug}.md`);
   const create = (slug: string, env: Record<string, string> = {}, extra: string[] = []) =>
-    run(['automations', 'create', slug, '--title', 'Northwind orders', '--days', 'daily', '--at', '09:00', '--condition', SCRIPT, ...extra], projectDir, home, env);
+    // A standalone member on purpose (`--new-member`): an agent session must ask for one (2026-11-17).
+    run(['automations', 'create', slug, '--title', 'Northwind orders', '--days', 'daily', '--at', '09:00', '--condition', SCRIPT, '--new-member', ...extra], projectDir, home, env);
 
   beforeEach(() => {
     home = makeTmpDir('dc-cond-cli-home');

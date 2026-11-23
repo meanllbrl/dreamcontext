@@ -57,7 +57,7 @@ import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache, writeAutomationCache } from './store.js';
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
-import { checkApproval, listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import { checkApproval, listDistinctProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import type { AutomationCache, AutomationManifest } from './types.js';
 import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
@@ -467,18 +467,10 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
     logFn(`[apps] schedule tick failed: ${(err as Error).message}`);
   }
 
-  const projectRoots = listRegisteredProjects(home);
-  const missing: string[] = [];
-  const present: string[] = [];
-  for (const projectRoot of projectRoots) {
-    if (!existsSync(join(projectRoot, CONTEXT_DIR_NAME))) {
-      missing.push(projectRoot);
-      logFn(`[automations] registered project's _dream_context/ is missing, skipping: ${projectRoot}`);
-      continue;
-    }
-    present.push(projectRoot);
-  }
-  const roots = present;
+  // Each real brain ONCE: a code repo whose _dream_context links to a brain is the same project,
+  // never a second, unapproved copy of its routines (listDistinctProjects).
+  const { roots, missing } = listDistinctProjects(home);
+  for (const projectRoot of missing) logFn(`[automations] registered project's _dream_context/ is missing, skipping: ${projectRoot}`);
 
   // Projects tick CONCURRENTLY: one project's long run (its timeout can be an hour) must not
   // hold every other project's routines until it ends. Inside a project the runs stay in order.

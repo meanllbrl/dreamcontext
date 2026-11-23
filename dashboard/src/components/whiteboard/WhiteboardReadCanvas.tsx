@@ -16,11 +16,11 @@ import { widgetSlotProps } from './widgetSlot';
  * editor — whose save would go to the default host's no-op `commitWidget` and be lost without
  * a word. Inactive, no widget shows an edit control; the board is edited on its own page.
  */
-const EMBEDS = {
+export const READ_EMBEDS = {
   validateEmbeddable: isWidgetLink,
   renderEmbeddable: (element: NonDeleted<ExcalidrawEmbeddableElement>) => <WidgetSlot {...widgetSlotProps(element, false)} />,
 };
 
 export default function WhiteboardReadCanvas(props: Omit<ComponentProps<typeof ExcalidrawCanvas>, 'embeds'>) {
-  return <ExcalidrawCanvas {...props} embeds={EMBEDS as ComponentProps<typeof ExcalidrawCanvas>['embeds']} />;
+  return <ExcalidrawCanvas {...props} embeds={READ_EMBEDS as ComponentProps<typeof ExcalidrawCanvas>['embeds']} />;
 }

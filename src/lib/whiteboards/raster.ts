@@ -135,8 +135,8 @@ export class Raster {
     }
   }
 
-  /** The canvas as a PNG file (8-bit RGB, no interlace). */
-  toPng(): Buffer {
+  /** The canvas as a PNG file (8-bit RGB, no interlace); `text` becomes tEXt chunks. */
+  toPng(text: Readonly<Record<string, string>> = {}): Buffer {
     const stride = this.width * 3;
     const raw = Buffer.alloc((stride + 1) * this.height);
     for (let y = 0; y < this.height; y++) {
@@ -151,6 +151,7 @@ export class Raster {
     return Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       chunk('IHDR', ihdr),
+      ...Object.entries(text).map(([k, v]) => chunk('tEXt', Buffer.concat([Buffer.from(k, 'latin1'), Buffer.from([0]), Buffer.from(v, 'latin1')]))),
       chunk('IDAT', deflateSync(raw, { level: 6 })),
       chunk('IEND', Buffer.alloc(0)),
     ]);
@@ -180,6 +181,18 @@ function chunk(type: string, body: Buffer): Buffer {
   const crc = Buffer.alloc(4);
   crc.writeUInt32BE(crc32(typed), 0);
   return Buffer.concat([len, typed, crc]);
+}
+
+/**
+ * `png` with `text` added as tEXt chunks right after its IHDR (a PNG any encoder wrote, e.g. a
+ * browser screenshot). Not a PNG: returned unchanged.
+ */
+export function withPngText(png: Buffer, text: Readonly<Record<string, string>>): Buffer {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (png.length < 33 || sig.some((b, i) => png[i] !== b) || png.toString('latin1', 12, 16) !== 'IHDR') return png;
+  const end = 8 + 12 + png.readUInt32BE(8);
+  const chunks = Object.entries(text).map(([k, v]) => chunk('tEXt', Buffer.concat([Buffer.from(k, 'latin1'), Buffer.from([0]), Buffer.from(v, 'latin1')])));
+  return Buffer.concat([png.subarray(0, end), ...chunks, png.subarray(end)]);
 }
 
 // ─── shapes as polygons ───────────────────────────────────────────────────
