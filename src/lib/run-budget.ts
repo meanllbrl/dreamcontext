@@ -358,7 +358,9 @@ export function directHeavy(command: string): HeavyKind | null {
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Any command that changes the working folder, in any position or spelling. */
-const CHDIR = /(?:^|[^\w./-])(?:cd|pushd|popd)(?![\w./-])/;
+const CHDIR = /(?:^|[^\w./-])(?:cd|chdir|pushd|popd)(?![\w./-])/;
+/** Quotes and backslashes removed first: `c''d`, `c\d`, `"c"d` are all `cd` to the shell. */
+const changesFolder = (text: string): boolean => CHDIR.test(text) || CHDIR.test(text.replace(/['"\\]/g, ''));
 
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
@@ -377,7 +379,7 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
     // form quotes the whole command instead. Over-matching (a `cd` word inside an argument) is safe: the whole form.
     const cd = /^\s*(cd\s+[^\s'"$`;&|(){}\\]+)\s*&&/.exec(command)?.[1];
     const rest = cd ? command.replace(/^\s*cd\s+[^\s'"$`;&|(){}\\]+\s*&&/, '') : command;
-    if (CHDIR.test(rest) || (ctx.redOpen && cd)) return `dreamcontext builder heavy -- ${shellQuote(command)}`;
+    if (changesFolder(rest) || (ctx.redOpen && cd)) return `dreamcontext builder heavy -- ${shellQuote(command)}`;
     if (ctx.redOpen) return 'dreamcontext builder test --failed';
     const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
     const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
