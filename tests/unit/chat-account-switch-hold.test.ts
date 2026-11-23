@@ -77,7 +77,7 @@ vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
 });
 
 const { startChatSession, LIMIT_CONTINUE_TEXT } = await import('../../src/server/routes/agent-chat.js');
-const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
+const { _resetChatRegistry, crewHandle, listChats } = await import('../../src/lib/assistant/chat-registry.js');
 
 class FakeWs extends EventEmitter {
   OPEN = 1;
@@ -86,11 +86,11 @@ class FakeWs extends EventEmitter {
   close = vi.fn();
 }
 
-function start() {
+function start(o: { crew?: boolean } = {}) {
   const ws = new FakeWs();
   startChatSession(ws as unknown as import('ws').WebSocket, '/tmp/switch-hold-test', {
     bypass: false, sessionId: '', resumeId: '', model: '', effort: '', initialPrompt: '', deferPrompt: false,
-    account: '', mode: 'basic', vault: 'acme-app',
+    account: '', mode: 'basic', vault: 'acme-app', ...(o.crew ? { leanMcp: [] as string[] } : {}),
   });
   return { ws, child: spawned[spawned.length - 1] };
 }
@@ -332,5 +332,24 @@ describe('an owed account switch', () => {
     expect(child.stdin.write.mock.calls.length).toBe(writesAtEnd);
     expect(userFrames(child)).toEqual([]);
     child.emit('close', 0);
+  });
+
+  // held-frame-keeps-its-delivery-marks (end review r2): a receipt's mark lives in THIS session,
+  // so it never rides the restart as plain text; the inbox redelivers it, marked, to the new pane.
+  it('an owner card receipt arriving while a switch is owed is not held: it resolves not-seen and never joins pendingTexts', async () => {
+    accountsState.rejections = { main: { until: Date.now() + 3_600_000, window: 'weekly' } };
+    const { ws, child } = start({ crew: true });
+    say(ws, 'devam');
+    await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
+    const sid = listChats({ vault: 'acme-app' })[0]?.sessionId ?? '';
+    const handle = crewHandle(sid);
+    expect(handle?.sendOwnerReceipt).toBeTruthy();
+    const receiptText = 'Card acme-run-2: Approved by the owner';
+    const seen = await handle!.sendOwnerReceipt!(receiptText, { kind: 'run', id: 'acme-run-2' });
+    expect(seen).toBe(false);
+    for (const m of switchMetas(ws)) expect(m.pendingTexts ?? []).not.toContain(receiptText);
+    // Past the stall valve (150 ms here): only his own held text goes out, never the receipt.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(userFrames(child)).not.toContain(receiptText);
   });
 });

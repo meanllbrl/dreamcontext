@@ -4002,12 +4002,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       changeChatEffortFor(sid, level);
       return true;
     },
-    send: (sid, text) => {
+    send: (sid, text, lead) => {
       const chat = liveChat(sid);
       if (!chat) return false;
       // Busy: into the running turn (the composer's ⏎); only an open question/permission card
-      // makes it wait (`deliverToChat`).
-      return deliverToChat(chat, text);
+      // makes it wait (`deliverToChat`). A lead line rides only a new turn.
+      return deliverToChat(chat, text, lead);
     },
     close: (sid) => closeSessionById(sid),
     };

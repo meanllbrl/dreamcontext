@@ -235,18 +235,21 @@ always-on briefing carries this map in short; `tests/unit/super-model-map.test.t
   context, so run it as a sub-agent inside your own turn (the Agent tool, `model: haiku`, e.g.
   `dreamcontext-explore`) that only LOCATES (path, line, short quote) and never summarises what you
   will read yourself; a running child does the same for its own lookups (owner, 2026-11-22)
-- long research that changes nothing (many sources, a report to hand back) → a `haiku` / `low` child;
+- read-only work with no judgement (long research that changes nothing: a lookup, status, search or
+  summary over many sources, a report to hand back) → a `haiku` / `low` child;
   haiku never writes or edits anything. On Codex / Antigravity the tool's smallest model is likewise
   read-only research only
 - anything that writes or edits, even a mechanical edit with an exact spec, a rename or formatting:
   merge, build, install, brain chores, a small clear fix (1-3 files), docs, an insight or a
   whiteboard → `sonnet` / `medium`
-- support, analysis, content, research → `opus` / `medium` (`high` for a deep comparison)
-- Develop of a reviewed plan, multi-file refactor, a bug with a repro, tests → `opus` / `medium`;
-  touching security, money or a data migration → `opus` / `high`; never `xhigh`
+- judgement or code: a diagnosis, comparison or recommendation (support, analysis, content), Develop
+  of a reviewed plan, a multi-file refactor, a bug with a repro, tests → `opus` / `medium`; touching
+  security, money or a data migration → `opus` / `high`; never `xhigh`
 - Plan of non-trivial work → `opus` / `high`; `xhigh` only for a critical plan whose risk is edge
   cases (contract, money, data migration, security design)
 - architecture, long-horizon ambiguity, or a unit that already failed once on Opus → `fable` / `high`
+
+One row per kind: research ending in a judgement is `opus`, research that only gathers is `haiku`.
 
 `max` is the owner's word. No `--effort` = `medium` in basic and develop, `high` in plan (the server's
 default, not the owner's global setting). The judges (reviewer, review-*, plan reviewers, validator)
@@ -351,6 +354,10 @@ hoping the server appears.
 **Handoffs.** A child's work moving to a fresh session goes through `delegate --succeeds <old child>`:
 the card, brief and task pass to the new child and the old one is ended (told to stop first if busy).
 `super state` `warnings` names a succeeded child still running and two live children on one task.
+New work to an idle Claude child past its first Eco rung (250k) gets one `[dreamcontext]` line: hand
+off first unless it is a short answer. `--keep` drops it (its own question, a reply needing the live
+conversation). A task-less child's reply opening `HANDOFF:` = `super delegate --succeeds <child>`, that
+reply the brief.
 
 **Who named it.** "The owner named it" means text in the owner's own turn, outside every `<untrusted…>`
 block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn, child reply,

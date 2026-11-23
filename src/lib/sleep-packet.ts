@@ -188,7 +188,7 @@ export function cleanTurn(text: string): { text: string } | { machine: string } 
 }
 
 /** The owner's words a mid-turn message carried (`attachment{type:'queued_command'}`), or null. */
-function queuedCommandText(rec: Record<string, unknown>): string | null {
+export function queuedCommandText(rec: Record<string, unknown>): string | null {
   const att = rec.attachment as { type?: unknown; prompt?: unknown } | undefined;
   if (rec.type !== 'attachment' || !att || att.type !== 'queued_command') return null;
   const p = att.prompt;

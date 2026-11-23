@@ -12,6 +12,10 @@ All notable changes to dreamcontext will be documented in this file.
 - **Page tabs.** The page icon strip is gone on the Mac: Chat, Tasks, Insights, Whiteboards and Apps are tabs in the title bar, everything else is under More. The project name in the title bar opens the project picker. The phone and tablet layouts are unchanged.
 - **Where you were.** Back and forward, the palette and the picker work across projects, and each project reopens on the page and item you left.
 - **Smooth app.** Typing in the message box no longer redraws the chat area around it. Changing project keeps the project you leave on screen until the next one is drawn, so no empty card flashes. Boards show an outline while they load instead of a "Loading" line.
+- **Super children use fewer tokens.** A session the Super started hands off to a fresh one at 250k instead of 300k, and new work sent to a child already past that point asks it to hand off first, so the work does not ride a huge old context. Your own chats keep their limits.
+- **Nothing you send during a handoff is lost.** A message written while a session is handing off waits and arrives once, in the fresh session, after it has read its handoff.
+- **The right model for the job.** The Super's model table has one row per kind of work, and a sub-agent opened without a model under a Fable session runs on Opus instead of Fable.
+- **Does the Super raise token use?** Stats › dreamcontext answers it: the same kind of work with and without the Super, the Super's own share included, cache reads shown apart.
 
 ## [0.41.23] - 2026-11-19
 

@@ -236,3 +236,21 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
 .st-kvbar { display: block; width: 60px; margin: 3px 0 0 auto; }
 rect.st-soft { stroke: var(--chart-8); stroke-width: 1; stroke-dasharray: 3 2; }
 .st-err { color: var(--color-error-ink); }
+
+/* "Does the Super raise token use?" (StatsSuperEffect.tsx): good/warn ink only on the verdict word and the diff column. */
+.st-super .st-answer-v b[data-tone='good'], .st-super .st-super-d[data-tone='good'] { color: var(--color-success-ink); }
+.st-super .st-answer-v b[data-tone='warn'], .st-super .st-super-d[data-tone='warn'] { color: var(--color-warning-ink); }
+.st-super-sum { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 10px; font-size: calc(13px * var(--zoom)); }
+.st-super-sum span { display: flex; align-items: baseline; gap: 6px; }
+.st-super-sum em { font-style: normal; color: var(--color-text-secondary); }
+.st-super-sum b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.st-super-tbl .st-tr { grid-template-columns: minmax(0, 1fr) 72px 72px 64px; }
+.st-super-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+.st-super .st-foot + .st-foot { margin-top: 2px; }
+/* Narrow: the page's tables drop their 4th column at 760px; this card's 4th column IS the
+   evidence (the difference), so it stays, and a row's label and grey jobs line wrap, never cut. */
+@media (max-width: 760px) {
+  .st-super-tbl .st-tr { grid-template-columns: minmax(0, 1fr) 56px 56px 52px; gap: 8px; }
+  .st-super-tbl .st-tr > :nth-child(4) { display: block; }
+  .st-super-tbl .st-tr .nm, .st-super-tbl .st-tr .nm2 > span > * { white-space: normal; overflow: visible; }
+}

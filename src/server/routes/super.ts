@@ -117,6 +117,8 @@ import { permissionResponse, questionResponse, superAnswerPicks, type OpenReques
 import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { lastMainChainContext, readHandoffRecord, resolveHandoffFor } from '../../lib/context-watch.js';
+import { newWorkLead } from '../../lib/super/send-rotation.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
 import { END_PARK_CONTEXT, findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
@@ -2972,8 +2974,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // child's `writeOwnerTurn`, and its hand-over note rides with it). Noted as the Super's own:
     // it answers no wait the child has on the owner (owner-wait.ts).
     noteSuperSend(child, text);
+    // New work on a big idle child (super-cocuk-tasarruf D2): one hand-off-first line the window
+    // puts ahead of the text only when it delivers a new turn; read after a wake, from the pane's
+    // CURRENT conversation. `--keep` sends the text alone.
+    const lead = sendLeadFor(c.who.contextRoot, child, c.state.children[child], b.keep === true);
     // `deadline`: a window that wakes after the server gave up refuses it (the fallback below).
-    const sendArgs = () => ({ tab: child, text, deadline: windowDeadline() });
+    const sendArgs = () => ({ tab: child, text, deadline: windowDeadline(), ...(lead ? { lead } : {}) });
     let r = await sendWindowCommand(c.token, 'send', sendArgs(), { noted: true });
     // The window still draws the tab as parked, or the resumed process is not up yet: it answers
     // "not running" until it is. Wake it (once) and ask again for a few seconds.
@@ -2990,7 +2996,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     // No window answered (field 2026-11-13: the app in the background): a running child gets the
     // words straight from the server, as the server's own turn, never the owner's.
-    const byServer = serverDelivers(r, () => isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text));
+    // The lead rides here only when the registry reads the child idle at this moment (a new turn).
+    let serverLead = false;
+    const byServer = serverDelivers(r, () => {
+      if (!isLiveChat(child)) return false;
+      const e = getChat(child);
+      serverLead = !!lead && !!e && activityOf(e) === 'idle';
+      return !!crewHandle(child)?.sendServerTurn(serverLead ? `${lead}\n\n${text}` : text);
+    });
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
     // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent', or
@@ -3006,7 +3019,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
       .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
     await markOwnersJob(c, child, b);
-    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(byServer ? { via: 'server' } : {}), ...(woke ? { woke: true } : {}), ...(notOpened ?? {}), ...(how === 'queued' ? { waits: SEND_QUEUED_WAITS } : {}) });
+    const led = byServer ? serverLead : r.ok && (r.result as { lead?: unknown } | undefined)?.lead === true;
+    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(byServer ? { via: 'server' } : {}), ...(woke ? { woke: true } : {}), ...(notOpened ?? {}), ...(how === 'queued' ? { waits: SEND_QUEUED_WAITS } : {}), ...(led ? { lead: true } : {}) });
   },
 
   'queue-list': async (c, _b, res) => {
@@ -4343,6 +4357,27 @@ export function childLastLine(texts: readonly string[], status: string): { line:
   const line = [...texts].reverse().find((t) => t && !isLimitBanner(t)) ?? '';
   const limit = newest && isLimitBanner(newest) && status !== 'working' && status !== 'starting' ? newest : null;
   return { line, limit };
+}
+
+/**
+ * The `[dreamcontext]` hand-off-first line for new work sent to this child, or null
+ * (send-rotation.ts `newWorkLead`): Eco on for its pane, a Claude child, its current
+ * conversation at or past the child ladder's first rung, no record already rotating. Never throws.
+ */
+export function sendLeadFor(contextRoot: string, child: string, ch: { tool?: string; task?: string } | undefined, keep: boolean): string | null {
+  try {
+    if (keep) return null;
+    const tool = ch?.tool ?? 'claude';
+    if (tool !== 'claude') return null;
+    const ladder = resolveHandoffFor(contextRoot, dirname(contextRoot), child, { child: true });
+    if (!ladder.enabled) return null;
+    const path = liveTranscriptPath(contextRoot, child);
+    const ctx = path ? lastMainChainContext(path) : null;
+    const task = typeof ch?.task === 'string' && /^[a-z0-9][a-z0-9-]{0,200}$/.test(ch.task) ? ch.task : null;
+    return newWorkLead({ enabled: ladder.enabled, ctx, ladder, keep, task, tool, record: readHandoffRecord(contextRoot, child) });
+  } catch {
+    return null;
+  }
 }
 
 /**

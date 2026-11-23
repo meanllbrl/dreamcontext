@@ -428,7 +428,8 @@ export function registerSuperCommand(program: Command): void {
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks, and then "waits" says it is not read yet). A parked child is woken first, in the same command: "delivered" says how it arrived')
     .option('--origin <ref>', ORIGIN_HELP)
-    .action((child: string, text: string, o: { origin?: string }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
+    .option('--keep', 'Send the text alone, without the hand-off-first line a big idle child gets: for its own question, or a reply that needs the live conversation')
+    .action((child: string, text: string, o: { origin?: string; keep?: boolean }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}), ...(o.keep === true ? { keep: true } : {}) }));
 
   const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread; a member tells the Super Agent something (team tell)');
   team.command('ask <member> <job>')

@@ -16,6 +16,7 @@ import { findCodexRollout } from './codex-threads.js';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
 import { maybeNudge, renderHandoffBanner, selectHandoffForSessionStart, stampHandoffRecord } from '../context-watch.js';
 import { isInstanceTool } from '../instance-accounts.js';
+import { logHandoff } from '../usage-records.js';
 import type { AppContext } from './stdio.js';
 
 export interface EcoJoins {
@@ -42,7 +43,14 @@ export function ecoJoins(projectRoot: string, env: NodeJS.ProcessEnv, o: { codex
         const picked = selectHandoffForSessionStart(contextRoot, 'clear', tab || null);
         if (!picked) return [];
         const banner = renderHandoffBanner(picked.record);
-        stampHandoffRecord(contextRoot, picked.key, { consumedAt: new Date().toISOString() });
+        const consumedAt = new Date().toISOString();
+        stampHandoffRecord(contextRoot, picked.key, { consumedAt, ...(id ? { toSession: id } : {}) });
+        // The same kept line the SessionStart hook writes, so a bridge child's successor joins its
+        // first conversation in Stats and the measurement script.
+        logHandoff(contextRoot, {
+          title: picked.record.title, at: picked.record.at, contextTokens: picked.record.contextTokens, fromSession: picked.record.fromSession,
+          consumedAt, ...(id ? { toSession: id } : {}), ...(picked.record.actedAt ? { actedAt: picked.record.actedAt } : {}),
+        });
         return [{ key: 'dreamcontext-handoff', text: banner }];
       } catch {
         return [];

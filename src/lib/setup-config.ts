@@ -142,6 +142,11 @@ export interface ContextHandoffConfig {
   hardAt?: number;
   /** Token distance between repeat nudges. Default 100_000. */
   remindEvery?: number;
+  /**
+   * A Super child's own ladder ({@link CHILD_HANDOFF_DEFAULTS}): the same three numbers, each
+   * optional. Absent = the child defaults, never the human ladder above.
+   */
+  child?: { nudgeAt?: number; hardAt?: number; remindEvery?: number };
 }
 
 /** Resolved handoff ladder — every field present. */
@@ -172,6 +177,18 @@ export const CONTEXT_HANDOFF_DEFAULTS: ResolvedContextHandoff = {
   nudgeAt: CONTEXT_BAND_EDGES[0],
   hardAt: CONTEXT_BAND_EDGES[1],
   remindEvery: 100_000,
+};
+
+/**
+ * A Super child's ladder: firm from 250k, severe from 400k, again every 50k. Measured on this
+ * Mac (2026-11-22, 509 children): a hand-off at 250k cuts the tokens a child re-reads by ~20%
+ * against 300k at no dollar cost, and a child's work is one job, not a conversation the owner
+ * wants kept. Owner chats, terminal sessions and the Super's own pane keep the human ladder.
+ */
+export const CHILD_HANDOFF_DEFAULTS: Omit<ResolvedContextHandoff, 'enabled'> = {
+  nudgeAt: 250_000,
+  hardAt: 400_000,
+  remindEvery: 50_000,
 };
 
 /**
@@ -214,6 +231,24 @@ export function resolveContextHandoff(cfg: ContextHandoffConfig | null | undefin
     // already serious — `hardAt` follows `nudgeAt` up rather than inverting.
     hardAt: Math.max(num(cfg?.hardAt, CONTEXT_HANDOFF_DEFAULTS.hardAt), nudgeAt),
     remindEvery: num(cfg?.remindEvery, CONTEXT_HANDOFF_DEFAULTS.remindEvery),
+  };
+}
+
+/**
+ * A Super child's ladder from `contextHandoff.child`, defaulted field by field to
+ * {@link CHILD_HANDOFF_DEFAULTS} (never to the human ladder), with the same `hardAt >= nudgeAt`
+ * clamp. `enabled` is the block's own switch, as {@link resolveContextHandoff} reads it.
+ */
+export function resolveChildHandoff(cfg: ContextHandoffConfig | null | undefined): ResolvedContextHandoff {
+  const num = (v: unknown, fallback: number): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+  const c = cfg?.child && typeof cfg.child === 'object' ? cfg.child : undefined;
+  const nudgeAt = num(c?.nudgeAt, CHILD_HANDOFF_DEFAULTS.nudgeAt);
+  return {
+    enabled: cfg?.enabled === true,
+    nudgeAt,
+    hardAt: Math.max(num(c?.hardAt, CHILD_HANDOFF_DEFAULTS.hardAt), nudgeAt),
+    remindEvery: num(c?.remindEvery, CHILD_HANDOFF_DEFAULTS.remindEvery),
   };
 }
 
@@ -626,6 +661,14 @@ function sanitizeContextHandoff(raw: unknown): ContextHandoffConfig | undefined 
   if (typeof o.nudgeAt === 'number' && Number.isFinite(o.nudgeAt)) out.nudgeAt = o.nudgeAt;
   if (typeof o.hardAt === 'number' && Number.isFinite(o.hardAt)) out.hardAt = o.hardAt;
   if (typeof o.remindEvery === 'number' && Number.isFinite(o.remindEvery)) out.remindEvery = o.remindEvery;
+  if (o.child && typeof o.child === 'object' && !Array.isArray(o.child)) {
+    const c = o.child as Record<string, unknown>;
+    const child: NonNullable<ContextHandoffConfig['child']> = {};
+    for (const k of ['nudgeAt', 'hardAt', 'remindEvery'] as const) {
+      if (typeof c[k] === 'number' && Number.isFinite(c[k])) child[k] = c[k] as number;
+    }
+    if (Object.keys(child).length > 0) out.child = child;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
