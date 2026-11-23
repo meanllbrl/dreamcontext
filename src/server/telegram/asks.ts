@@ -50,10 +50,11 @@ import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type As
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { cardAbout, closedCardHtml } from '../../lib/telegram/system-lines.js';
 import { agendaItemBlock } from '../../lib/telegram/headers.js';
-import { LINES, NOT_SHOWN_WHOLE_LINE, shownWhole, visibleCommand, type ActiveBinding, type SuperTurnSpan, type TelegramHub } from './hub.js';
-import { richQuestionsOf, type RichAsks } from './rich-asks.js';
+import { LINES, NOT_SHOWN_WHOLE_LINE, editFailureOf, shownWhole, visibleCommand, type ActiveBinding, type EditFailure, type SuperTurnSpan, type TelegramHub } from './hub.js';
+import { richQuestionsOf, type RichAsks, type RichQuestion, type RichTarget } from './rich-asks.js';
 import { wireTelegramAppRequests } from './app-requests.js';
 import { appendAskLog } from './ask-log.js';
+import { readCopies, writeCopies, type StoredButtons, type StoredCopy, type StoredRich } from './copies-store.js';
 import { childRunOffer, RUN_LINES } from './runs.js';
 
 /** W5 rich asks (multi-select, several questions, previews): set by `wireTelegramW5`. */
@@ -66,7 +67,11 @@ type Obj = Record<string, unknown>;
 const sentItems = new Set<string>();
 
 /** What an item's Telegram copy is: its messages, so an answer elsewhere can close them. */
-interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; kind?: SuperQueueItem['kind']; messages: { messageId: number; html: string; question?: string }[]; turn?: true; sentAt?: number }
+/** `again`: this copy is a card sent again below a turn that buried it (resurfaceBuried): its
+ *  question and buttons only, the full card and its drawings sit above it, once. */
+interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; kind?: SuperQueueItem['kind']; messages: CopyMessage[]; turn?: true; sentAt?: number; again?: true; rich?: StoredRich }
+/** One message of a copy; `buttons` binds its buttons again after a restart (copies-store.ts). */
+interface CopyMessage { messageId: number; html: string; question?: string; buttons?: StoredButtons }
 
 /** A member's item or a refused call goes one at a time (K5): the next after his answer. */
 function oneAtATime(item: SuperQueueItem): boolean {
@@ -141,7 +146,7 @@ function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item:
     // The running turn's own card: a short line it held just before (hub.ts `tails`) goes first.
     if (own?.inTurn) await hub.flushTail(sessionId);
     let outcome: SendOutcome;
-    try { outcome = await sendItem(hub, ab, sessionId, item); } catch (err) {
+    try { outcome = (await adoptCopy(hub, ab, item)) ?? await sendItem(hub, ab, sessionId, item); } catch (err) {
       const retry = (err as { retryAfter?: unknown })?.retryAfter;
       outcome = { ok: false, why: failure(err), ...(typeof retry === 'number' && retry > 0 ? { retryAfterS: retry } : {}) };
     }
@@ -178,7 +183,146 @@ function remember(itemId: string, copy: Copy, item?: SuperQueueItem): void {
   copy.sentAt ??= Date.now();
   copies.set(itemId, item && oneAtATime(item) ? { ...copy, turn: true } : copy);
   while (copies.size > COPIES_CAP) copies.delete(copies.keys().next().value as string);
+  save(copy.ab.contextRoot);
 }
+
+// ─── Copies kept across a restart (copies-store.ts) ───────────────────────────────────────────
+// Every change to `copies` is written to the project's `state/.super/telegram-copies.json`. After
+// a start, what the file holds waits in `kept` until its item is offered again: then its copy is
+// taken back (buttons bound again on the same messages) and nothing is sent; an item that closed
+// meanwhile has its copy closed. One live copy of a card, restart or not.
+
+/** Read back from disk after a start, not yet taken back: per project root, by item id. */
+const kept = new Map<string, Map<string, StoredCopy>>();
+function keptOf(root: string): Map<string, StoredCopy> {
+  let m = kept.get(root);
+  if (!m) { m = new Map(Object.entries(readCopies(root))); kept.set(root, m); }
+  return m;
+}
+
+function stored(c: Copy): StoredCopy {
+  return {
+    key: c.ab.key, botId: c.ab.binding.botId, chatId: c.ab.binding.chatId, sentAt: c.sentAt ?? Date.now(),
+    ...(c.kind ? { kind: c.kind } : {}), ...(c.sessionId ? { sessionId: c.sessionId } : {}), ...(c.requestId ? { requestId: c.requestId } : {}),
+    ...(c.turn ? { turn: true as const } : {}), ...(c.again ? { again: true as const } : {}), ...(c.rich ? { rich: c.rich } : {}),
+    messages: c.messages.filter((m) => m.messageId > 0).map((m) => ({ messageId: m.messageId, html: m.html, ...(m.question ? { question: m.question } : {}), ...(m.buttons ? { buttons: m.buttons } : {}) })),
+  };
+}
+
+/** This project's copies to disk: the live ones and those still waiting to be taken back. */
+function save(root: string | null | undefined): void {
+  if (!root) return;
+  const out: Record<string, StoredCopy> = Object.fromEntries(keptOf(root));
+  for (const [id, c] of copies) if (c.ab.contextRoot === root && c.messages.some((m) => m.messageId > 0)) out[id] = stored(c);
+  writeCopies(root, out);
+}
+
+/** A rich ask's copy, as it is kept (the target reduced to the ids its answer uses). */
+function richOf(target: RichTarget, questions: readonly RichQuestion[]): StoredRich {
+  const t = target.kind === 'super-ask' ? { kind: 'super-ask', item: { id: target.item.id, kind: target.item.kind, sessionId: target.item.sessionId } } : { ...target };
+  return { target: t, questions: questions.map((q) => ({ ...q })) as unknown as Record<string, unknown>[] };
+}
+
+/** Each message of a kept copy becomes its one line (`line` of its text, telegram-sade), its
+ *  buttons gone (records die with the edit).
+ *  Null once every message is closed or gone; else the passing failure that stopped it (the
+ *  copy stays kept and is tried again: never a second copy beside a live one). */
+async function closeKept(hub: TelegramHub, ab: ActiveBinding, s: StoredCopy, line: (html: string) => string): Promise<Extract<EditFailure, { gone: false }> | null> {
+  for (const m of s.messages) {
+    const r = await hub.closeEdit(ab, m.messageId, line(m.html)).catch((err) => editFailureOf(err));
+    if (r !== true && !r.gone) return r;
+  }
+  return null;
+}
+
+/** A kept copy whose card closed while nobody held it: the one closed line, its subject kept. */
+const keptClosedLine = (html: string): string => closedCopyLine(null, cardAbout(html));
+
+/** Is this item still the owner's to answer, as its Telegram copy sees it? A child's permission
+ *  is his while it is not done, not handed to the Super, and the child still asks it (the bar's
+ *  rule); every other kind as {@link stillOpen}. */
+async function copyOpen(ab: ActiveBinding, item: SuperQueueItem): Promise<boolean> {
+  if (item.kind !== 'permission' || item.own === true) return stillOpen(ab, item);
+  if (item.state === 'done' || item.toSuper) return false;
+  return !!pendingRequest(getChat(item.sessionId), item.requestId)?.isPermission;
+}
+
+/**
+ * The copy this item had before a restart, taken back: its buttons bound again on the same
+ * messages, nothing sent. Null = nothing kept for this bot and chat, or the old copy is gone
+ * (Telegram no longer has a message of it): the caller sends the card as new, and what is left
+ * of the old copy has lost its buttons and points down. A PASSING failure (a flood limit, a
+ * timeout) is `ok: false`: the copy stays kept and the offer tries again; no second copy.
+ * The kept entry leaves the disk only once it is taken back, closed, or replaced.
+ */
+async function adoptCopy(hub: TelegramHub, ab: ActiveBinding, item: SuperQueueItem): Promise<SendOutcome | null> {
+  const root = ab.contextRoot;
+  if (!root) return null;
+  const k = keptOf(root);
+  const s = k.get(item.id);
+  if (!s || s.key !== ab.key || s.botId !== ab.binding.botId || s.chatId !== ab.binding.chatId) return null;
+  const drop = (): void => { if (k.get(item.id) === s) k.delete(item.id); save(root); };
+  const later = (f: Extract<EditFailure, { gone: false }>): SendOutcome => {
+    appendAskLog(hub.home, `${item.id} ${item.kind} kept copy not taken back yet (${f.why}): tried again, nothing sent`);
+    return { ok: false, why: `its earlier copy could not be taken back yet: ${f.why}`, ...(f.retryAfterS ? { retryAfterS: f.retryAfterS } : {}) };
+  };
+  // Gone: what is left of the old copy points down, then the card goes as new.
+  const replace = async (): Promise<SendOutcome | null> => {
+    const f = await closeKept(hub, ab, s, () => MOVED_COPY_LINE);
+    if (f) return later(f);
+    drop();
+    appendAskLog(hub.home, `${item.id} ${item.kind} kept copy is gone from the chat: sent as new`);
+    return null;
+  };
+  if (!(await copyOpen(ab, item))) {
+    const f = await closeKept(hub, ab, s, keptClosedLine);
+    if (f) return later(f);
+    drop();
+    return { skipped: true };
+  }
+  let askId: string | undefined;
+  if (s.rich) {
+    const r = rich ? await rich.adopt(ab, s.rich.target as unknown as RichTarget, s.rich.questions as unknown as RichQuestion[], s.messages).catch((err) => editFailureOf(err)) : { gone: true as const };
+    if (typeof r !== 'string') return r.gone === false ? later(r) : replace();
+    askId = r;
+  } else {
+    for (const m of s.messages) {
+      if (!m.buttons) continue;
+      const r = await hub.rebindButtons(ab, m.messageId, m.html, m.buttons.rows, m.buttons.rec, m.buttons.data).catch((err) => editFailureOf(err));
+      if (r !== true) return r.gone === false ? later(r) : replace();
+    }
+  }
+  if (k.get(item.id) === s) k.delete(item.id);
+  kindOf.set(item.id, item.kind);
+  remember(item.id, {
+    ab, messages: s.messages, sentAt: s.sentAt, ...(askId ? { askId } : {}), ...(s.rich ? { rich: s.rich } : {}),
+    ...(s.sessionId ? { sessionId: s.sessionId } : {}), ...(s.requestId ? { requestId: s.requestId } : {}),
+    ...(s.again ? { again: true as const } : {}), ...(s.turn ? { turn: true as const } : {}),
+  });
+  appendAskLog(hub.home, `${item.id} ${item.kind} kept after a restart (its copy taken back, not sent again)`);
+  return { ok: true };
+}
+
+/** After a start: every kept copy of this bot whose item closed while the server was down says
+ *  so and loses its buttons (no offer will ever come for it). One that could not be edited yet
+ *  stays kept for the next pass. */
+async function closeKeptClosed(hub: TelegramHub, ab: ActiveBinding): Promise<void> {
+  const root = ab.contextRoot;
+  if (!root) return;
+  const k = keptOf(root);
+  const mine = [...k].filter(([, s]) => s.key === ab.key && s.botId === ab.binding.botId && s.chatId === ab.binding.chatId);
+  if (!mine.length) return;
+  const st = await readSuperState(root).catch(() => null);
+  if (!st) return;
+  for (const [id, s] of mine) {
+    const item = st.queue.find((q) => q.id === id);
+    if (item && (await copyOpen(ab, item))) continue;
+    if (await closeKept(hub, ab, s, keptClosedLine)) continue;
+    if (k.get(id) === s) k.delete(id);
+  }
+  save(root);
+}
+
 
 /** The line a closed copy ends with: "✓ Cevaplandı" only with the pick it was answered with.
  *  A close that carries no answer (the record closed it: a message of his taken as the answer,
@@ -194,10 +338,13 @@ async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<strin
   const c = copies.get(itemId);
   if (!c) return;
   copies.delete(itemId);
+  save(c.ab.contextRoot);
   if (c.askId) rich?.close(c.askId);
   const all = answers ? Object.values(answers).filter(Boolean).join(' · ') : '';
   for (const m of c.messages) {
     if (!m.messageId) continue;
+    // A permission tapped on Telegram already says what he chose (the hub's edit): kept.
+    if (c.kind === 'permission' && m.buttons && !hub.buttonsLive(c.ab, m.messageId)) continue;
     // One message holds the whole card (a rich ask, telegram-sade): its line carries every answer.
     const pick = c.messages.length === 1 ? all : answers && m.question ? answers[m.question] ?? '' : '';
     await hub.closeAnswered(c.ab, m.messageId, closedCopyLine(pick || null, cardAbout(m.html)));
@@ -233,7 +380,7 @@ async function resurfaceBuried(hub: TelegramHub, ab: ActiveBinding, superSession
     // Which of its messages carry buttons now: one tapped while it goes again keeps his answer.
     const live = new Set(c.messages.filter((m) => m.messageId && hub.buttonsLive(c.ab, m.messageId)).map((m) => m.messageId));
     let outcome: SendOutcome;
-    try { outcome = await sendItem(hub, ab, superSession, item); } catch (err) { outcome = { ok: false, why: failure(err) }; }
+    try { outcome = await sendItem(hub, ab, superSession, item, true); } catch (err) { outcome = { ok: false, why: failure(err) }; }
     // Not sent again (refused, or closed meanwhile): the old copy stays as it is.
     if (!('ok' in outcome) || !outcome.ok) {
       if ('ok' in outcome) appendAskLog(hub.home, `${id} ${item.kind} resend below FAILED ${outcome.why}`);
@@ -246,16 +393,29 @@ async function resurfaceBuried(hub: TelegramHub, ab: ActiveBinding, superSession
       appendAskLog(hub.home, `${id} ${item.kind} answered while it was resent below`);
       continue;
     }
+    const now = copies.get(id);
+    if (now && now !== c) now.again = true;
     if (c.askId) rich?.close(c.askId);
-    // The old copy is deleted (telegram-sade, Doc C3: 37 "aşağıda yeniden soruldu" copies stayed
-    // whole); only one Telegram will not delete becomes a single line.
+    // One live copy at any time, and what it showed goes once (owner 2026-11-22: the same two
+    // drawings and the stage PDF came again with every later turn). The resend below carries only
+    // the question and its buttons. The FIRST copy keeps its body and its drawings above it, loses
+    // its buttons and points down, unless the resend says all it said (a bare card): then it is
+    // deleted (telegram-sade, Doc C3). An earlier resend says nothing the first does not: it
+    // leaves the chat. Only a message Telegram will not delete becomes the one line.
+    const whole = !c.again && !(now && now !== c && sameText(c, now));
     for (const m of c.messages) {
       if (!m.messageId || (live.has(m.messageId) && !hub.buttonsLive(c.ab, m.messageId))) continue;
+      if (whole) { await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${MOVED_COPY_LINE}`).catch(() => false); continue; }
       if (await hub.deleteMessage(c.ab, m.messageId)) continue;
       await hub.closeAnswered(c.ab, m.messageId, MOVED_COPY_LINE).catch(() => false);
     }
     appendAskLog(hub.home, `${id} ${item.kind} resent below (later messages buried it)`);
   }
+}
+
+/** Does the copy sent again below say every word the old one said (no body, note or drawing lost)? */
+function sameText(old: Copy, again: Copy): boolean {
+  return old.messages.length === again.messages.length && old.messages.every((m, i) => m.html === again.messages[i].html);
 }
 
 /**
@@ -304,6 +464,8 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   // He turned away: every question still open on this Super goes (oldest first), each once; and
   // every child permission still open.
   const flush = async (ab: ActiveBinding): Promise<void> => {
+    // A copy kept from before a restart whose item closed meanwhile: closed now, on any bot.
+    await closeKeptClosed(hub, ab).catch(() => {});
     // The main Super's queue, on the main Super's bot only (a member's bot never carries it, B2).
     if (ab.target !== 'super' || !ab.contextRoot || !hub.ownerAway()) return;
     const s = await readSuperState(ab.contextRoot);
@@ -346,9 +508,8 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
 }
 
 /** One message with buttons; its message id kept for the copy. */
-async function buttons(hub: TelegramHub, ab: ActiveBinding, html: string, labels: string[], rec: Parameters<TelegramHub['sendButtons']>[3], data: Obj): Promise<{ messageId: number; html: string }> {
-  const id = await hub.sendButtons(ab, html, labels.map((l) => [l.slice(0, 60)]), rec, data);
-  return { messageId: hub.buttonMessageId(id) ?? 0, html };
+async function buttons(hub: TelegramHub, ab: ActiveBinding, html: string, labels: string[], rec: Parameters<TelegramHub['sendButtons']>[3], data: Obj): Promise<CopyMessage> {
+  return buttons2(hub, ab, html, labels.map((l) => [l]), rec, data);
 }
 
 /** Plain messages (answered on the Mac): every one must land, else it is a failure. */
@@ -361,17 +522,29 @@ async function plain(hub: TelegramHub, ab: ActiveBinding, htmls: string[]): Prom
   return out;
 }
 
+/** A card sent again below carries what answers it and nothing else: each question, its header
+ *  and its option labels. The description, the option notes and the drawings went with its first
+ *  copy (owner 2026-11-19: the same card came back five times, each time with its two pictures
+ *  and its whole body). */
+export function againQuestions<Q extends { question: string; header?: string; multiSelect?: boolean; options?: readonly { label: string }[] }>(qs: readonly Q[]): Q[] {
+  return qs.map((q) => ({
+    question: q.question, ...(q.header ? { header: q.header } : {}), ...(q.multiSelect ? { multiSelect: true } : {}),
+    ...(q.options ? { options: q.options.map((o) => ({ label: o.label })) } : {}),
+  }) as unknown as Q);
+}
+
 /**
  * Sends one queue item, if it is still open. Throws (or answers `ok: false`) when Telegram did
  * not take it; `skipped` when it closed before it went (owner 2026-11-09: a card arrived a minute
  * after the Super had answered it).
  */
-async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<SendOutcome> {
+async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem, again = false): Promise<SendOutcome> {
   if (!(await stillOpen(ab, item))) return { skipped: true };
   kindOf.set(item.id, item.kind);
   if (kindOf.size > COPIES_CAP) kindOf.delete(kindOf.keys().next().value as string);
   if (item.kind === 'ask') {
-    const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
+    const asked = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
+    const spec = again ? { ...asked, questions: againQuestions(asked.questions) } : asked;
     const card = simpleCard(spec);
     if (card) {
       const m = await buttons(hub, ab, formatAskQuestionHtml(macDrawn(hub, item.id, [card.card])[0], { title: spec.title }), card.labels,
@@ -380,9 +553,11 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       remember(item.id, { ab, messages: [{ ...m, question: card.question }] });
       return { ok: true };
     }
-    const r = rich ? await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }) : false;
+    const target: RichTarget = { kind: 'super-ask', item };
+    const rqs = richQuestionsOf(spec.questions);
+    const r = rich ? await rich.send(ab, target, rqs, { title: spec.title, sessionId: superSession, itemId: item.id, again }) : false;
     if (r) {
-      remember(item.id, { ab, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: spec.questions[i]?.question })) });
+      remember(item.id, { ab, askId: r.askId, rich: richOf(target, rqs), messages: r.messages.map((m, i) => ({ ...m, question: spec.questions[i]?.question })) });
       return { ok: true };
     }
     const htmls = spec.questions.length
@@ -393,7 +568,8 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
   }
   if (item.kind === 'question') {
     const pq = pendingRequest(getChat(item.sessionId), item.requestId);
-    const qs = pq && !pq.isPermission ? pq.questions ?? [] : [];
+    const asked = pq && !pq.isPermission ? pq.questions ?? [] : [];
+    const qs = again ? againQuestions(asked) : asked;
     if (!qs.length || !item.requestId) return { skipped: true };
     // Who asks: the job's name, once (never `ownerText`, which already joins every question).
     const s = ab.contextRoot ? await readSuperState(ab.contextRoot).catch(() => null) : null;
@@ -408,9 +584,11 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       remember(item.id, { ...base, messages: [{ ...m, question: card.question }] });
       return { ok: true };
     }
-    const r = rich ? await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: pq?.title, lead, sessionId: superSession, itemId: item.id }) : false;
+    const target: RichTarget = { kind: 'child-question', item: item.id, requestId: item.requestId };
+    const rqs = richQuestionsOf(qs);
+    const r = rich ? await rich.send(ab, target, rqs, { title: pq?.title, lead, sessionId: superSession, itemId: item.id, again }) : false;
     if (r) {
-      remember(item.id, { ...base, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: qs[i]?.question })) });
+      remember(item.id, { ...base, askId: r.askId, rich: richOf(target, rqs), messages: r.messages.map((m, i) => ({ ...m, question: qs[i]?.question })) });
       return { ok: true };
     }
     const htmls = formatAskCardMessages(macDrawn(hub, item.id, qs), { title: pq?.title, lead, footer: escapeHtml(LINES.waitingOnMac) });
@@ -484,9 +662,11 @@ async function sendMemberItem(hub: TelegramHub, ab: ActiveBinding, superSession:
       remember(item.id, { ab, messages: [{ ...m, question: card.question }] }, item);
       return { ok: true };
     }
-    const r = rich ? await rich.send(ab, { kind: 'member', mirror: item.id }, richQuestionsOf(questions), { title, lead, sessionId: superSession, itemId: item.id }) : false;
+    const target: RichTarget = { kind: 'member', mirror: item.id };
+    const rqs = richQuestionsOf(questions);
+    const r = rich ? await rich.send(ab, target, rqs, { title, lead, sessionId: superSession, itemId: item.id }) : false;
     if (r) {
-      remember(item.id, { ab, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: questions[i]?.question })) }, item);
+      remember(item.id, { ab, askId: r.askId, rich: richOf(target, rqs), messages: r.messages.map((m, i) => ({ ...m, question: questions[i]?.question })) }, item);
       return { ok: true };
     }
     const htmls = formatAskCardMessages(questions, { title, lead, footer: escapeHtml(LINES.waitingOnMac) });
@@ -530,9 +710,11 @@ function ruleLine(offer: GrantOffer | undefined, sizes: readonly GrantSize[], wh
   return `${offer.rule ? `\nKural: <code>${escapeHtml(visibleCommand(offer.rule).slice(0, 300))}</code>` : ''}${offer.notChecked ? `\n<i>${escapeHtml(offer.notChecked)}</i>` : ''}`;
 }
 
-async function buttons2(hub: TelegramHub, ab: ActiveBinding, html: string, rows: string[][], rec: Parameters<TelegramHub['sendButtons']>[3], data: Obj): Promise<{ messageId: number; html: string }> {
-  const id = await hub.sendButtons(ab, html, rows.map((r) => r.map((l) => l.slice(0, 60))), rec, data);
-  return { messageId: hub.buttonMessageId(id) ?? 0, html };
+async function buttons2(hub: TelegramHub, ab: ActiveBinding, html: string, rows: string[][], rec: Parameters<TelegramHub['sendButtons']>[3], data: Obj): Promise<CopyMessage> {
+  const shown = rows.map((r) => r.map((l) => l.slice(0, 60)));
+  const id = await hub.sendButtons(ab, html, shown, rec, data);
+  // What binds the same buttons again on this message after a restart (adoptCopy).
+  return { messageId: hub.buttonMessageId(id) ?? 0, html, buttons: { rows: shown, rec, data } };
 }
 
 /** A refused call as a card: its whole command and his choices, or "on the Mac" when the message
@@ -580,14 +762,21 @@ async function onChildAsking(hub: TelegramHub, entry: ChatEntry): Promise<void> 
     if (!item) { sentItems.delete(claim); return; }
     if (sentItems.has(item.id)) return;
     sentItems.add(item.id);
+    // Its copy from before a restart: taken back, never sent a second time. Not taken back YET
+    // (a passing failure): let go, so the next change or flush tries again; nothing is sent.
+    const kept = await adoptCopy(hub, ab, item).catch(() => null);
+    if (kept && !('skipped' in kept) && !kept.ok) { sentItems.delete(claim); sentItems.delete(item.id); return; }
+    if (kept) return;
     const job = s.children[entry.sessionId]?.brief ? `${escapeHtml(s.children[entry.sessionId].brief.slice(0, 60))} · ` : '';
     const command = pq.fullText ?? pq.text;
     // Main's own crew has no member: "for this job" at most (`who` null drops the member size).
     const { html, rows, choices } = permissionCard(job, pq.toolName, command, item.offer?.sizes ?? ['once'], null, item.offer);
     const shownCall = itemCall(pq);
-    await hub.sendButtons(ab, html, rows,
+    const m = await buttons2(hub, ab, html, rows,
       { kind: 'permission', requestId: pq.requestId, sessionId: entry.sessionId, singleUse: true },
       { queue: true, item: item.id, choices, shown: shownKeyOf(shownCall.tool, shownCall.input) });
+    kindOf.set(item.id, item.kind);
+    remember(item.id, { ab, sessionId: entry.sessionId, requestId: pq.requestId, messages: [m] });
     return;
   }
 }
@@ -764,4 +953,4 @@ export async function remindMarkedCards(hub: TelegramHub): Promise<number> {
 }
 
 /** Test seam. */
-export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); kindOf.clear(); }
+export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); kindOf.clear(); kept.clear(); }
