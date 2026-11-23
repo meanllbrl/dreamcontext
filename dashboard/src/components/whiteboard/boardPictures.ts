@@ -39,6 +39,41 @@ interface ImageLike {
   type?: unknown;
   isDeleted?: unknown;
   fileId?: unknown;
+  x?: unknown;
+  y?: unknown;
+  width?: unknown;
+  height?: unknown;
+}
+
+/** A point on the board (scene coordinates): where the owner is looking. */
+export interface BoardPoint {
+  x: number;
+  y: number;
+}
+
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * The live pictures' file ids, nearest to `near` first (the distance from the point to the
+ * picture's box; 0 inside it). A board opens with every picture to fetch (113 of 400 KB on a real
+ * one): fetched in drawing order, the ones on screen waited behind the rest (task: opening a board
+ * is slow, 2026-11-23). Without `near`, drawing order.
+ */
+export function picturesNearestFirst(elements: readonly unknown[], near?: BoardPoint | null): string[] {
+  if (!near) return liveFileIds(elements);
+  const best = new Map<string, number>();
+  for (const raw of elements) {
+    const el = raw as ImageLike | null;
+    if (!el || el.type !== 'image' || el.isDeleted === true || typeof el.fileId !== 'string' || !el.fileId) continue;
+    const x = num(el.x); const y = num(el.y);
+    const w = Math.abs(num(el.width)); const h = Math.abs(num(el.height));
+    const dx = Math.max(x - near.x, 0, near.x - (x + w));
+    const dy = Math.max(y - near.y, 0, near.y - (y + h));
+    const d = Math.hypot(dx, dy);
+    const had = best.get(el.fileId);
+    if (had === undefined || d < had) best.set(el.fileId, d);
+  }
+  return [...best].sort((a, b) => a[1] - b[1]).map(([id]) => id);
 }
 
 /** The file ids of the live pictures in `elements`, each once. */
@@ -148,9 +183,11 @@ export class BoardPictures {
   /**
    * Fetch every live picture in `elements` that `has` says the page lacks, one request at a
    * time per id, and hand what arrives to `onLoaded`. One missing on disk stays a placeholder.
+   * The requests go out nearest to `near` (the middle of the view) first, so the pictures on
+   * screen arrive before the ones off it.
    */
-  load(elements: readonly unknown[], has: (id: string) => boolean, onLoaded: (file: PictureFile) => void): void {
-    for (const id of liveFileIds(elements)) {
+  load(elements: readonly unknown[], has: (id: string) => boolean, onLoaded: (file: PictureFile) => void, near?: BoardPoint | null): void {
+    for (const id of picturesNearestFirst(elements, near)) {
       if (has(id) || this.loading.has(id) || this.absent.has(id) || this.refused.has(id)) continue;
       // Ours and not sent yet: Excalidraw holds it, nothing to fetch.
       if (this.held.has(id)) continue;

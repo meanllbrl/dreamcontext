@@ -118,6 +118,12 @@ export function useBoardPictureLoader(
     const store = picturesRef.current;
     if (!api || !store) return;
     const held = api.getFiles();
-    store.load(elements, (id) => !!held[id] || landing.current.has(id), onPicture);
+    // The middle of the view, in board coordinates: the pictures on screen are fetched first.
+    const st = api.getAppState();
+    const zoom = st.zoom?.value || 1;
+    const near = Number.isFinite(st.scrollX) && Number.isFinite(st.scrollY)
+      ? { x: -st.scrollX + st.width / (2 * zoom), y: -st.scrollY + st.height / (2 * zoom) }
+      : null;
+    store.load(elements, (id) => !!held[id] || landing.current.has(id), onPicture, near);
   }, [apiRef, picturesRef, onPicture]);
 }

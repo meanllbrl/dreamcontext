@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  BoardPictures, dataUrlBytes, isPictureOf, liveFileIds, type PictureFile,
+  BoardPictures, dataUrlBytes, isPictureOf, liveFileIds, picturesNearestFirst, type PictureFile,
 } from '../../dashboard/src/components/whiteboard/boardPictures.js';
 
 const A = 'a'.repeat(40);
@@ -128,5 +128,35 @@ describe('board pictures: down, for every picture the page lacks', () => {
     h.pictures.load([img('1', A)], () => false, () => {});
     await flush();
     expect(h.downloads).toEqual([]);
+  });
+});
+
+describe('picturesNearestFirst (a board opens with the pictures on screen first)', () => {
+  const at = (id: string, fileId: string, x: number, y: number) => img(id, fileId, { x, y, width: 100, height: 100 });
+
+  it('orders by the distance from the view middle to each picture box, inside first', () => {
+    const els = [at('1', A, 5000, 5000), at('2', B, 0, 0), at('3', C, 900, 0)];
+    expect(picturesNearestFirst(els, { x: 50, y: 50 })).toEqual([B, C, A]);
+    expect(picturesNearestFirst(els, { x: 5050, y: 5050 })).toEqual([A, C, B]);
+  });
+
+  it('a picture used twice counts its nearest copy; deleted ones are left out', () => {
+    const els = [at('1', A, 9000, 0), at('2', B, 300, 0), at('3', A, 0, 0), at('4', C, 0, 0)];
+    els[3] = { ...els[3], isDeleted: true };
+    expect(picturesNearestFirst(els, { x: 0, y: 0 })).toEqual([A, B]);
+  });
+
+  it('without a point it keeps the drawing order', () => {
+    const els = [at('1', C, 0, 0), at('2', A, 10, 0)];
+    expect(picturesNearestFirst(els, null)).toEqual(liveFileIds(els));
+  });
+});
+
+describe('BoardPictures.load asks nearest first', () => {
+  it('issues the downloads in the order of the distance to the view middle', () => {
+    const h = harness({ files: { [A]: file(A), [B]: file(B), [C]: file(C) } });
+    const box = (id: string, fileId: string, x: number) => img(id, fileId, { x, y: 0, width: 10, height: 10 });
+    h.pictures.load([box('1', A, 2000), box('2', B, 0), box('3', C, 500)], () => false, () => {}, { x: 5, y: 5 });
+    expect(h.downloads).toEqual([B, C, A]);
   });
 });
