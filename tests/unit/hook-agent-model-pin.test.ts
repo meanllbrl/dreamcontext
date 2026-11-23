@@ -20,7 +20,18 @@ const io = vi.hoisted(() => {
 vi.mock('node:fs', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs')>();
   const readFileSync = ((p: unknown, ...rest: unknown[]) => (p === 0 ? io.stdin : (real.readFileSync as (...a: unknown[]) => unknown)(p, ...rest))) as typeof real.readFileSync;
-  return { ...real, readFileSync, default: { ...real, readFileSync } };
+  // The hook reads fd 0 with readSync (`readStdinSync`): served from the same text, once, then EOF.
+  let served = 0;
+  const readSync = ((fd: unknown, buf: Buffer, ...rest: unknown[]) => {
+    if (fd !== 0) return (real.readSync as (...a: unknown[]) => number)(fd, buf, ...rest);
+    const bytes = Buffer.from(io.stdin);
+    const n = Math.min(buf.length, bytes.length - served);
+    bytes.copy(buf, 0, served, served + n);
+    served += n;
+    if (n === 0) served = 0;
+    return n;
+  }) as typeof real.readSync;
+  return { ...real, readFileSync, readSync, default: { ...real, readFileSync, readSync } };
 });
 
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
