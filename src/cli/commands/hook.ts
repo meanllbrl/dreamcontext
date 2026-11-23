@@ -3859,8 +3859,8 @@ export function registerHookCommand(program: Command): void {
       const ownerText = promptOwnerText(rawPrompt);
       const query = recallQuery(rawPrompt);
       // Recall and the skills check also read what the turn points at (an agenda line, a replied
-      // message, a card: `recallTurn`), so "videoya geçelim" under a line recalls on that line.
-      const turn = recallTurn(rawPrompt);
+      // message, a card: `recallTurn`), so a short "shall we move to the video" under a line recalls on that line.
+      const turn = recallTurn(rawPrompt, { root });
       // He asked for a rule to be remembered (learning loop C4): one must-print cue, on his own words
       // only. It writes nothing (the hook never writes the owner-words ledger) and makes no rule active.
       if (ownerText !== null && detectRememberIntent(ownerText)) console.log(REMEMBER_INTENT_LINE);

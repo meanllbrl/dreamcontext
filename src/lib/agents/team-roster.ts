@@ -12,6 +12,7 @@ import type { AutomationManifest } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { bm25Search, RECALL_STRONG_SCORE, type RecallHit } from '../recall.js';
 import { buildCorpusCached } from '../recall-corpus-cache.js';
+import { readVaultHeadSafe } from '../vault-read.js';
 import { SUPER_EVENT_PREFIXES, aboutHeads } from '../super/types.js';
 
 /**
@@ -444,15 +445,53 @@ export interface RecallTurn {
  * "bu ne" under an agenda line still recalls on that line; patterns, offers and the team line keep
  * reading {@link recallQuery}, his words alone.
  */
-export function recallTurn(prompt: string): RecallTurn | null {
+export function recallTurn(prompt: string, o: { root?: string } = {}): RecallTurn | null {
   const text = promptOwnerText(prompt);
-  const words = text === null ? '' : fold(text);
-  const rawAbout = promptAbout(prompt);
+  let words = text === null ? '' : fold(text);
+  let rawAbout = promptAbout(prompt);
+  // A turn that hands over a brief file ("Read and follow …/brief.md"): its subject is in the file,
+  // so the file's head is what the turn is about, and its path leaves his words.
+  if (rawAbout === null && text !== null && o.root) {
+    const brief = pointedBrief(text, o.root);
+    if (brief) {
+      rawAbout = brief.head;
+      words = fold(text.split(brief.written).join(' '));
+    }
+  }
   const aboutFull = rawAbout === null ? '' : fold(rawAbout);
   const about = aboutFull ? aboutFull.slice(0, RECALL_ABOUT_MAX_CHARS) : null;
   const search = about ? (words ? `${words}\n${about}` : about) : words;
   if (search.length < RECALL_QUERY_MIN_CHARS) return null;
   return { words, about, search };
+}
+
+/** At most this many bytes of a brief file are read: its head is all a recall search takes. */
+export const POINTED_BRIEF_MAX_BYTES = 8 * 1024;
+/** A markdown path in a turn (the characters a path in a sentence can hold). */
+const MD_PATH_RE = /[^\s`'"()[\]<>«»]+\.md(?![\w-])/g;
+
+/**
+ * The brief file a turn hands over to read, when it names one inside this vault: a `.md` whose name
+ * holds "brief", or any `.md` under `tmp/super-prompts/` (a Super child's first message). Read through
+ * {@link readVaultHeadSafe} (no symlink, realpath inside `root`, at most {@link POINTED_BRIEF_MAX_BYTES}).
+ * The path is taken from its `_dream_context/` segment on, so a copy of the brain (a worktree, a clone)
+ * reads its own file, never another folder's. Null when none is named or none is readable.
+ */
+export function pointedBrief(text: string, root: string): { written: string; rel: string; head: string } | null {
+  for (const m of text.matchAll(MD_PATH_RE)) {
+    const written = m[0];
+    const path = written.replace(/\\/g, '/');
+    const base = path.slice(path.lastIndexOf('/') + 1);
+    if (!/brief/i.test(base) && !/(?:^|\/)tmp\/super-prompts\//.test(path)) continue;
+    const at = path.lastIndexOf('_dream_context/');
+    const rel = at >= 0 ? path.slice(at + '_dream_context/'.length) : (/^(?:\/|~)/.test(path) ? null : path.replace(/^\.\//, ''));
+    if (!rel) continue;
+    const raw = readVaultHeadSafe(root, rel, POINTED_BRIEF_MAX_BYTES);
+    if (raw === null) continue;
+    const head = raw.replace(/[\u0000-\u0008\u000b-\u001f\u007f]+/g, ' ').trim();
+    if (head) return { written, rel, head };
+  }
+  return null;
 }
 
 /** A title in a directive line: one line, no control characters, at most 60 characters. */
