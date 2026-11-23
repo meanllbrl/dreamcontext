@@ -11,7 +11,7 @@ All notable changes to dreamcontext will be documented in this file.
 - **One sidebar on the Mac.** The left sidebar lists every project on every page: on Chat it shows each project's chats, on Whiteboards each project's boards, elsewhere the projects themselves. Clicking another project's row or board opens it in one click, and the window shows it only once it is ready, so nothing flickers. The sidebar is a little wider by default (232 px instead of 200) and can still be resized.
 - **Page tabs.** The page icon strip is gone on the Mac: Chat, Tasks, Insights, Whiteboards and Apps are tabs in the title bar, everything else is under More. The project name in the title bar opens the project picker. The phone and tablet layouts are unchanged.
 - **Where you were.** Back and forward, the palette and the picker work across projects, and each project reopens on the page and item you left.
-- **Smooth app.** Typing in the message box no longer redraws the chat area around it. Moving between pages, leaving Chat, and changing project now glide: the side panel slides away, the new page fades in, and the project you leave stays on screen until the next one is drawn, so no empty card flashes. Boards show an outline while they load instead of a "Loading" line.
+- **Smooth app.** Typing in the message box no longer redraws the chat area around it. Changing project keeps the project you leave on screen until the next one is drawn, so no empty card flashes. Boards show an outline while they load instead of a "Loading" line.
 
 ## [0.41.23] - 2026-11-19
 

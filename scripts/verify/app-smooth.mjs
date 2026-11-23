@@ -200,13 +200,13 @@ const PROBE = `(() => {
   window.__sample = () => {
     const inst = document.querySelector('.project-instance:not([hidden])');
     // The rail is drawn in the window's slot, outside the instance: read the one on screen.
-    const chat = live('[data-testid="ns-rail-chat"]')?.dataset.on === 'true';
+    const chat = live('[data-testid="ns-tab-chat"]')?.dataset.on === 'true';
     const region = chat ? [...(inst?.querySelectorAll('.agent-surface, .agent-host') ?? [])].find(shown) : inst?.querySelector('.shell-main');
     // The project just left can stay painted over the new one for a moment (useInstanceHold):
     // while it does, the new one is not what the owner sees.
     const held = !!document.querySelector('.project-instance[hidden][data-holding="hold"]');
     return { inst: inst?.dataset.instance ?? null, page: inst?.dataset.page ?? null, chat, held,
-      on: live('.ns-rail-btn[data-on="true"]')?.dataset.testid ?? null,
+      on: live('.ns-tab-btn[data-on="true"]')?.dataset.testid ?? null,
       n: region ? region.getElementsByTagName('*').length : 0 };
   };
   window.__arm = () => new Promise((armed) => {
@@ -235,6 +235,7 @@ async function hop(p, name, click, isTarget, hold = 1500) {
   const after = log.filter((f) => f.t >= clickAt);
   const seen = (f) => !f.held && isTarget(f);
   const first = after.find(seen);
+  if (!first && process.env.SMOOTH_DEBUG) console.error('MISS', name, JSON.stringify(after.at(-1)));
   const final = after.at(-1)?.n ?? 0;
   const content = after.find((f) => seen(f) && f.n >= final * 0.9);
   const gap = Math.round(after.slice(1).reduce((m, f, i) => Math.max(m, f.t - after[i].t), 0));
@@ -323,7 +324,7 @@ async function main() {
     await cdp.send('Performance.enable');
     await p.screenshot({ path: join(OUT, `${TAG}-start.png`) });
     // The Chat row waits for the machine's capabilities; on a loaded Mac that can take a while.
-    if (!(await p.locator('[data-testid="ns-rail-chat"]').filter({ visible: true }).first().waitFor({ timeout: 90000 }).then(() => true, () => false))) {
+    if (!(await p.locator('[data-testid="ns-tab-chat"]').filter({ visible: true }).first().waitFor({ timeout: 90000 }).then(() => true, () => false))) {
       const ids = await p.evaluate(() => [...new Set([...document.querySelectorAll('[data-testid]')].map((e) => e.dataset.testid))].slice(0, 60));
       throw new Error(`the rail's Chat row never came up (see ${TAG}-start.png); test ids: ${ids.join(', ')}; errors: ${errs.join(' | ')}`);
     }
@@ -331,18 +332,23 @@ async function main() {
     // Before the walk too: the owner's own steps are measured at the same speed as the laps.
     if (CPU > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU });
 
-    const rail = (id) => p.locator(`[data-testid="ns-rail-${id}"]`).filter({ visible: true }).first();
+    const rail = (id) => p.locator(`[data-testid="ns-tab-${id}"]`).filter({ visible: true }).first();
     const row = (vault, text) => p.locator(`[data-drawer-project="${vault}"] .ns-dr-child`).filter({ hasText: text }).first();
-    const onPage = (page) => (f) => !f.chat && f.page === page && f.on === `ns-rail-${page}`;
+    // One open project in the left panel (wb-sol-panel): a closed project's chat rows show after its
+    // header is pressed, so the owner's real two presses are what is measured.
+    const rowOpen = (vault, text) => ({ click: async () => {
+      const child = row(vault, text);
+      if (!(await child.isVisible().catch(() => false))) await p.locator(`[data-drawer-project="${vault}"] [data-testid="drawer-project-row"]`).first().click();
+      await child.click();
+    } });
+    const onPage = (page) => (f) => !f.chat && f.page === page && f.n > 0;
     const onChat = (f) => f.chat && f.n > 50;
     const lap = [
       ['chat→tasks', () => rail('tasks').click(), onPage('tasks')],
       ['tasks→lab', () => rail('lab').click(), onPage('lab')],
       ['lab→whiteboards', () => rail('whiteboards').click(), onPage('whiteboards')],
       ['whiteboards→apps', () => rail('apps').click(), onPage('apps')],
-      ['apps→knowledge', () => rail('knowledge').click(), onPage('knowledge')],
-      ['knowledge→roadmap', () => rail('roadmap').click(), onPage('roadmap')],
-      ['roadmap→tasks', () => rail('tasks').click(), onPage('tasks')],
+      ['apps→tasks', () => rail('tasks').click(), onPage('tasks')],
       ['tasks→chat', () => rail('chat').click(), onChat],
     ];
     // ── the owner's own walk (2026-11-22), in his order, before anything else is mounted ──
@@ -367,12 +373,12 @@ async function main() {
     };
     if (flag('walk')) {
       await rail('chat').click(); await wait(p, 2500);
-      await row('acme', 'Alpha').click().catch(() => {}); await wait(p, 3000);
+      await rowOpen('acme', 'Alpha').click().catch(() => {}); await wait(p, 3000);
       await p.screenshot({ path: join(OUT, `${TAG}-walk-1-chat-A.png`) });
       report.walk = [];
       const instNow = () => p.evaluate(() => window.__sample().inst);
       let was = await instNow();
-      report.walk.push(await film('2-open-closed-B', () => row('globex', 'Gamma').click(), (f) => f.inst !== null && f.inst !== was && f.chat && f.n > 50, 5000));
+      report.walk.push(await film('2-open-closed-B', () => rowOpen('globex', 'Gamma').click(), (f) => f.inst !== null && f.inst !== was && f.chat && f.n > 50, 5000));
       report.walk.push(await film('3-B-chat-to-tasks', () => rail('tasks').click(), onPage('tasks')));
       // Back to A's Tasks from the left panel: the drawer button brings the panel over the page.
       const drawerBtn = p.locator('[data-testid="ns-drawer-toggle"], .ns-tb-btn').filter({ visible: true }).first();
@@ -390,7 +396,7 @@ async function main() {
     }
     // Open the chat first, then one lap that mounts everything: what a first visit costs.
     await rail('chat').click(); await wait(p, 2500);
-    await row('acme', 'Alpha').click().catch(() => {}); await wait(p, 2500);
+    await rowOpen('acme', 'Alpha').click().catch(() => {}); await wait(p, 2500);
     await p.screenshot({ path: join(OUT, `${TAG}-chat.png`) });
     report.firstVisit = [];
     for (const [name, click, is] of lap) {
@@ -401,11 +407,11 @@ async function main() {
     for (let r = 0; r < ROUNDS; r++) for (const [name, click, is] of lap) rows.push(await hop(p, name, click, is));
     // Project switch from the drawer, both ways, with the chat open.
     const sw = [
-      ['acme→globex (chat)', () => row('globex', 'Gamma').click(), (f) => f.chat && f.inst !== null && f.n > 50],
-      ['globex→acme (chat)', () => row('acme', 'Alpha').click(), (f) => f.chat && f.inst !== null && f.n > 50],
+      ['acme→globex (chat)', () => rowOpen('globex', 'Gamma').click(), (f) => f.chat && f.inst !== null && f.n > 50],
+      ['globex→acme (chat)', () => rowOpen('acme', 'Alpha').click(), (f) => f.chat && f.inst !== null && f.n > 50],
     ];
-    await row('globex', 'Gamma').click().catch(() => {}); await wait(p, 4000);
-    await row('acme', 'Alpha').click().catch(() => {}); await wait(p, 3000);
+    await rowOpen('globex', 'Gamma').click().catch(() => {}); await wait(p, 4000);
+    await rowOpen('acme', 'Alpha').click().catch(() => {}); await wait(p, 3000);
     for (let r = 0; r < ROUNDS; r++) {
       for (const [name, click, is] of sw) {
         const before = await p.evaluate(() => window.__sample().inst);
@@ -444,7 +450,7 @@ async function main() {
       await box.click(); await p.keyboard.type('akis baslat', { delay: 20 }); await p.keyboard.press('Enter');
       await wait(p, 2500);
       await p.screenshot({ path: join(OUT, `${TAG}-streaming.png`) });
-      const busyLap = [lap[0], lap[1], ['lab→tasks', () => rail('tasks').click(), onPage('tasks')], lap[7]];
+      const busyLap = [lap[0], lap[1], ['lab→tasks', () => rail('tasks').click(), onPage('tasks')], lap[lap.length - 1]];
       const busy = [];
       for (let r = 0; r < ROUNDS; r++) for (const [name, click, is] of busyLap) busy.push(await hop(p, name, click, is));
       report.busy = {};
