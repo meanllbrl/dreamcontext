@@ -4111,7 +4111,7 @@ export function startChatSession(
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords);
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords, text);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
     if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);

@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { TIDY_IDLE_MS, _resetTidy, planTidy, refreshMarks, tidyOnce, touchCards } from '../../src/lib/super/tidy.js';
+import { JANITOR_EVERY_MS, TIDY_IDLE_MS, _resetTidy, planTidy, refreshMarks, tidyOnce, touchCards } from '../../src/lib/super/tidy.js';
 import { superSanitizeOpts, writeSuper } from '../../src/lib/super/inbox.js';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
@@ -219,6 +219,25 @@ describe('the clock on a real record', () => {
     makeVault({ containers: [card('task-a', { kind: 'task' })], enabled: false });
     await tidyOnce(root, io, NOW);
     expect(await tidyOnce(root, io, NOW + 2 * TIDY_IDLE_MS)).toEqual([]);
+  });
+
+  it('the ended-child janitor runs hourly, never on the first tick, and its failure never breaks the tidying', async () => {
+    makeVault({ containers: [card('task-a', { kind: 'task' })] });
+    const calls: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const how = { ...io, janitor: async (r: string) => { calls.push(r); throw new Error('boom'); } };
+    await tidyOnce(root, how, NOW);
+    expect(calls).toEqual([]);
+    // The tidying goes on beside it: the idle card moves to Others on this tick.
+    expect(await tidyOnce(root, how, NOW + JANITOR_EVERY_MS - 1)).toEqual(['task-a']);
+    expect(calls).toEqual([]);
+    await tidyOnce(root, how, NOW + JANITOR_EVERY_MS);
+    expect(calls).toEqual([root]);
+    await tidyOnce(root, how, NOW + JANITOR_EVERY_MS + 1);
+    expect(calls).toHaveLength(1);
+    await new Promise((r) => setImmediate(r));
+    expect(warn.mock.calls.some((c) => /worktree janitor failed: boom/.test(String(c[0])))).toBe(true);
+    warn.mockRestore();
   });
 });
 

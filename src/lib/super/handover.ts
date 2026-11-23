@@ -1,7 +1,7 @@
 import { closeAllForTakeback } from './owed.js';
 import { randomUUID } from 'node:crypto';
 import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds, superDecidesPermission } from '../assistant/chat-registry.js';
-import { isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
+import { holdsIdentity, isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
@@ -88,12 +88,12 @@ export async function enableSuper(
     // A chat a remote screen holds or is opening is never adopted (the Mac window must hold
     // every child: only its own tab socket carries the Super's answer and send).
     const adopt = candidates.filter((sid) => sid !== session && !(isPhoneHeld(sid) && (skip(sid, 'phone_held'), true)));
-    // A child kept from an earlier hand-over: still open, still running, or holding a worktree
-    // the super agent may still merge.
+    // A child kept from an earlier hand-over: still open, still running, or holding its work's
+    // identity (a worktree or a branch not yet home, K9): the super agent may still merge it.
     const kept: Record<string, SuperChild> = {};
     for (const [sid, c] of Object.entries(s.children)) {
       const live = getChat(sid);
-      if (adopt.includes(sid) || (live && live.status !== 'gone') || c.worktree) kept[sid] = c;
+      if (adopt.includes(sid) || (live && live.status !== 'gone') || holdsIdentity(c)) kept[sid] = c;
     }
     for (const sid of adopt) {
       if (!Object.prototype.hasOwnProperty.call(kept, sid)) kept[sid] = { sessionId: sid, brief: titleFor(sid, titles), adopted: true, startedAt: now };

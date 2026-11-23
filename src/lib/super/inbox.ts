@@ -1511,7 +1511,7 @@ export function clearOwnerLease(contextRoot: string): void {
  * open `ask` is closed only when this message is written about it (`asksAnswered`): any other
  * message of his leaves it open (owner 2026-11-11).
  */
-export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false, ownWords = true): void {
+export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false, ownWords = true, text = ''): void {
   const root = superKeyOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
@@ -1538,7 +1538,7 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
   const answered = asksAnswered(lastStates.get(key), abouts, ownWords && idOf(key) !== 'main');
   if (!answered.length) return;
   // The owed decision waits for this write (it reads before it writes: the lock alone is not order).
-  const p = closeOpenAsks(key, sessionId, told, answered);
+  const p = closeOpenAsks(key, sessionId, told, answered, text ? ownerGist(text, languageOfKey(key)) : '');
   asksInFlight.set(key, p);
   void track(p.finally(() => { if (asksInFlight.get(key) === p) asksInFlight.delete(key); }));
 }
@@ -1620,7 +1620,7 @@ function closeMovedPastAsks(s: SuperState): void {
  * by its end exactly like an event turn's items (a question still asked comes back once), and out
  * of the ledger, so no later event turn repeats them silently.
  */
-async function closeOpenAsks(key: string, sessionId: string, told: readonly string[], answered: readonly string[]): Promise<void> {
+async function closeOpenAsks(key: string, sessionId: string, told: readonly string[], answered: readonly string[], gist = ''): Promise<void> {
   const cur = await readSuperState(key, superSanitizeOpts());
   // His message answers HIS question; a member's question to main Super stays open (plan-r10 1).
   const ownerAsk = (q: SuperQueueItem) => q.kind === 'ask' && !isMainWork(q.workOrigin) && answered.includes(q.id);
@@ -1636,7 +1636,12 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
   await writeSuper(key, (s) => {
     for (const q of s.queue) {
       if (ownerAsk(q)) {
-        if (q.state !== 'done') closeAnswered(s, q.ask?.questions[0]?.question ?? q.ownerText ?? '');
+        if (q.state !== 'done') {
+          closeAnswered(s, q.ask?.questions[0]?.question ?? q.ownerText ?? '');
+          // A cut's returns card (D16): his answer is kept with its list, so the same list is
+          // never asked again from any session (Mac, Telegram and phone answers all pass here).
+          for (const r of Object.values(s.returnsAsked ?? {})) if (r.askId === q.id) r.answer = (gist || 'answered').slice(0, 300);
+        }
         q.state = 'done';
       } else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' || q.kind === 'member' ? 'escalated' : 'done'; q.batch = batch; }
     }

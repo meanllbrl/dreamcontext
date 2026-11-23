@@ -10,8 +10,8 @@ import {
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
-  type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_SLUG_RE, SUPER_NOTES, validBase, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
+  type AskShow, type ReturnsAsked, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
 import { sanitizeModel } from '../claude-args.js';
@@ -321,13 +321,16 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     // (`super state`, its card and `super resume` all read it from here).
     if (c.tool === 'codex' || c.tool === 'antigravity') child.tool = c.tool;
     if (c.mcp !== undefined) { const m = parseMcpNames(c.mcp); if (!('error' in m) && m.names.length) child.mcp = m.names; }
-    // A worktree and its branch travel together; either one hostile drops both.
-    if (c.worktree !== undefined || c.branch !== undefined) {
-      if (acceptableWorktree(c.worktree, opts) && typeof c.branch === 'string' && SUPER_BRANCH_RE.test(c.branch)) {
-        child.worktree = c.worktree;
-        child.branch = c.branch;
-      }
+    // The child's identity (K9): each field kept by its own check or dropped alone. The branch
+    // stands without a worktree (a dal-yalnız child is merged and resumed through it); a worktree
+    // only beside a valid branch, so a hostile or unlisted path drops only the path.
+    if (typeof c.branch === 'string' && SUPER_BRANCH_RE.test(c.branch)) {
+      child.branch = c.branch;
+      if (acceptableWorktree(c.worktree, opts)) child.worktree = c.worktree;
     }
+    if (typeof c.repo === 'string' && REPO_NAME_RE.test(c.repo)) child.repo = c.repo;
+    if (typeof c.lastBranch === 'string' && SUPER_BRANCH_RE.test(c.lastBranch)) child.lastBranch = c.lastBranch;
+    if (validBase(c.movedTo)) child.movedTo = c.movedTo;
     // The job list's row (plan r4): every field to its own list or pattern, or dropped.
     if (oneOf(CHILD_ROWS, c.row)) child.row = c.row;
     const rowAt = finite(c.rowAt);
@@ -361,10 +364,56 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
-  // still owns a worktree always stays (`super merge` and `worktree remove` reach it by child).
-  const ended = Object.values(out).filter((c) => c.endedAt !== undefined && !c.worktree).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  // still holds its identity always stays (`super merge` and `super resume` reach it by child;
+  // the janitor releases it once its branch is home, D17). No count cap on those: each is work
+  // that has not come home.
+  const ended = Object.values(out).filter((c) => c.endedAt !== undefined && !holdsIdentity(c)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
   for (const c of ended.slice(MAX_ENDED_CHILDREN)) { trimmed?.push(c.sessionId); delete out[c.sessionId]; }
   return out;
+}
+
+/** The linked repo name shape (jobs.ts). */
+const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * K9: does this child stay in the record? The ONE predicate every keep/drop decision asks (the
+ * sanitize trim, the Super hand-over's kept set): a child holding a worktree or a branch still
+ * carries work the Super may merge or resume.
+ */
+export function holdsIdentity(c: Pick<SuperChild, 'worktree' | 'branch'>): boolean {
+  return !!c.worktree || !!c.branch;
+}
+
+/**
+ * K9: hand `from`'s work identity to `to` (a successor). Only when `to` has no branch of its own:
+ * a successor with its own worktree keeps it. The branch, its repo, the branch the worktree was
+ * last on, where it moved, and the worktree when there is one, travel together; a worktree-less
+ * identity travels too.
+ */
+export function carryIdentity(from: SuperChild, to: SuperChild): void {
+  if (to.branch || !from.branch) return;
+  to.branch = from.branch;
+  if (from.repo) to.repo = from.repo;
+  if (from.lastBranch) to.lastBranch = from.lastBranch;
+  if (from.movedTo) to.movedTo = from.movedTo;
+  if (from.worktree && !to.worktree) to.worktree = from.worktree;
+}
+
+/** D16: the cut-return asks, one per topic; a bad entry drops alone. */
+function sanitizeReturnsAsked(raw: unknown): Record<string, ReturnsAsked> | undefined {
+  if (!isRecord(raw)) return undefined;
+  const out: Record<string, ReturnsAsked> = {};
+  for (const [topic, e] of Object.entries(raw)) {
+    if (!SUPER_SLUG_RE.test(topic) || !isRecord(e)) continue;
+    if (typeof e.key !== 'string' || !/^[0-9a-f]{64}$/.test(e.key)) continue;
+    const at = finite(e.at);
+    if (at === undefined || at < 0) continue;
+    if (typeof e.askId !== 'string' || !QUEUE_ID_RE.test(e.askId)) continue;
+    const entry: ReturnsAsked = { key: e.key, at, askId: e.askId };
+    if (typeof e.answer === 'string') entry.answer = stripControls(e.answer.slice(0, 300));
+    out[topic] = entry;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
@@ -999,6 +1048,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   // The presentation queue settles against the cards, and may open its next item (types.ts).
   const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers);
   const ownerMarks = sanitizeOwnerMarks(raw.ownerMarks);
+  const returnsAsked = sanitizeReturnsAsked(raw.returnsAsked);
   const rawMarkSeq = finite(raw.ownerMarkSeq);
   const ownerMarkSeq = Math.max(rawMarkSeq !== undefined && rawMarkSeq > 0 && rawMarkSeq < 1e9 ? Math.floor(rawMarkSeq) : 0, ...ownerMarks.map((m) => m.seq ?? 0));
   return {
@@ -1029,6 +1079,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(owed.length ? { owed } : {}),
     ...(owedSeq ? { owedSeq } : {}),
     ...(owedSince !== undefined && owedSince > 0 ? { owedSince } : {}),
+    ...(returnsAsked ? { returnsAsked } : {}),
     ...(ownerLanguage ? { ownerLanguage } : {}),
     ...(raw.movedPastDone === true ? { movedPastDone: true as const } : {}),
     ...(ownerMarks.length ? { ownerMarks } : {}),

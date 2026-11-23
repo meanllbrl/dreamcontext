@@ -18,7 +18,7 @@ import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, SUPER_SLUG_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
@@ -80,9 +80,12 @@ import { childMcpNeedingSignIn, connectorOnAccount, knownChildMcp, unknownMcpNam
 import { listClaudeAccounts } from '../../lib/claude-accounts.js';
 import { readStatusCache } from '../../lib/mcp-live.js';
 import {
-  WorktreeRefused, createChildWorktree, discardFreshWorktree, git, mergeChildren, removeChildWorktree, repoOfWorktree,
-  worktreeStatus, type CreatedWorktree,
+  MERGE_RETURNS_MS, WorktreeRefused, bounded, childCheckout, createChildWorktree, discardFreshWorktree, git, mergeChildren, reattachChildWorktree, removeChildWorktree,
+  worktreeStatus, type CreatedWorktree, type MergeChild,
 } from '../../lib/super/worktrees.js';
+import { pendingReturns } from '../../lib/super/returns.js';
+import { renderReturnsPage } from '../../lib/super/returns-page.js';
+import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
@@ -106,7 +109,7 @@ import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox, keepFirstPrompt } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
-import { applySweep, machineGuards, planSweep, publicPlan } from '../../lib/super/worktree-sweep.js';
+import { applySweep, machineGuards, planSweep, publicPlan, removingWorktrees, sweepEnded } from '../../lib/super/worktree-sweep.js';
 import { readMachineFacts } from './machine.js';
 import { homedir, tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
@@ -719,6 +722,8 @@ const TIDY_IO: TidyIo = {
   read: (root) => readSuperState(root, superSanitizeOpts()),
   write: (root, fn) => writeSuper(root, fn),
   retire: { live: (root, sid) => retireLive(root, sid), end: (root, sids) => retireChildren(root, sids) },
+  // D14: the ended-child janitor, hourly per vault (never on the first tick: start-up just ran it).
+  janitor: (root) => sweepEnded({ root: superWorktreeRoot(), contextRoot: root, trigger: 'hourly' }),
 };
 
 /** The super's last `open image|pdf|video`, per vault and kind (image-group.ts): the next one of
@@ -1151,7 +1156,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(recordModel ? { model: recordModel } : {}), ...(job.effort ? { effort: job.effort } : {}),
         ...(job.mcp ? { mcp: job.mcp } : {}),
         ...(job.tool ? { tool: job.tool } : {}),
-        ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
+        ...(wt ? { worktree: wt.path, branch: wt.branch, repo: wt.repo } : {}),
         ...(job.task ? { task: job.task } : {}),
         ...(awaited ? { awaited: true as const } : {}),
         ...(awaited && origin ? { origin } : {}),
@@ -2689,7 +2694,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     // An owner wait the Super closes (he did it another way) is answered: it never comes back.
     if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id, item.card ? { postingSession: item.card.postingSession } : {});
-    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      const q = s.queue.find((x) => x.id === id);
+      if (!q || q.kind === 'permission') return;
+      // A cut's returns card the Super closes counts as answered (D16): only this route writes "done".
+      if (q.kind === 'ask' && q.state !== 'done') for (const r of Object.values(s.returnsAsked ?? {})) if (r.askId === id && r.answer === undefined) r.answer = 'done';
+      q.state = 'done';
+    });
     // A card's result still held leaves with it, its typed secret too (sahip-karti-yerinde K6):
     // `super queue done` closes a card, it never acts on one.
     if (item.card) await ownerCardItemsLeft(superKey(c.who.contextRoot, callerSuper(c)), [item]).catch(() => undefined);
@@ -2876,119 +2887,39 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     ok(res, { cleared, ...(section ? { section } : {}) });
   },
 
-  ask: async (c, b, res) => {
-    // The super agent's OWN question to the owner (plan r4 D7): never about a permission, one
-    // open at a time, its options drawn and sent exactly as validated here.
-    if (!requireHandedOver(c, res)) return;
-    const session = c.state.session as string;
-    // A member's Super names whose work the question is about (`--for <item|owner>`, plan-r10 1);
-    // its routing by audience is Wave 2 step A2.
-    const askFor = workForArg(c, b);
-    if ('error' in askFor) { refuse(res, askFor.status, askFor.error, askFor.message); return; }
-    // Its audience (plan-r10 1): a member's question goes where the turn's work came from (`--for`
-    // overrides): the owner, or main Super for a request it gave. One open ask per audience.
-    const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
-    const toMain = isMainWork(audience);
-    // A member's question asked in HIS own conversation with it (the turn is his message's, not
-    // work the Super Agent gave): his alone, never routed through the Super Agent (owner 2026-11-15).
-    const ownerTalk = c.superId !== 'main' && !toMain && memberTurnOrigin(session) === 'owner';
-    const openAsk = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain);
-    if (openAsk) {
-      // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
-      // close it once he has moved on, so a card he left open never blocks the next question.
-      refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\` and ask again`);
-      return;
-    }
-    // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
-    let spec: SuperAskSpec;
-    if (b.ask !== undefined) {
-      const r = cleanAskSpec(b.ask);
-      if (!r.ok) { refuse(res, 400, 'invalid_ask', r.error); return; }
-      spec = r.spec;
-    } else {
-      const raw = typeof b.text === 'string' ? askLine(b.text) : '';
-      if (!raw) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
-      if (raw.length > MAX_OWNER_TEXT) { refuse(res, 400, 'invalid_args', `the question is at most ${MAX_OWNER_TEXT} characters`); return; }
-      const legacy = cleanAskOptions(b.options);
-      if (!legacy) {
-        refuse(res, 400, 'invalid_options', `at most ${MAX_ASK_OPTIONS} options, each one line of 1-${MAX_ASK_OPTION} characters, no duplicates (a longer label is refused, never cut)`);
-        return;
-      }
-      spec = askSpecFromLegacy(raw, legacy);
-    }
-    // A card read cold carries what it points at (owner 2026-11-08: "örnek yok ama örnekteki
-    // gibi diyor"); only an explicit --show of the cards it means stands in for that.
-    const offCard = offCardReferences(spec, { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true });
-    if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
-    const { ownerText: raw, options } = askSummary(spec);
-    if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
-    // Its pictures (task a-picture-question…): `--show`, else the option previews; nothing else.
-    const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
-    if (!prep) return;
-    const batch = superOpenBatch(session);
-    const id = newQueueId();
-    const now = Date.now();
-    let pushed = false;
-    let shown: ReturnType<typeof applyAskShow> = null;
-    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
-      // Refused by a question already open: no card is opened, nothing mirrors (D6).
-      // One open ask per audience (plan-r10 1): a member's question to main Super never holds his.
-      if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin))) return;
-      s.queue.push({
-        id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
-        ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
-        ...(askFor.origin ? { workOrigin: askFor.origin } : {}),
-        ...(ownerTalk ? { ownerTalk: true as const } : {}),
-      });
-      pushed = true;
-      noteOwnerBatch(s, batch ?? undefined);
-      shown = applyAskShow(s, id, prep, c.who.contextRoot, now);
-      // The report cards it shows: his card points at them, "To read: <card> →" (owner 2026-10-30).
-      const read = readCardsOf(s, shown);
-      if (read.length) {
-        const item = s.queue.find((q) => q.id === id);
-        if (item) item.read = read;
-      }
-    });
-    if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner: wait for his answer, or if he said to drop it, close it with `dreamcontext super queue done <ask id>` (`super state`) and ask again'); return; }
-    // The record's queue was full: the store dropped it (its cards are put back on the next write).
-    if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
-    const show = finishAskShow(c, state, id, prep, shown);
-    // Its turn's end is no second ping once the question reached him (owner-question.ts); a
-    // Telegram copy counts only once it landed, so its send is waited for (bounded).
-    await settleOwnerReach(id);
-    const reach = ownerQuestionReach(state, id);
-    if (reach.reached) noteSuperEscalation(session);
-    const head = superQueueHead(state);
-    // A start/approve question with no report card, or a preview that is a text to read: sent
-    // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
-    const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
-    // A member's Super: what really carries it is main's bar (its mirror), Super first (K8, K9).
-    const via = callerSuper(c) !== 'main' && !toMain
-      ? await memberAskReach(superKey(c.who.contextRoot, callerSuper(c)), state, id).catch(() => null) : null;
-    const told = via ? { ...reach, note: via.note, mirrored: via.mirrored, ...(via.superFirst ? { superFirst: true } : {}), ...(via.mirrored ? { reached: true } : {}) } : reach;
-    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...told, show, ...(warning ? { warning } : {}) });
-  },
+  ask: (c, b, res) => askOwner(c, b, res),
+
+  'returns-ask': (c, b, res) => returnsAsk(c, b, res),
 
   merge: async (c, b, res) => {
     const root = c.who.contextRoot;
     const ids = Array.isArray(b.children) ? (b.children as unknown[]).filter((x): x is string => typeof x === 'string') : [];
     if (!ids.length) { refuse(res, 400, 'invalid_args', 'name the children to merge'); return; }
-    const members = [];
-    for (const id of ids) {
-      const ch = hasChild(c.state, id) ? c.state.children[id] : undefined;
-      if (!ch) { refuse(res, 404, 'unknown_child', `${id} is not one of your children`); return; }
-      if (!ch.worktree || !ch.branch) { refuse(res, 409, 'no_branch', `${id} has no worktree branch`); return; }
-      members.push({ sessionId: id, worktree: ch.worktree, branch: ch.branch });
-    }
+    if (b.base !== undefined && typeof b.base !== 'string') { refuse(res, 400, 'invalid_args', 'base must be a ref'); return; }
+    // Each child's checkout from git (K7, D15): a live worktree as before, an ended child whose
+    // worktree the janitor removed through its branch in its recorded repo.
+    const members: MergeChild[] = [];
+    let repo: { name: string; path: string } | null = null;
     try {
-      const repo = await repoOfWorktree(dirname(root), members[0].worktree);
-      if (!repo) { refuse(res, 409, 'worktree_not_listed', `${members[0].worktree} is not a worktree of a linked repo`); return; }
-      for (const m of members.slice(1)) {
-        const other = await repoOfWorktree(dirname(root), m.worktree);
-        if (other?.path !== repo.path) { refuse(res, 409, 'mixed_repos', 'every child merged together must work in the same repo'); return; }
+      for (const id of ids) {
+        const ch = hasChild(c.state, id) ? c.state.children[id] : undefined;
+        if (!ch) { refuse(res, 404, 'unknown_child', `${id} is not one of your children`); return; }
+        const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+        if (!co.branch) { refuse(res, 409, 'no_branch', `${id} has no worktree branch`); return; }
+        if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${id}: ${co.why ?? 'no linked repo holds its branch'}`); return; }
+        if (repo && co.repo.path !== repo.path) { refuse(res, 409, 'mixed_repos', 'every child merged together must work in the same repo'); return; }
+        repo = co.repo;
+        members.push(co.worktree
+          ? { sessionId: id, worktree: co.worktree, branch: ch.branch ?? co.branch }
+          : { sessionId: id, branch: co.branch });
       }
-      ok(res, await mergeChildren({ projectRoot: dirname(root), repo: repo.name, children: members, topic: b.into }));
+      if (!repo) { refuse(res, 409, 'worktree_not_listed', 'no linked repo found'); return; }
+      ok(res, await mergeChildren({
+        projectRoot: dirname(root), repo: repo.name, children: members, topic: b.into,
+        ...(b.base !== undefined ? { base: b.base } : {}),
+        // K2: what of the topic is not back in remote dev, against the running CLI's build.
+        returns: (repoPath, topic) => pendingReturns(repoPath, topic),
+      }));
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
       throw err;
@@ -2999,10 +2930,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const root = c.who.contextRoot;
     const rows = [];
     for (const [sid, ch] of Object.entries(c.state.children)) {
-      if (!ch.worktree || !ch.branch) continue;
-      const repo = await repoOfWorktree(dirname(root), ch.worktree);
-      const st = repo ? await worktreeStatus(repo.path, ch.worktree, ch.branch) : { listed: false, dirty: null, merged: null };
-      rows.push({ child: sid, worktree: ch.worktree, branch: ch.branch, repo: repo?.name ?? null, ...st });
+      if (!ch.worktree && !ch.branch) continue;
+      const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+      if (!co.branch) continue;
+      // A dal-yalnız child: its branch only, merged and resumed from it (D15).
+      const st = co.repo && co.worktree ? await worktreeStatus(co.repo.path, co.worktree, co.branch) : { listed: false, dirty: null, merged: null };
+      rows.push({ child: sid, worktree: co.worktree, branch: co.branch, repo: co.repo?.name ?? null, ...st, ...(co.why ? { why: co.why } : {}) });
     }
     ok(res, { worktrees: rows });
   },
@@ -3028,7 +2961,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const result = await applySweep(plan, fresh, {
       onRemoved: async (item) => {
         if (!item.child || item.category === 'build-output') return;
-        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) { delete x.worktree; delete x.branch; } });
+        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) delete x.worktree; });
       },
     });
     forgetLeftovers();
@@ -3043,13 +2976,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!child) return;
     const root = c.who.contextRoot;
     const ch = c.state.children[child];
-    if (!ch.worktree || !ch.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
     try {
-      const repo = await repoOfWorktree(dirname(root), ch.worktree);
-      if (!repo) { refuse(res, 409, 'worktree_not_listed', `${ch.worktree} is not a worktree of a linked repo`); return; }
-      await removeChildWorktree({ repoPath: repo.path, worktree: ch.worktree, branch: ch.branch });
-      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x) { delete x.worktree; delete x.branch; } });
-      ok(res, { child, removed: ch.worktree, branchKept: ch.branch });
+      const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+      if (!co.worktree || !co.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
+      if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${co.worktree} is not a worktree of a linked repo`); return; }
+      await removeChildWorktree({ repoPath: co.repo.path, worktree: co.worktree, branch: co.branch });
+      // K5: the worktree goes from the record, never the branch.
+      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x && x.worktree === co.worktree) delete x.worktree; });
+      ok(res, { child, removed: co.worktree, branchKept: co.branch });
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
       throw err;
@@ -3150,6 +3084,19 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     if (!liveTranscriptPath(root, child)) { refuse(res, 404, 'no_transcript', 'that child has no transcript to resume'); return; }
+    // A dal-yalnız child (its clean worktree removed after its end, D15): the worktree comes back
+    // at the path its conversation is keyed by, on its branch, before the window reopens it (K7).
+    // Not possible (branch checked out elsewhere, gone): it starts without one and says so.
+    let reattached: { worktree: string; branch: string; repo: string } | null = null;
+    let worktreeNote: string | undefined;
+    if (ch.branch || ch.lastBranch) {
+      const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+      if (!co.worktree && co.branch) {
+        const r = await reattachChildWorktree({ projectRoot: dirname(root), child: ch, removing: removingWorktrees() });
+        if ('why' in r) worktreeNote = `resumed without its worktree: ${r.why}`;
+        else reattached = r;
+      }
+    }
     // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
     noteResuming(child, true);
     try {
@@ -3167,6 +3114,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (phoneHeld(child)) throw new PhoneHeldError(child);
         delete x.endedAt;
         setRow(x, 'working');
+        // The re-attached worktree goes back into the record (the grant index reads it there).
+        if (reattached) { x.worktree = reattached.worktree; x.repo ??= reattached.repo; }
         startError = takeStartError(child);
         if (startError) startFailedDraft(s, child, startError);
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
@@ -3182,6 +3131,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         child, resumed: !startError, ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}),
         ...cardOutcome(container, child, after),
         ...(ignored.length ? { note: `it came back as it was parked (${ignored.join(', ')} unchanged); \`super update\` changes that` } : {}),
+        ...(reattached ? { worktree: reattached.worktree, branch: reattached.branch } : {}),
+        ...(worktreeNote ? { worktreeNote } : {}),
       });
     } finally {
       noteResuming(child, false);
@@ -3848,6 +3799,182 @@ export async function retireChildren(contextRoot: string, sids: readonly string[
   return ended;
 }
 
+/**
+ * The super agent's OWN question to the owner (plan r4 D7): never about a permission, one open
+ * at a time, its options drawn and sent exactly as validated here. `super ask` and `super returns
+ * ask` (K8) both go through it: `o.onQueued` runs once the ask is really queued (never on a
+ * refusal), `o.extra` rides on the answer.
+ */
+async function askOwner(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse, o: { onQueued?: (id: string) => Promise<void>; extra?: (id: string) => Record<string, unknown> } = {}): Promise<void> {
+  if (!requireHandedOver(c, res)) return;
+  const session = c.state.session as string;
+  // A member's Super names whose work the question is about (`--for <item|owner>`, plan-r10 1);
+  // its routing by audience is Wave 2 step A2.
+  const askFor = workForArg(c, b);
+  if ('error' in askFor) { refuse(res, askFor.status, askFor.error, askFor.message); return; }
+  // Its audience (plan-r10 1): a member's question goes where the turn's work came from (`--for`
+  // overrides): the owner, or main Super for a request it gave. One open ask per audience.
+  const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
+  const toMain = isMainWork(audience);
+  // A member's question asked in HIS own conversation with it (the turn is his message's, not
+  // work the Super Agent gave): his alone, never routed through the Super Agent (owner 2026-11-15).
+  const ownerTalk = c.superId !== 'main' && !toMain && memberTurnOrigin(session) === 'owner';
+  const openAsk = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain);
+  if (openAsk) {
+    // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
+    // close it once he has moved on, so a card he left open never blocks the next question.
+    refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\` and ask again`);
+    return;
+  }
+  // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
+  let spec: SuperAskSpec;
+  if (b.ask !== undefined) {
+    const r = cleanAskSpec(b.ask);
+    if (!r.ok) { refuse(res, 400, 'invalid_ask', r.error); return; }
+    spec = r.spec;
+  } else {
+    const raw = typeof b.text === 'string' ? askLine(b.text) : '';
+    if (!raw) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
+    if (raw.length > MAX_OWNER_TEXT) { refuse(res, 400, 'invalid_args', `the question is at most ${MAX_OWNER_TEXT} characters`); return; }
+    const legacy = cleanAskOptions(b.options);
+    if (!legacy) {
+      refuse(res, 400, 'invalid_options', `at most ${MAX_ASK_OPTIONS} options, each one line of 1-${MAX_ASK_OPTION} characters, no duplicates (a longer label is refused, never cut)`);
+      return;
+    }
+    spec = askSpecFromLegacy(raw, legacy);
+  }
+  // A card read cold carries what it points at (owner 2026-11-08: "örnek yok ama örnekteki
+  // gibi diyor"); only an explicit --show of the cards it means stands in for that.
+  const offCard = offCardReferences(spec, { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true });
+  if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
+  const { ownerText: raw, options } = askSummary(spec);
+  if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
+  // Its pictures (task a-picture-question…): `--show`, else the option previews; nothing else.
+  const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
+  if (!prep) return;
+  const batch = superOpenBatch(session);
+  const id = newQueueId();
+  const now = Date.now();
+  let pushed = false;
+  let shown: ReturnType<typeof applyAskShow> = null;
+  const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+    // Refused by a question already open: no card is opened, nothing mirrors (D6).
+    // One open ask per audience (plan-r10 1): a member's question to main Super never holds his.
+    if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin))) return;
+    s.queue.push({
+      id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
+      ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
+      ...(askFor.origin ? { workOrigin: askFor.origin } : {}),
+      ...(ownerTalk ? { ownerTalk: true as const } : {}),
+    });
+    pushed = true;
+    noteOwnerBatch(s, batch ?? undefined);
+    shown = applyAskShow(s, id, prep, c.who.contextRoot, now);
+    // The report cards it shows: his card points at them, "To read: <card> →" (owner 2026-10-30).
+    const read = readCardsOf(s, shown);
+    if (read.length) {
+      const item = s.queue.find((q) => q.id === id);
+      if (item) item.read = read;
+    }
+  });
+  if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner: wait for his answer, or if he said to drop it, close it with `dreamcontext super queue done <ask id>` (`super state`) and ask again'); return; }
+  // The record's queue was full: the store dropped it (its cards are put back on the next write).
+  if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
+  const show = finishAskShow(c, state, id, prep, shown);
+  // Its turn's end is no second ping once the question reached him (owner-question.ts); a
+  // Telegram copy counts only once it landed, so its send is waited for (bounded).
+  await settleOwnerReach(id);
+  const reach = ownerQuestionReach(state, id);
+  if (reach.reached) noteSuperEscalation(session);
+  const head = superQueueHead(state);
+  // A start/approve question with no report card, or a preview that is a text to read: sent
+  // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
+  const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
+  // A member's Super: what really carries it is main's bar (its mirror), Super first (K8, K9).
+  const via = callerSuper(c) !== 'main' && !toMain
+    ? await memberAskReach(superKey(c.who.contextRoot, callerSuper(c)), state, id).catch(() => null) : null;
+  const told = via ? { ...reach, note: via.note, mirrored: via.mirrored, ...(via.superFirst ? { superFirst: true } : {}), ...(via.mirrored ? { reached: true } : {}) } : reach;
+  if (o.onQueued) await o.onQueued(id);
+  ok(res, { item: id, asked: true, waiting: head?.id !== id, ...told, show, ...(warning ? { warning } : {}), ...(o.extra ? o.extra(id) : {}) });
+}
+
+/**
+ * `super returns ask --topic <t>` (K8, D16): the server computes the cut's returns, writes the
+ * Turkish report page, opens it as a card and asks the owner ONE fixed card through the same
+ * path as `super ask`. The same list (`key`) answered before is never asked again, from any
+ * session; `returnsAsked[t]` is written only once the ask is really queued.
+ */
+async function returnsAsk(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse): Promise<void> {
+  if (!requireHandedOver(c, res)) return;
+  const topic = str(b.topic);
+  if (!topic || !SUPER_SLUG_RE.test(topic)) { refuse(res, 400, 'invalid_args', '--topic is the cut\'s topic (a-z, 0-9, -): super/<topic>'); return; }
+  const root = c.who.contextRoot;
+  const branch = `super/${topic}`;
+  const repos = resolveLinkedRepos(dirname(root)).filter((r) => r.present && r.path).map((r) => ({ name: r.name, path: r.path as string }));
+  let repo: { name: string; path: string } | undefined;
+  const named = str(b.repo);
+  if (named) {
+    repo = repos.find((r) => r.name === named);
+    if (!repo) { refuse(res, 404, 'unknown_repo', `no linked repo named ${named} on this machine`); return; }
+  } else {
+    const holders: Array<{ name: string; path: string }> = [];
+    for (const r of repos) if ((await git(r.path, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])).code === 0) holders.push(r);
+    if (holders.length !== 1) {
+      refuse(res, 409, holders.length ? 'ambiguous_repo' : 'unknown_topic', holders.length
+        ? `${branch} is in several linked repos (${holders.map((h) => h.name).join(', ')}): name one with --repo`
+        : `no linked repo has ${branch}`);
+      return;
+    }
+    repo = holders[0];
+  }
+  const report = await bounded(() => pendingReturns(repo!.path, branch), MERGE_RETURNS_MS);
+  if (!('key' in report)) { refuse(res, 502, 'returns_failed', `the returns of ${branch} could not be read: ${report.error}`); return; }
+  if (!report.awaiting.length) { ok(res, { nothing: true, topic, key: report.key, ...(report.error ? { devError: report.error } : {}) }); return; }
+  const prev = c.state.returnsAsked?.[topic];
+  if (prev && prev.key === report.key && prev.answer !== undefined) {
+    refuse(res, 409, 'returns_asked', `this list of ${branch} was already asked (${prev.askId}) and answered: "${prev.answer}". Act on that answer; a changed list is asked again`, { askId: prev.askId, answer: prev.answer, key: report.key });
+    return;
+  }
+  // A question already open with the owner: refused before the page or its card exist (askOwner
+  // refuses it too; this keeps a refused ask from leaving a stray report card on the stage).
+  const open = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin));
+  if (open) { refuse(res, 409, 'ask_open', `you already have a question open with the owner (${open.id}): wait for his answer, or close it with \`dreamcontext super queue done ${open.id}\` and ask again`); return; }
+  // The report page, then its card: the same open path as `super open web <file>`.
+  const rel = `${basename(root)}/tmp/super/returns-${topic}.html`;
+  await fsp.mkdir(join(root, 'tmp', 'super'), { recursive: true });
+  await fsp.writeFile(join(root, 'tmp', 'super', `returns-${topic}.html`), renderReturnsPage(topic, report), 'utf-8');
+  let opened: string | null = null;
+  await openCards(c, { kind: 'web', ref: rel, title: `Kesim ${topic} → dev'e dönüş` }, res, {
+    full: tooMany,
+    done: (_res, result) => { opened = (result as { container?: { id?: string } }).container?.id ?? null; },
+  });
+  if (!opened) { if (!res.headersSent && !res.writableEnded) refuse(res, 500, 'card_not_opened', 'the report card could not be opened'); return; }
+  const n = report.awaiting.length;
+  const spec = {
+    title: `Kesim ${topic} → dev'e dönüş`,
+    source: 'returns',
+    questions: [{
+      question: `${n} dal dev'e dönmedi, hepsine taslak PR açayım mı?`,
+      header: 'Dev\'e dönüş',
+      description: `Bu dallar kurulu sürümde var ama dev'de yok; bir sonraki dev kesimi onları düşürür. Numaralı liste rapor kartında.`,
+      multiSelect: false,
+      options: [
+        { label: 'Hepsine aç', description: `Bir alt ajan ${n} dalı push edip her biri için dev'e ayrı taslak PR açar.` },
+        { label: 'Seçeyim', description: 'Notuna numaraları yaz (ör. 1, 3); yalnız onlara PR açılır.' },
+        { label: 'Şimdi değil', description: 'Hiçbir şey yapılmaz; aynı liste yeniden sorulmaz.' },
+      ],
+    }],
+  };
+  const fresh: SuperCaller = { ...c, state: await readSuperState(root, callerSuper(c), superSanitizeOpts()) };
+  const key = report.key;
+  await askOwner(fresh, { ask: spec, show: [opened] }, res, {
+    onQueued: async (askId) => {
+      await writeSuper(root, callerSuper(c), (s) => { s.returnsAsked = { ...(s.returnsAsked ?? {}), [topic]: { key, at: Date.now(), askId } }; });
+    },
+    extra: (askId) => ({ askId, card: opened, key, branches: report.awaiting.map((g, i) => `${i + 1}. ${g.name}`) }),
+  });
+}
+
 /** Record a child ended (the agent's `super end`, the owner's card close and the retire clock
  *  share it): its card goes, its open queue items close, a done `ended` item records who, when
  *  and its last brief. `guard` (the retire clock): written only while it still holds. */
@@ -3856,10 +3983,12 @@ async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperSt
   let done = false;
   /** The card items the end closes (sahip-karti-yerinde K2): their held results go to the Super. */
   let endedCards: SuperQueueItem[] = [];
+  let worktree: string | undefined;
   await writeSuper(contextRoot, (s) => {
     const x = s.children[sid];
     if (!x || (guard && !guard(s))) return;
     done = true;
+    worktree = x.worktree;
     x.endedAt = now;
     // Its job-list row rests in done (Bitti), never stuck or gone.
     setRow(x, 'done', undefined, now);
@@ -3883,6 +4012,8 @@ async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperSt
   // its kept form only; the receipts and their full forms leave with the item.
   // `contextRoot` is the record's own key here (a root names main, a member's key its record).
   if (endedCards.length) await ownerCardItemsLeft(contextRoot, endedCards).catch(() => undefined);
+  // K5: its clean worktree goes now (the branch stays); never awaited, never thrown to the end.
+  if (done && worktree) void sweepEnded({ root: superWorktreeRoot(), contextRoot: parseSuperKey(contextRoot).root, only: worktree, trigger: 'end' });
   return done;
 }
 

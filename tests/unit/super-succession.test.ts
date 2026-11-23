@@ -62,6 +62,23 @@ describe('succeedChild (pure)', () => {
     expect(s.children.nw).toMatchObject({ worktree: '/w/app-super-x', branch: 'super/x' });
   });
 
+  it('C19 a worktree-less identity passes on whole: branch, repo, lastBranch, movedTo', () => {
+    const s = state();
+    Object.assign(s.children.old, { branch: 'super/x', repo: 'acme', lastBranch: 'super/x-2', movedTo: 'fix/y' });
+    succeedChild(s, 'old', 'nw');
+    expect(s.children.nw).toMatchObject({ branch: 'super/x', repo: 'acme', lastBranch: 'super/x-2', movedTo: 'fix/y' });
+    expect(s.children.nw.worktree).toBeUndefined();
+  });
+
+  it('C19 a successor with its own branch keeps its own identity', () => {
+    const s = state();
+    Object.assign(s.children.old, { branch: 'super/x', worktree: '/w/app-super-x', repo: 'acme' });
+    Object.assign(s.children.nw, { branch: 'super/y', worktree: '/w/app-super-y' });
+    succeedChild(s, 'old', 'nw');
+    expect(s.children.nw).toMatchObject({ branch: 'super/y', worktree: '/w/app-super-y' });
+    expect(s.children.nw.repo).toBeUndefined();
+  });
+
   it('a brief given to the successor wins and titles the card', () => {
     const s = state();
     succeedChild(s, 'old', 'nw', { brief: 'continue ship-it' });

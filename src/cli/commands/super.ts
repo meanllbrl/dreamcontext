@@ -4,6 +4,9 @@ import { closeSync, lstatSync, openSync, readFileSync, readSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { isLayoutRender, layoutRenderWarning } from '../../lib/whiteboards/render-mark.js';
 import { request } from 'node:http';
+import { execFile } from 'node:child_process';
+import { resolveLinkedRepos } from '../../lib/linked-repos.js';
+import type { InstalledEntry } from '../../lib/super/returns.js';
 import { windowEnv } from './window.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
@@ -566,12 +569,28 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('merge <children...>')
-    .description('Merge the branch each child\'s worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)')
+    .description('Merge the branch each child\'s worktree is on now (an ended child: its branch) into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed). The reply\'s `returns` lists the work not back in remote dev')
     .requiredOption('--into <topic>', 'The integration branch name (a-z, 0-9, -)')
-    .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
+    .option('--base <ref>', 'Where a NEW topic starts (e.g. main/dev, the remote dev); an existing topic never moves')
+    .action((children: string[], o: { into: string; base?: string }) => run('merge', { children, into: o.into, ...(o.base !== undefined ? { base: o.base } : {}) }));
+
+  const ret = s.command('returns')
+    .description('LOCAL, read-only: the work of a cut not yet back in remote dev (awaiting, in a PR, in a rescue branch, cut-fit), each group with its action and commands, and what installing this cut would DROP from each installed build. Never pushes, opens a PR or moves a branch')
+    .option('--repo <name>', 'A linked repo by name (default: the git repo you stand in)')
+    .option('--from <ref>', 'The cut (default HEAD)')
+    .option('--installed-from <npm=ref>', 'An installed build to check for drops, as <npm path>=<commit> (repeatable; default: the running CLI\'s build stamp)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+    .option('--json', 'The report as JSON')
+    .option('--mark-fit <sha...>', 'Integrator only: note commits written directly on the cut as cut-fit (refs/notes/dreamcontext-cut-fit)')
+    .option('--why <text>', 'With --mark-fit: why they belong on the cut')
+    .action((o: ReturnsCliOpts) => superReturns(o));
+  ret.command('ask')
+    .description('Super only: ONE owner card "Kesim <topic> → dev\'e dönüş" (Hepsine aç / Seçeyim / Şimdi değil) with the numbered report page; the same list answered before is never asked again (returns_asked)')
+    .requiredOption('--topic <t>', 'The cut\'s topic (super/<t>)')
+    .option('--repo <name>', 'A linked repo by name (default: the only one)')
+    .action((o: { topic: string; repo?: string }) => run('returns-ask', { topic: o.topic, ...(o.repo !== undefined ? { repo: o.repo } : {}) }));
 
   s.command('clean')
-    .description('Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children\'s merged worktrees, release worktrees idle 2+ days, any worktree idle 7+ days, node_modules / Rust target of worktrees idle 1+ day, this repo\'s old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI\'s target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept')
+    .description('Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children\'s clean worktrees on a branch, release worktrees idle 2+ days, any worktree idle 7+ days, git-ignored node_modules, dist and Rust target of worktrees idle 1+ day, this repo\'s old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI\'s target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept')
     .option('--apply', 'Really remove what the dry run lists (each row re-checked first)')
     .option('--dry-run', 'Only list (the default; kept for older callers)')
     .action((o: { apply?: boolean; dryRun?: boolean }) => {
@@ -592,7 +611,7 @@ export function registerSuperCommand(program: Command): void {
     .description('Each child\'s worktree, branch, dirty or clean, merged or not')
     .action(() => run('worktree-list', {}));
   w.command('remove <child>')
-    .description('Remove a child\'s worktree; refuses one that is dirty or unmerged')
+    .description('Remove a child\'s clean worktree and keep its branch (in git and in the record); refuses a dirty one or a detached HEAD no ref holds')
     .action((child: string) => run('worktree-remove', { child }));
 }
 
@@ -643,4 +662,55 @@ export function superHandoff(noteParts: string[], opts: HandoffFields, env: Node
   info(session.tab
     ? 'A fresh session opens on the same stage after this turn — finish your sentence and stop.'
     : 'Run /clear in this session to continue from the handoff file.');
+}
+
+export interface ReturnsCliOpts { repo?: string; from?: string; installedFrom?: string[]; json?: boolean; markFit?: string[]; why?: string }
+
+/** The repo `super returns` reads: a linked repo by name, else the git repo of the cwd. */
+async function returnsRepo(name: string | undefined, cwd: string): Promise<string> {
+  if (name !== undefined) {
+    const r = resolveLinkedRepos(dirname(ensureContextRoot())).find((x) => x.name === name);
+    if (!r) throw new Error(`no linked repo named "${name}"`);
+    if (!r.present || !r.path) throw new Error(`linked repo "${name}" is not on this machine`);
+    return r.path;
+  }
+  const top = await new Promise<string>((done) => {
+    execFile('git', ['rev-parse', '--show-toplevel'], { cwd, timeout: 30_000 }, (err, out) => done(err ? '' : String(out).trim()));
+  });
+  if (!top) throw new Error('not inside a git repo: stand in the cut\'s checkout or name --repo');
+  return top;
+}
+
+/** `super returns` (K3): local, never through the app. Exit 0 = a report was made, 1 = an error. */
+export async function superReturns(o: ReturnsCliOpts, cwd = process.cwd()): Promise<void> {
+  try {
+    // Loaded here: the git half of the CLI stays off every other command's start.
+    const { markFit, pendingReturns, renderReturns } = await import('../../lib/super/returns.js');
+    const repo = await returnsRepo(o.repo, cwd);
+    if (o.markFit && o.markFit.length > 0) {
+      if (!o.why || !o.why.trim()) throw new Error('--mark-fit needs --why "<why they belong on the cut>"');
+      const marked = await markFit(repo, o.markFit, o.why, { from: o.from ?? 'HEAD' });
+      if (o.json) console.log(JSON.stringify({ marked }, null, 2));
+      else success(`Marked ${marked.length} cut-fit commit(s): ${marked.map((x) => x.slice(0, 9)).join(', ')}`);
+      return;
+    }
+    if (o.why !== undefined) throw new Error('--why goes with --mark-fit');
+    let installed: InstalledEntry[] | undefined;
+    if (o.installedFrom && o.installedFrom.length > 0) {
+      installed = [];
+      for (const raw of o.installedFrom) {
+        const eq = raw.lastIndexOf('=');
+        const npm = eq > 0 ? raw.slice(0, eq) : '';
+        const ref = eq > 0 ? raw.slice(eq + 1) : '';
+        if (!npm || !ref) throw new Error(`--installed-from wants <npm>=<ref>, got "${raw}"`);
+        installed.push({ npm, sha: ref, source: 'flag' });
+      }
+    }
+    const r = await pendingReturns(repo, o.from ?? 'HEAD', installed ? { installed } : {});
+    console.log(o.json ? JSON.stringify(r, null, 2) : renderReturns(r));
+    if (r.error || r.drops.errors.length > 0) process.exitCode = 1;
+  } catch (err) {
+    error(`super returns: ${(err as Error).message}`);
+    process.exitCode = 1;
+  }
 }

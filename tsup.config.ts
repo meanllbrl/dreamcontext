@@ -2,6 +2,7 @@ import { defineConfig } from 'tsup';
 import { chmodSync, cpSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { t3EsbuildPlugin } from './scripts/t3-aliases.mjs';
+import { writeBuildStamp } from './scripts/build-stamp.mjs';
 
 /**
  * The version to stamp INTO the bundle, read from package.json at build time.
@@ -133,5 +134,7 @@ export default defineConfig({
     if (existsSync('dashboard/dist')) {
       cpSync('dashboard/dist', 'dist/dashboard', { recursive: true });
     }
+    // Which commit this dist came from (kesim-geri-donus K6): install:cut and `super returns` read it.
+    writeBuildStamp('dist');
   },
 });

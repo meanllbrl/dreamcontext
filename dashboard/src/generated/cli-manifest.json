@@ -4065,7 +4065,7 @@
     },
     {
       "path": "super clean",
-      "desc": "Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children's merged worktrees, release worktrees idle 2+ days, any worktree idle 7+ days, node_modules / Rust target of worktrees idle 1+ day, this repo's old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI's target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept",
+      "desc": "Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children's clean worktrees on a branch, release worktrees idle 2+ days, any worktree idle 7+ days, git-ignored node_modules, dist and Rust target of worktrees idle 1+ day, this repo's old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI's target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept",
       "args": []
     },
     {
@@ -4150,12 +4150,13 @@
     },
     {
       "path": "super merge",
-      "desc": "Merge the branch each child's worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)",
+      "desc": "Merge the branch each child's worktree is on now (an ended child: its branch) into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed). The reply's `returns` lists the work not back in remote dev",
       "args": [
         "<children...>"
       ],
       "valueFlags": [
-        "--into"
+        "--into",
+        "--base"
       ]
     },
     {
@@ -4337,6 +4338,28 @@
         "--model",
         "--effort",
         "--origin"
+      ]
+    },
+    {
+      "path": "super returns",
+      "desc": "LOCAL, read-only: the work of a cut not yet back in remote dev (awaiting, in a PR, in a rescue branch, cut-fit), each group with its action and commands, and what installing this cut would DROP from each installed build. Never pushes, opens a PR or moves a branch",
+      "args": [],
+      "group": true,
+      "valueFlags": [
+        "--repo",
+        "--from",
+        "--installed-from",
+        "--mark-fit",
+        "--why"
+      ]
+    },
+    {
+      "path": "super returns ask",
+      "desc": "Super only: ONE owner card \"Kesim <topic> → dev'e dönüş\" (Hepsine aç / Seçeyim / Şimdi değil) with the numbered report page; the same list answered before is never asked again (returns_asked)",
+      "args": [],
+      "valueFlags": [
+        "--topic",
+        "--repo"
       ]
     },
     {
@@ -4523,7 +4546,7 @@
     },
     {
       "path": "super worktree remove",
-      "desc": "Remove a child's worktree; refuses one that is dirty or unmerged",
+      "desc": "Remove a child's clean worktree and keep its branch (in git and in the record); refuses a dirty one or a detached HEAD no ref holds",
       "args": [
         "<child>"
       ]

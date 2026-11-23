@@ -32,7 +32,7 @@ describe('classify', () => {
     ['a live or asking child', facts('a'), guards({ held: new Map([[`${W}/a`, 'child x is not ended']]) }), 'live-child'],
     ['uncommitted changes', facts('a', { dirty: true }), guards(), 'dirty'],
     ['status unreadable', facts('a', { dirty: null }), guards(), 'dirty'],
-    ['commits on no other ref', facts('a', { safe: false, merged: false }), guards(), 'unmerged'],
+    ['a detached HEAD with commits on no other ref', facts('a', { branch: null, safe: false, merged: false }), guards(), 'unmerged'],
     ['recently active', facts('a', { lastActive: NOW - DAY / 2, heavy: [`${W}/a/node_modules`] }), guards(), 'recent'],
     ['a main checkout', facts('a', { shape: 'main-checkout' }), guards(), 'main-checkout'],
     ['no .git', facts('a', { shape: 'not-a-worktree' }), guards(), 'not-a-worktree'],
@@ -48,11 +48,21 @@ describe('classify', () => {
     expect(classify(facts('app-surum-0355'), g, NOW).action).toBe('remove');
   });
 
-  it('removes an ended child\'s merged worktree at once, whatever its age', () => {
-    const g = guards({ ended: new Map([[`${W}/a`, { child: 'kid', endedAt: NOW - 1000 }]]) });
+  it('removes an ended child\'s clean worktree at once, whatever its age, merged or not (D13)', () => {
+    const g = guards({ ended: new Map([[`${W}/a`, { child: 'kid', endedAt: NOW - 1000, superId: 'main' as const }]]) });
     expect(classify(facts('a', { lastActive: NOW }), g, NOW)).toMatchObject({ action: 'remove', category: 'child-worktree' });
-    // Ended but only pushed (not merged): waits for the stale bar like any other.
-    expect(classify(facts('a', { lastActive: NOW, merged: false }), g, NOW)).toMatchObject({ action: 'keep', reason: 'recent' });
+    // Its branch only in a local cut (not home, not pushed): still removed, the branch stays.
+    expect(classify(facts('a', { lastActive: NOW, merged: false, safe: false }), g, NOW)).toMatchObject({ action: 'remove', category: 'child-worktree' });
+    // Detached with commits nowhere else: kept.
+    expect(classify(facts('a', { lastActive: NOW, branch: null, merged: false, safe: false }), g, NOW)).toMatchObject({ action: 'keep', reason: 'unmerged' });
+    // Dirty: only its git-ignored build output goes, at once.
+    expect(classify(facts('a', { lastActive: NOW, dirty: true, heavy: [`${W}/a/node_modules`] }), g, NOW)).toMatchObject({ action: 'strip' });
+    expect(classify(facts('a', { lastActive: NOW, dirty: true }), g, NOW)).toMatchObject({ action: 'keep', reason: 'dirty' });
+  });
+
+  it('a non-ended dirty worktree stays; its build output goes only after a day idle', () => {
+    expect(classify(facts('b', { lastActive: NOW - 1000, dirty: true, heavy: [`${W}/b/node_modules`] }), guards(), NOW)).toMatchObject({ action: 'keep', reason: 'dirty' });
+    expect(classify(facts('b', { lastActive: NOW - BUILD_IDLE_MS, dirty: true, heavy: [`${W}/b/node_modules`] }), guards(), NOW)).toMatchObject({ action: 'strip' });
   });
 
   it('removes a release worktree after 2 days idle, any other after 7, strips build output after 1', () => {
@@ -132,7 +142,7 @@ describe('childHolds', () => {
     // Only this vault's ended children are recorded (their state gets cleared after removal);
     // a successor (a) still holds what an ended predecessor (d) names.
     expect([...ended.keys()]).toEqual(['/w/c']);
-    expect(ended.get('/w/c')).toEqual({ child: 'c', branch: 'super/c', endedAt: 5 });
+    expect(ended.get('/w/c')).toEqual({ child: 'c', branch: 'super/c', endedAt: 5, superId: 'main' });
   });
 });
 
@@ -225,8 +235,8 @@ describe('planSweep and applySweep on a scratch root', () => {
     expect(row(pushed)).toMatchObject({ category: 'stale-worktree' });
     expect(row(building)).toMatchObject({ category: 'build-output' });
     expect((row(building) as { remove: string[] }).remove.sort()).toEqual([join(building, 'desktop', 'target'), join(building, 'node_modules')].sort());
-    expect(row(unmerged)).toMatchObject({ reason: 'unmerged' });
-    expect((row(unmerged) as { heavyBytes?: number }).heavyBytes).toBeGreaterThan(150 * 1024);
+    // D13: idle 7 days, clean, on a branch with commits nowhere else: goes, its branch stays.
+    expect(row(unmerged)).toMatchObject({ category: 'stale-worktree' });
     expect(row(dirty)).toMatchObject({ reason: 'dirty' });
     expect(row(fresh)).toMatchObject({ reason: 'recent' });
     expect(row(inUse)).toMatchObject({ reason: 'in-use' });
@@ -241,7 +251,7 @@ describe('planSweep and applySweep on a scratch root', () => {
 
     const result = await applySweep(plan, gd);
     expect(result.failed).toEqual([]);
-    expect(result.removed.sort()).toEqual([release, pushed, building].sort());
+    expect(result.removed.sort()).toEqual([release, pushed, unmerged, building].sort());
     expect(existsSync(release)).toBe(false);
     expect(existsSync(pushed)).toBe(false);
     expect(existsSync(building)).toBe(true);
@@ -249,7 +259,9 @@ describe('planSweep and applySweep on a scratch root', () => {
     expect(existsSync(join(building, 'desktop', 'target'))).toBe(false);
     expect(existsSync(join(building, 'desktop', 'Cargo.toml'))).toBe(true);
     expect(existsSync(join(shared, 'blob'))).toBe(true);
-    for (const p of [unmerged, dirty, fresh, inUse, loose]) expect(existsSync(p)).toBe(true);
+    for (const p of [dirty, fresh, inUse, loose]) expect(existsSync(p)).toBe(true);
+    expect(existsSync(unmerged)).toBe(false);
+    expect(g(repo, 'branch', '--list', 'super/app-super-old-local')).toContain('super/app-super-old-local');
     expect(g(repo, 'branch', '--list', 'super/app-super-surum-0101')).toContain('super/app-super-surum-0101');
     expect(g(repo, 'branch', '--list', 'super/app-super-old-pushed')).toContain('super/app-super-old-pushed');
   });

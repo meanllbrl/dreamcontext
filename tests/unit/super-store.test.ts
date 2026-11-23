@@ -88,14 +88,14 @@ describe('read and write', () => {
 });
 
 describe('hostile fields are dropped (D2)', () => {
-  it('a worktree outside ~/.claude-worktrees, nested, relative or traversing is dropped with its branch', () => {
+  it('a worktree outside ~/.claude-worktrees, nested, relative or traversing is dropped ALONE: the branch stays (K9, kesim-geri-donus C19)', () => {
     const good = join(home, '.claude-worktrees', 'acme-login');
     for (const worktree of ['/etc', join(home, 'projects', 'x'), join(home, '.claude-worktrees'), join(home, '.claude-worktrees', 'a', 'b'),
       'relative/path', join(home, '.claude-worktrees', '..', 'x'), `${good}\u0000`]) {
       const s = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { worktree, branch: 'super/acme-login' }) } }), { home });
       expect(s.children['c-1'], worktree).toBeDefined();
       expect(s.children['c-1'].worktree, worktree).toBeUndefined();
-      expect(s.children['c-1'].branch, worktree).toBeUndefined();
+      expect(s.children['c-1'].branch, worktree).toBe('super/acme-login');
     }
     const kept = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { worktree: good, branch: 'super/acme-login' }) } }), { home });
     expect(kept.children['c-1']).toMatchObject({ worktree: good, branch: 'super/acme-login' });

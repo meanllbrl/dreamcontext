@@ -778,8 +778,17 @@ export interface SuperChild {
   adopted: boolean;
   /** Its own worktree, when `super delegate --worktree` made one: under `~/.claude-worktrees/`. */
   worktree?: string;
-  /** `super/<slug>`, beside `worktree`. */
+  /** `super/<slug>`: its work's branch. Kept on its own, also after the worktree is gone (K9):
+   *  `super merge` and `super resume` reach a dal-yalnız child through it. */
   branch?: string;
+  /** The linked repo it works in (`delegate --worktree <repo>`). Absent in an older record:
+   *  derived from the one linked repo holding `branch` (childCheckout). */
+  repo?: string;
+  /** The `super/*` branch its worktree was on when the sweep removed it (it may have moved past
+   *  `branch`). */
+  lastBranch?: string;
+  /** A non-`super/*` branch its worktree had moved to when the sweep removed it (report only). */
+  movedTo?: string;
   startedAt: number;
   /** The job list's row (plan r4 D5, D6, D15): written by the SERVER from the registry, never
    *  by an agent verb. Absent in an older record: derived from the live status until reconciled. */
@@ -852,7 +861,8 @@ export interface SuperChild {
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
- *  still owns a worktree (it leaves when `super worktree remove` clears it). */
+ *  still holds its identity (a worktree or a branch not yet home, K9 `holdsIdentity`): the
+ *  janitor releases it once its branch reaches home. */
 export const MAX_ENDED_CHILDREN = 30;
 
 /** A child's row in the job list. `asking` = the super agent is handling its question.
@@ -1573,6 +1583,9 @@ export interface SuperState {
   children: Record<string, SuperChild>;
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
+  /** The cut-return card asked per topic (`super returns ask`, D16): one entry per topic. The same
+   *  `key` answered is never asked again. */
+  returnsAsked?: Record<string, ReturnsAsked>;
   /** The owner's absence, for the return recap (D13). */
   away: { since: number | null; events: number };
   /** Automatic cards the owner closed, not reopened automatically for a while (G5). */
@@ -2125,6 +2138,17 @@ export const CONTAINER_ID_RE = /^[a-z0-9-]{1,40}$/;
 export const QUEUE_ID_RE = /^[a-z0-9-]{1,40}$/;
 /** A child's branch: the only branches `super` verbs ever create or merge into (D12). */
 export const SUPER_BRANCH_RE = /^super\/[a-z0-9-]{1,60}$/;
+
+/** One `super returns ask` card: the report's key, when it was asked, the ask's queue id, and the
+ *  owner's answer once he gave one (`"done"` when the Super closed it with `super queue done`). */
+export interface ReturnsAsked { key: string; at: number; askId: string; answer?: string }
+
+const BASE_RE = /^[A-Za-z0-9._/-]{1,200}$/;
+/** A ref as typed (a base, a branch a worktree moved to): a ref/sha character set, never an
+ *  option, never a range. Import-free here so store.ts and worktrees.ts share it. */
+export function validBase(b: unknown): b is string {
+  return typeof b === 'string' && BASE_RE.test(b) && !b.startsWith('-') && !b.includes('..');
+}
 /** A worktree slug or a merge topic (D12). */
 export const SUPER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
 export const MAX_BRIEF = 200;
@@ -2351,7 +2375,7 @@ export function askSummary(spec: SuperAskSpec): { ownerText: string; options: st
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'allow', 'send', 'queue-list', 'queue-ask', 'queue-done', 'queue-allow', 'merge', 'worktree-list', 'worktree-remove',
-  'pool-add', 'pool-remove', 'pool-list', 'ask',
+  'pool-add', 'pool-remove', 'pool-list', 'ask', 'returns-ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',

@@ -53,14 +53,19 @@ children that finish fast. Verbs are in
    Mac bar only (never Telegram): when it is his and he is away, put it to him with `queue ask`.
 9. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
 10. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a
-   refused `end` counts as done for that turn). Start dependents with `delegate --from <pool row>`.
-   Merge finished code branches with `super merge <children> --into <topic>` (each child's branch is
-   the one its worktree is on now; `nothingToMerge` = it brought no commit); a conflicting merge
-   becomes a new worktree child off the topic branch. Before a merge the topic branch is rebased
-   onto the current main, and ONE integrator child does it: its prompt names every commit to
-   include, and it checks the result with git diff --stat (a concurrent branch once left a whole
-   feature's commits out). Never merge into the default branch, never push but per §2: tell the
-   owner the topic branch is ready.
+   refused `end` counts as done for that turn); copy a child's pictures into `_dream_context/tmp` first.
+   Start dependents with `delegate --from <pool row>`. Merge finished code branches with
+   `super merge <children> --into <topic>` (`nothingToMerge` = it brought no commit); an ended child
+   merges and resumes from its branch alone: its clean worktree removes itself, the branch stays. A
+   conflicting merge becomes a new worktree child off the topic branch. A new topic starts fresh from
+   remote dev (`super merge --base <remote>/dev`), never from main; a merged topic is never rebased.
+   ONE integrator child does it: its prompt names every commit to include, and it checks the result
+   with git diff --stat. A fix goes on its own branch, merged into the cut; only a cut-fit commit
+   (`Cut-fit: <why>` trailer) is written on the cut. The merge reply's `returns` block lists the work
+   not back in dev: non-empty, run `super returns ask --topic <topic>` (ONE card, never asked twice;
+   "Hepsine aç" = an `--outward` child pushes and opens one draft PR per branch). A reverted commit
+   still reads as home. Install only with `npm run install:cut` (it refuses a drop). Never merge into
+   the default branch, never push but per §2.
 
 ## 1b. Nothing goes unsaid (the owed ledger)
 The server keeps OWED each of his messages, each awaited result and each outward action a child
