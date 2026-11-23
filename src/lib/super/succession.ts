@@ -1,4 +1,5 @@
 import { containerIdFor, moveCardItems } from './inbox.js';
+import { carryIdentity } from './store.js';
 import type { SuperChild, SuperState } from './types.js';
 
 /**
@@ -31,9 +32,9 @@ export function succeedChild(s: SuperState, from: string, to: string, opts: { br
   if (!opts.brief && old.brief) next.brief = old.brief;
   const task = taskOf(old);
   if (task && !taskOf(next)) (next as SuperChild & { task?: string }).task = task;
-  // The work's worktree and branch are the successor's now: `super clean` must never take a
-  // tree it works in, and `super merge` finds the branch under it.
-  if (old.worktree && old.branch && !next.worktree) { next.worktree = old.worktree; next.branch = old.branch; }
+  // The work's identity is the successor's now (K9 carryIdentity): `super clean` must never take
+  // a tree it works in, and `super merge` finds the branch under it, with or without a worktree.
+  carryIdentity(old, next);
   old.succeededBy = to;
   // The job moved on: the pictures shown for the old child go to Others (tidy.ts).
   old.succeededAt = opts.now ?? Date.now();

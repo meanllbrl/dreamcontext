@@ -356,6 +356,8 @@ import { closeMcpClients } from '../lib/apps/mcp-bridge.js';
 import { readLauncherTheme } from './routes/launcher.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren, publishDesktopServer } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
+import { sweepEnded } from '../lib/super/worktree-sweep.js';
+import { superWorktreeRoot } from '../lib/super/store.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
@@ -1843,6 +1845,12 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // Queued super sends a relaunch must not lose (lib/super/outbox.ts).
       .then(() => {
         armSuperOutbox(); armSuperSuccession();
+        // D14: one ended-child janitor round per vault at start (then hourly from the tidy clock),
+        // one vault after another, never awaited: removes ended children's clean worktrees, keeps
+        // every branch, gives back what is home.
+        void (async () => {
+          for (const v of listVaults()) await sweepEnded({ root: superWorktreeRoot(), contextRoot: join(v.path, '_dream_context'), trigger: 'start' });
+        })().catch((err) => console.warn(`[super] start-up worktree janitor failed: ${(err as Error).message}`));
         // The Super automations' fires (super-rutin): the desktop server only, one deliverer per Mac.
         if (isDesktop()) startSuperSchedule({ log: (l) => console.warn(l) });
       })

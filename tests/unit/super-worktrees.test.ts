@@ -252,17 +252,24 @@ describe('merge', () => {
 });
 
 describe('remove', () => {
-  it('refuses an unmerged worktree and a dirty one; a merged clean one goes, its branch kept', async () => {
+  // kesim-geri-donus D13 (changed on purpose): a clean worktree on its branch goes whether or not
+  // the branch is merged anywhere; the branch keeps the commits. A dirty one, and a detached HEAD
+  // whose commits no ref holds, stay.
+  it('a clean worktree on its branch goes, merged or not, its branch kept; dirty and detached-unique are refused', async () => {
     const a = await create('a');
     commitIn(a.path, 'a.txt', 'a\n');
-    expect(await refusedCode(removeChildWorktree({ repoPath: repo, worktree: a.path, branch: a.branch, home }))).toBe('unmerged');
-    await mergeChildren({ projectRoot: project, repo: 'product', topic: 'rel', home, children: [{ sessionId: 'ca', branch: a.branch, worktree: a.path }] });
     writeFileSync(join(a.path, 'wip.txt'), 'x');
     expect(await refusedCode(removeChildWorktree({ repoPath: repo, worktree: a.path, branch: a.branch, home }))).toBe('dirty');
     rmSync(join(a.path, 'wip.txt'));
     await removeChildWorktree({ repoPath: repo, worktree: a.path, branch: a.branch, home });
     expect(existsSync(a.path)).toBe(false);
     expect(g(repo, 'branch', '--list', 'super/a')).toContain('super/a');
+
+    const b = await create('b');
+    g(b.path, 'checkout', '-q', '--detach');
+    commitIn(b.path, 'b.txt', 'b\n');
+    expect(await refusedCode(removeChildWorktree({ repoPath: repo, worktree: b.path, branch: b.branch, home }))).toBe('unmerged');
+    expect(existsSync(b.path)).toBe(true);
   });
 
   it('refuses a path that is not a listed super worktree', async () => {

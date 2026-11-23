@@ -440,14 +440,31 @@ export interface TidyIo {
   /** The server's half of retiring (absent: the clock only tidies). `live` reads the registry;
    *  `end` ends the planned children the way `super end` does, re-checking each under the lock. */
   retire?: { live: (root: string, sid: string) => RetireLive; end: (root: string, sids: string[]) => Promise<unknown> };
+  /** The ended-child janitor (worktree-sweep.ts `sweepEnded`), run hourly per vault. */
+  janitor?: (root: string) => Promise<unknown>;
 }
 
 const vaults = new Set<string>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let io: TidyIo | null = null;
 
+/** The ended-child janitor's clock per vault (D14): once an hour, never on the first tick (the
+ *  server's start-up round just ran). */
+export const JANITOR_EVERY_MS = 60 * 60_000;
+const janitorAt = new Map<string, number>();
+
 /** One pass over one vault: marks up to date, then what is due goes to Others. */
 export async function tidyOnce(root: string, how: TidyIo, now = Date.now()): Promise<string[]> {
+  if (how.janitor) {
+    const k = keyOf(root);
+    const last = janitorAt.get(k);
+    if (last === undefined) janitorAt.set(k, now);
+    else if (now - last >= JANITOR_EVERY_MS) {
+      janitorAt.set(k, now);
+      // Never awaited, never thrown: a slow sweep does not hold the stage's tidying.
+      void how.janitor(root).catch((err: unknown) => { console.warn(`[super] ${root}: worktree janitor failed: ${(err as Error)?.message ?? err}`); });
+    }
+  }
   let s = await how.read(root);
   if (!s.enabled) { vaults.delete(keyOf(root)); return []; }
   const m = refreshMarks(marksOf(root), s, now);
@@ -498,6 +515,7 @@ export function _resetTidy(): void {
   vaults.clear();
   marks.clear();
   since.clear();
+  janitorAt.clear();
   seenClicks.clear();
   io = null;
 }
