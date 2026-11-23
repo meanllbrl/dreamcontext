@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import type { BinaryFileData, DataURL, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { FileId } from '@excalidraw/excalidraw/element/types';
-import { dataUrlBytes, isPictureOf, type BoardPictures, type PictureFile } from './boardPictures';
+import { dataUrlBytes, isPictureOf, type BoardPictures, type BoardPoint, type PictureFile } from './boardPictures';
 import { adoptImages, catchImages, decodeBitmap, makePreview, Sharpener, type Bitmap } from './pictureLod';
 
 /** Previews decoded at once: each is a whole picture, and a board opens with all of them. */
@@ -16,7 +16,7 @@ const PREVIEW_LANES = 2;
 export function useBoardPictureLoader(
   apiRef: RefObject<ExcalidrawImperativeAPI | null>,
   picturesRef: RefObject<BoardPictures | undefined>,
-): (elements: readonly unknown[]) => void {
+): (elements: readonly unknown[], near?: BoardPoint | null) => void {
   const retry = useRef<number | null>(null);
   const sharpenerRef = useRef<Sharpener | null>(null);
 
@@ -113,17 +113,19 @@ export function useBoardPictureLoader(
     };
   }, [sharpener]);
 
-  return useCallback((elements: readonly unknown[]) => {
+  return useCallback((elements: readonly unknown[], openAt?: BoardPoint | null) => {
     const api = apiRef.current;
     const store = picturesRef.current;
     if (!api || !store) return;
     const held = api.getFiles();
     // The middle of the view, in board coordinates: the pictures on screen are fetched first.
+    // At open the caller names it (`openAt`): the canvas has not placed its view yet.
     const st = api.getAppState();
     const zoom = st.zoom?.value || 1;
-    const near = Number.isFinite(st.scrollX) && Number.isFinite(st.scrollY)
-      ? { x: -st.scrollX + st.width / (2 * zoom), y: -st.scrollY + st.height / (2 * zoom) }
-      : null;
+    const near = openAt !== undefined ? openAt
+      : Number.isFinite(st.scrollX) && Number.isFinite(st.scrollY)
+        ? { x: -st.scrollX + st.width / (2 * zoom), y: -st.scrollY + st.height / (2 * zoom) }
+        : null;
     store.load(elements, (id) => !!held[id] || landing.current.has(id), onPicture, near);
   }, [apiRef, picturesRef, onPicture]);
 }

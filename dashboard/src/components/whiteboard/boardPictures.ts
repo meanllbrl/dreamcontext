@@ -76,6 +76,40 @@ export function picturesNearestFirst(elements: readonly unknown[], near?: BoardP
   return [...best].sort((a, b) => a[1] - b[1]).map(([id]) => id);
 }
 
+/**
+ * Where a board OPENS, before the canvas has placed its view (Excalidraw reads its default view,
+ * scroll 0,0, until its scene is set up): the saved view when it shows any element (the page puts
+ * the owner back there), else the middle of the live elements (the page fits the content). Null
+ * for an empty board. `width`/`height`: the window, the canvas's size to within its panels.
+ */
+export function openViewCentre(
+  elements: readonly unknown[],
+  saved: { scrollX: number; scrollY: number; zoom: number } | null,
+  width: number,
+  height: number,
+): BoardPoint | null {
+  let x1 = Infinity; let y1 = Infinity; let x2 = -Infinity; let y2 = -Infinity;
+  const boxes: { x: number; y: number; width: number; height: number }[] = [];
+  for (const raw of elements) {
+    const el = raw as ImageLike | null;
+    if (!el || el.isDeleted === true) continue;
+    const b = { x: num(el.x), y: num(el.y), width: num(el.width), height: num(el.height) };
+    boxes.push(b);
+    x1 = Math.min(x1, b.x, b.x + b.width); x2 = Math.max(x2, b.x, b.x + b.width);
+    y1 = Math.min(y1, b.y, b.y + b.height); y2 = Math.max(y2, b.y, b.y + b.height);
+  }
+  if (boxes.length === 0) return null;
+  if (saved && saved.zoom > 0 && width > 0 && height > 0) {
+    const left = -saved.scrollX; const top = -saved.scrollY;
+    const right = left + width / saved.zoom; const bottom = top + height / saved.zoom;
+    if (boxes.some((b) => Math.max(b.x, b.x + b.width) >= left && Math.min(b.x, b.x + b.width) <= right
+      && Math.max(b.y, b.y + b.height) >= top && Math.min(b.y, b.y + b.height) <= bottom)) {
+      return { x: (left + right) / 2, y: (top + bottom) / 2 };
+    }
+  }
+  return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+}
+
 /** The file ids of the live pictures in `elements`, each once. */
 export function liveFileIds(elements: readonly unknown[]): string[] {
   const ids = new Set<string>();

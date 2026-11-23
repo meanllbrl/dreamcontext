@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  BoardPictures, dataUrlBytes, isPictureOf, liveFileIds, picturesNearestFirst, type PictureFile,
+  BoardPictures, dataUrlBytes, isPictureOf, liveFileIds, openViewCentre, picturesNearestFirst, type PictureFile,
 } from '../../dashboard/src/components/whiteboard/boardPictures.js';
 
 const A = 'a'.repeat(40);
@@ -158,5 +158,26 @@ describe('BoardPictures.load asks nearest first', () => {
     const box = (id: string, fileId: string, x: number) => img(id, fileId, { x, y: 0, width: 10, height: 10 });
     h.pictures.load([box('1', A, 2000), box('2', B, 0), box('3', C, 500)], () => false, () => {}, { x: 5, y: 5 });
     expect(h.downloads).toEqual([B, C, A]);
+  });
+});
+
+describe('openViewCentre (where a board opens, before the canvas has placed its view)', () => {
+  const box = (id: string, x: number, y: number, w = 100, h = 100) => ({ id, type: 'rectangle', x, y, width: w, height: h });
+
+  it('with no saved view: the middle of the content, however far from the origin', () => {
+    const els = [box('a', 10_000, 20_000), box('b', 12_000, 22_000)];
+    expect(openViewCentre(els, null, 1440, 900)).toEqual({ x: 11_050, y: 21_050 });
+  });
+
+  it('a saved view that shows an element wins; one that shows nothing falls back to the content', () => {
+    const els = [box('a', 0, 0), box('b', 5000, 5000)];
+    // scroll -4800,-4800 at zoom 1 over 1440x900: shows b.
+    expect(openViewCentre(els, { scrollX: -4800, scrollY: -4800, zoom: 1 }, 1440, 900)).toEqual({ x: 4800 + 720, y: 4800 + 450 });
+    expect(openViewCentre(els, { scrollX: -90_000, scrollY: -90_000, zoom: 1 }, 1440, 900)).toEqual({ x: 2550, y: 2550 });
+  });
+
+  it('an empty board has no centre; deleted elements do not count', () => {
+    expect(openViewCentre([], null, 1440, 900)).toBeNull();
+    expect(openViewCentre([{ ...box('a', 0, 0), isDeleted: true }], null, 1440, 900)).toBeNull();
   });
 });

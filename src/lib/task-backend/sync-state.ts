@@ -266,7 +266,7 @@ export function membersStale(last: number | null, now: number): boolean {
 }
 
 /** {@link SyncLedger.peekSyncState}'s parse, by file, while its mtime and size hold. */
-const syncStateMemo = new Map<string, { mtimeMs: number; size: number; state: SyncStateFile }>();
+const syncStateMemo = new Map<string, { stamp: string; state: SyncStateFile }>();
 
 export class SyncLedger {
   constructor(private readonly contextRoot: string) {}
@@ -441,10 +441,13 @@ export class SyncLedger {
       syncStateMemo.delete(path);
       return { watermark: null, tasks: {} };
     }
+    // The whole stamp (inode, size, mtime, ctime): a coarse-clock volume can keep mtime and size
+    // across a rewrite, never the ctime and inode too.
+    const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
     const hit = syncStateMemo.get(path);
-    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.state;
+    if (hit && hit.stamp === stamp) return hit.state;
     const state = readJson<SyncStateFile>(path, { watermark: null, tasks: {} });
-    syncStateMemo.set(path, { mtimeMs: st.mtimeMs, size: st.size, state });
+    syncStateMemo.set(path, { stamp, state });
     return state;
   }
 

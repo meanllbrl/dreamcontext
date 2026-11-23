@@ -897,8 +897,7 @@ export interface AgentUsage {
  * every task file: on a real brain that was seconds of the server's only thread at app open,
  * while every other request waited (task: opening the app is slow, 2026-11-23).
  *
- * Each board's answer is kept while its mtime and size hold (the board list's own rule,
- * `listWhiteboards`), and the tasks come from the shared heads memo (task-heads.ts), so a call
+ * Each board's answer is kept while its stamp (inode, size, mtime, ctime) holds, and the tasks come from the shared heads memo (task-heads.ts), so a call
  * after the first only stats. A changed file is read again.
  */
 export interface AgentUsageScan {
@@ -908,7 +907,7 @@ export interface AgentUsageScan {
   tasks: Map<string, unknown>;
 }
 
-const boardRefsMemo = new Map<string, { mtimeMs: number; size: number; refs: Set<string> }>();
+const boardRefsMemo = new Map<string, { stamp: string; refs: Set<string> }>();
 
 /** The agents a board carries a live card of, by its stamp. Null: unreadable (no card we can see). */
 function boardAgentRefs(contextRoot: string, slug: string): Set<string> | null {
@@ -920,8 +919,9 @@ function boardAgentRefs(contextRoot: string, slug: string): Set<string> | null {
   } catch {
     return null;
   }
+  const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
   const hit = boardRefsMemo.get(file);
-  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.refs;
+  if (hit && hit.stamp === stamp) return hit.refs;
   const refs = new Set<string>();
   try {
     for (const el of liveElements(readWhiteboard(contextRoot, slug).board.elements)) {
@@ -933,7 +933,7 @@ function boardAgentRefs(contextRoot: string, slug: string): Set<string> | null {
     boardRefsMemo.delete(file);
     return null;
   }
-  boardRefsMemo.set(file, { mtimeMs: st.mtimeMs, size: st.size, refs });
+  boardRefsMemo.set(file, { stamp, refs });
   return refs;
 }
 
