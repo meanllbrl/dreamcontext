@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildDrawerRows, type DrawerProjectInput } from '../../dashboard/src/components/layout/newshell/drawerModel';
+import { isMovePress } from '../../dashboard/src/lib/revealGate';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
 const project = (name: string, o: Partial<DrawerProjectInput> = {}): DrawerProjectInput => ({
@@ -51,5 +52,24 @@ describe('a press on a row of the project being prepared', () => {
     expect(tracked).toContain("const prepare = vault !== activeRef.current && gate.current()?.vault === vault;");
     expect(tracked).toContain('prepare ? { prepare: true, moveId: id } : undefined');
     expect(tracked).toContain('stampInput();');
+  });
+});
+
+describe('showing or hiding the sidebar while a project lands (the 390 case)', () => {
+  /** A stand-in element: `closest` answers for the given selectors only. */
+  const el = (closest: string[], matches: string[] = []) => ({
+    closest: (s: string) => (closest.includes(s) ? {} : null),
+    matches: (s: string) => matches.includes(s),
+  }) as unknown as EventTarget;
+  it('a primary press on the sidebar button or the scrim is no input (inside them too)', () => {
+    expect(isMovePress(el(['[data-sidebar-toggle]']), 0)).toBe(true);
+    expect(isMovePress(el(['[data-sidebar-toggle]']), 2)).toBe(false);
+    expect(isMovePress(el([]), 0)).toBe(false);
+  });
+  it('the title-bar button and the floating scrim carry the mark; the ⌘B key stamps its event', () => {
+    expect(src('dashboard/src/components/layout/newshell/TitleBar.tsx')).toMatch(/data-testid="ns-drawer-toggle"[\s\S]{0,200}data-sidebar-toggle="true"/);
+    const chrome = src('dashboard/src/components/layout/WindowChrome.tsx');
+    expect(chrome).toContain('<div className="ns-drawer-scrim" data-sidebar-toggle="true" onClick={closeOverlay}');
+    expect(chrome).toMatch(/key === 'b' && !editable\) \{[\s\S]{0,200}stampInput\(\);[\s\S]{0,80}setDrawerToggleNonce/);
   });
 });

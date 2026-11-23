@@ -5,6 +5,7 @@
  * Two fictional projects: proj (A) and tilkisim (B), B with a saved chat (so the press prepares B
  * out of sight) and its Super handed over (stubbed reads: the scratch HOME runs no Super).
  *
+ *   S0  390: the floating sidebar closes on B's press; opening it again keeps B landing.
  *   S1  while B is landing, its Super row never says "Off".
  *   S2  a press on B's Super row lands on B, on its Super Agent (B active, its row selected).
  *   S3  no console error; frames at 1440 and 390 (SUPER_ROW_OUT=<dir> keeps them).
@@ -85,17 +86,18 @@ async function run(width, height) {
   await shot('1-on-A');
   await head.click();
   const row = page.locator(`[data-drawer-project="${B}"] [data-testid="drawer-super-row"]`);
-  // A floating sidebar (a phone-width window) closes on the press, and opening it again is input
-  // that ends the landing: B's rows never show while it lands there, so there is nothing to press.
+  // A floating sidebar (a phone-width window) closes on the press: opening it again (the owner
+  // reaching B while it lands) must not end the landing, so B is still open there to press.
   if (!(await head.isVisible().catch(() => false))) {
     await openSidebar(page);
-    await page.waitForTimeout(800);
+    const reopened = { active: await activeVault(page), bOpen: await page.locator(`[data-drawer-project="${B}"][data-open="true"]`).count() };
     if (!(await row.isVisible().catch(() => false))) {
       await shot('2-sidebar-reopened');
-      console.log(`INFO ${where}: the floating sidebar closes on the press; B's rows are not on screen while B lands (${JSON.stringify({ active: await activeVault(page) })})`);
+      check(`S0 ${where}: reopening the sidebar keeps B landing (its rows open)`, false, JSON.stringify(reopened));
       await context.close();
       return;
     }
+    check(`S0 ${where}: reopening the sidebar keeps B landing (its rows open)`, reopened.bOpen === 1, JSON.stringify(reopened));
   }
   await row.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
   const during = { active: await activeVault(page), off: await row.getAttribute('data-off').catch(() => null) };
@@ -111,6 +113,8 @@ async function run(width, height) {
     await page.mouse.up();
   }
   await page.waitForTimeout(3500);
+  // A floating sidebar closed on the pick: open it to read where the press landed.
+  if (!(await head.isVisible().catch(() => false))) await openSidebar(page);
   const after = {
     active: await activeVault(page),
     bOpen: await page.locator(`[data-drawer-project="${B}"][data-open="true"]`).count(),

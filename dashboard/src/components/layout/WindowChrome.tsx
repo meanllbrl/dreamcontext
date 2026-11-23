@@ -1961,6 +1961,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
         setPickerOpen((o) => !o);
       } else if (key === 'b' && !editable) {
         e.preventDefault();
+        // The sidebar button's key: like its press, never a way out of a move landing.
+        stampInput();
         setDrawerToggleNonce((n) => n + 1);
       } else if (key === 'n' && !inTerminal && newWindowRef.current()) {
         // ⌘N: New chat window's project picker, while the drawer is on screen; otherwise the
@@ -1975,7 +1977,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newShell, addTab]);
+  }, [newShell, addTab, stampInput]);
 
   const chips = useMemo<ProjectChip[]>(() => open.map((p) => ({
     vault: p.vault,
@@ -2066,7 +2068,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {/* The local new shell has no rail: its pages are the title bar's tabs (tek-kenar C7). */}
             {deviceShell && <div className="ns-rail-slot" ref={setRailSlot} />}
             {drawerVisible && drawerFloating && !peekOnly && (
-              <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
+              <div className="ns-drawer-scrim" data-sidebar-toggle="true" onClick={closeOverlay} aria-hidden="true" />
             )}
             {(drawerVisible || drawerGhost) && (
               <ChatDrawer
