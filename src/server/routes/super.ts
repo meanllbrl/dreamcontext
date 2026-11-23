@@ -2960,13 +2960,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const plan = await planSweep({ root: realRoot, guards, testTmp: await oldTestTmp(tmpdir()), warnings });
     if (!apply) { ok(res, { dryRun: true, ...publicPlan(plan) }); return; }
     const fresh = (await take()).guards;
-    const result = await applySweep(plan, fresh, {
-      onRemoved: async (item) => {
-        if (!item.child || item.category === 'build-output') return;
-        // The branch the worktree was on goes into the record with the removal (D15, noteWorkBranch).
-        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) { noteWorkBranch(x, item.branch); delete x.worktree; } });
-      },
-    });
+    // Each removal is re-checked right before it acts and written into its child's OWN record
+    // (main or member), inside applySweep (recheckBeforeActing, noteWorkBranch).
+    const result = await applySweep(plan, fresh, { contextRoot: root, home: homedir() });
     forgetLeftovers();
     ok(res, {
       dryRun: false, ...result,

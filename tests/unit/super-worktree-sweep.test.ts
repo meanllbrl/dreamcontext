@@ -23,6 +23,9 @@ const facts = (name: string, over: Partial<WorktreeFacts> = {}): WorktreeFacts =
 });
 const guards = (over: Partial<SweepGuards> = {}): SweepGuards => ({ inUse: [], commands: [], cliTargets: [], held: new Map(), ended: new Map(), ...over });
 
+/** The per-path listing right before acting: nothing runs (tests never read the machine). */
+const quiet = async () => ({ inUse: [] as string[], commands: [] as string[] });
+
 describe('classify', () => {
   it.each([
     ['a process cwd inside it', facts('a'), guards({ inUse: [`${W}/a/src`] }), 'in-use'],
@@ -249,7 +252,7 @@ describe('planSweep and applySweep on a scratch root', () => {
     // Planning removed nothing.
     for (const p of [release, pushed, join(building, 'node_modules')]) expect(existsSync(p)).toBe(true);
 
-    const result = await applySweep(plan, gd);
+    const result = await applySweep(plan, gd, { uses: quiet });
     expect(result.failed).toEqual([]);
     expect(result.removed.sort()).toEqual([release, pushed, unmerged, building].sort());
     expect(existsSync(release)).toBe(false);
@@ -272,13 +275,19 @@ describe('planSweep and applySweep on a scratch root', () => {
     const plan = await planSweep({ root, guards: guards() });
     expect(plan.items.map((i) => i.path)).toEqual([release]);
     writeFileSync(join(release, 'late-edit.txt'), 'x\n');
-    const r1 = await applySweep(plan, guards());
+    const r1 = await applySweep(plan, guards(), { uses: quiet });
     expect(r1.removed).toEqual([]);
     expect(r1.failed[0].message).toContain('changed since the plan');
     rmSync(join(release, 'late-edit.txt'));
     // A process started working in it: kept too.
-    const r2 = await applySweep(plan, guards({ commands: [`vitest --root ${release}`] }), { now: Date.now() });
+    const r2 = await applySweep(plan, guards({ commands: [`vitest --root ${release}`] }), { now: Date.now(), uses: quiet });
     expect(r2.removed).toEqual([]);
+    expect(existsSync(release)).toBe(true);
+    // review r4: the fresh guards say nothing runs, the per-path listing right before acting does.
+    age(release, 5);
+    const r3 = await applySweep(plan, guards(), { uses: async (p) => ({ inUse: p === release ? [join(release, 'x.log')] : [], commands: [] }) });
+    expect(r3.removed).toEqual([]);
+    expect(r3.failed[0].message).toMatch(/running process/);
     expect(existsSync(release)).toBe(true);
   });
 

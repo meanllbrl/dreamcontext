@@ -603,6 +603,9 @@ export async function reattachChildWorktree(o: {
   const until = Date.now() + (o.waitMs ?? 30_000);
   while (o.removing?.has(path) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
   if (o.removing?.has(path)) return { why: `${path} is still being removed; resume again in a moment` };
+  // What it waited for may have left the worktree in place (a strip, a refused removal): read again.
+  const again = await childCheckout(o.projectRoot, o.child, { removing: o.removing, home: o.home });
+  if (again.worktree && again.branch) return { worktree: again.worktree, branch: again.branch, repo: again.repo!.name };
   const holder = (await porcelain(co.repo.path)).find((e) => e.branch === branch);
   if (holder) return { why: `${branch} is checked out at ${holder.path}` };
   try { await fsp.lstat(path); return { why: `${path} exists and is not a worktree of ${branch}` }; } catch { /* free */ }

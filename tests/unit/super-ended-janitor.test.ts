@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { linkedReposFilePath } from '../../src/lib/linked-repos.js';
 import { canonicalRemote } from '../../src/lib/git-sync/origin-setup.js';
 import { createChildWorktree } from '../../src/lib/super/worktrees.js';
-import { childHolds, holdForResume, readSuperRecords, sweepEnded, type SweepGuards } from '../../src/lib/super/worktree-sweep.js';
+import { applySweep, childHolds, holdForResume, planSweep, readSuperRecords, sweepEnded, type SweepGuards } from '../../src/lib/super/worktree-sweep.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superIdOfMember, superRecordPath } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 
@@ -165,6 +165,30 @@ describe('sweepEnded', () => {
     } finally { holdForResume('a', false); holdForResume('c', false); }
     const after = await sweep();
     expect(after?.removed).toEqual([a.path]);
+  });
+
+  it('review r4: super clean --apply re-reads right before acting and writes a member child\'s removal into the MEMBER\'s record', { timeout: 60_000 }, async () => {
+    const m = await mk('mem'); commitIn(m.path, 'm.txt');
+    g(m.path, 'checkout', '-q', '-b', 'fix/m'); commitIn(m.path, 'm2.txt');
+    const r = await mk('res'); commitIn(r.path, 'r.txt');
+    writeRecord({ res: { worktree: r.path, branch: r.branch, repo: 'product', endedAt: 5 } });
+    const id = superIdOfMember('pm');
+    writeRecord({ mk: { worktree: m.path, branch: m.branch, repo: 'product', endedAt: 5 } }, id, { member: 'pm' } as Partial<SuperState>);
+    const quiet = async () => ({ inUse: [] as string[], commands: [] as string[] });
+    const { guards } = await guardsFrom()();
+    const plan = await planSweep({ root: join(home, '.claude-worktrees'), guards, now: Date.now() + 30 * 86_400_000 });
+    const paths = plan.items.map((i) => i.path).sort();
+    expect(paths).toEqual([m.path, r.path].sort());
+    expect(plan.items.find((i) => i.path === m.path)).toMatchObject({ child: 'mk', superId: id });
+    // res is resumed after the plan (its record no longer ended): the apply re-reads and keeps it.
+    writeRecord({ res: { worktree: r.path, branch: r.branch, repo: 'product' } });
+    const out = await applySweep(plan, guards, { contextRoot: ctx, home, uses: quiet, now: Date.now() + 30 * 86_400_000 });
+    expect(out.removed).toEqual([m.path]);
+    expect(out.failed.find((f) => f.path === r.path)?.message).toMatch(/resumed/);
+    expect(existsSync(r.path)).toBe(true);
+    const mem = await readSuperState(ctx, id, { home });
+    expect(mem.children.mk.worktree).toBeUndefined();
+    expect(mem.children.mk).toMatchObject({ branch: 'super/mem', movedTo: 'fix/m' });
   });
 
   it('C8(iii) a member Super\'s ended child is cleaned and its own record updated', { timeout: 60_000 }, async () => {
