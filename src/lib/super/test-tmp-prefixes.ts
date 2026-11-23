@@ -493,6 +493,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-linkaudit-',
   'dc-list-',
   'dc-live-cache-',
+  'dc-load-memos-',
   'dc-loginpath-',
   'dc-logo-',
   'dc-logo-test-',
