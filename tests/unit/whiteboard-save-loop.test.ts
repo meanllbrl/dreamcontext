@@ -95,6 +95,35 @@ describe('reasonOf', () => {
   });
 });
 
+describe('WhiteboardSaveLoop.flushAndWait (the board Sync button)', () => {
+  it('sends a debounced edit now and resolves only once it and its queued follow-up land', async () => {
+    const h = harness();
+    h.edit(); // debounce pending, nothing sent
+    let done = false;
+    const wait = h.loop.flushAndWait().then(() => { done = true; });
+    expect(h.puts).toHaveLength(1);
+    h.edit(); h.loop.flush(); // a second edit while the first is in flight: queued
+    await flush();
+    expect(done).toBe(false);
+    h.puts[0].d.resolve({ rev: 'r1' }); await flush();
+    expect(h.puts).toHaveLength(2);
+    expect(done).toBe(false);
+    h.puts[1].d.resolve({ rev: 'r2' }); await wait;
+    expect(done).toBe(true);
+    expect(h.puts[1].elements[0].version).toBe(h.scene.version);
+  });
+
+  it('resolves at once with nothing to send, and when the save fails', async () => {
+    const h = harness();
+    await h.loop.flushAndWait();
+    expect(h.puts).toHaveLength(0);
+    h.edit();
+    const wait = h.loop.flushAndWait();
+    h.puts[0].d.reject(httpError(503)); await wait;
+    expect(h.loop.state.kind).toBe('retrying');
+  });
+});
+
 describe('WhiteboardSaveLoop — debounce and coalescing', () => {
   it('debounces edits into one PUT after 800ms', () => {
     const h = harness();

@@ -380,7 +380,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  derived from disk (`routine` its slug, `fact` the fact, drawn by the routine's own title).
  *  An OWN item (`own`) is a question, permission or owner wait of the record's own session
  *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -920,6 +920,26 @@ export interface SuperPadItem {
   /** When it was first written (its day; absent = `at`), a Now line's stage, and `owner` when he
    *  wrote it himself (MIRRORED from the server, `src/lib/super/types.ts`). */
   bornAt?: number; stage?: PadStage; author?: 'owner';
+  /** The owner messages that moved the line's work: his message ref + when it arrived, oldest
+   *  first (MIRRORED from the server; ajanda-filtre C1). The chat's line filter reads them. */
+  refs?: PadRef[];
+}
+export interface PadRef { ref: string; at: number }
+/** MIRRORED from the server (`src/lib/super/types.ts`). */
+export const MAX_PAD_REFS = 200;
+export const MAX_DIGEST_PAD_REFS = 20;
+/** A line's refs as they arrive: valid pairs only, oldest first, at most `max`. */
+export function readPadRefs(raw: unknown, max = MAX_PAD_REFS): PadRef[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: PadRef[] = [];
+  for (const r of raw) {
+    if (!isRecord(r) || typeof r.ref !== 'string' || !/^[0-9a-z]{6}$/.test(r.ref)) continue;
+    if (typeof r.at !== 'number' || !Number.isFinite(r.at) || r.at < 0) continue;
+    out.push({ ref: r.ref, at: r.at });
+  }
+  out.sort((a, b) => a.at - b.at);
+  const kept = out.length > max ? out.slice(out.length - max) : out;
+  return kept.length ? kept : undefined;
 }
 export const PAD_STAGES = ['todo', 'almost'] as const;
 export type PadStage = typeof PAD_STAGES[number];
@@ -1303,7 +1323,8 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     && typeof h.child === 'string' && typeof h.at === 'number' && (h.kind === 'question' || h.kind === 'done' || h.kind === 'stuck' || h.kind === 'gone')) : [];
   // The agenda notepad: a known section, a string line, a number time (absent in an older push).
   const pad = Array.isArray(v.pad) ? v.pad.filter((p): p is SuperPadItem => isRecord(p) && typeof p.id === 'string'
-    && oneOf(PAD_SECTIONS, p.section) && typeof p.text === 'string' && p.text !== '' && typeof p.at === 'number') : [];
+    && oneOf(PAD_SECTIONS, p.section) && typeof p.text === 'string' && p.text !== '' && typeof p.at === 'number')
+    .map((p) => { const { refs, ...rest } = p; const ok = readPadRefs(refs); return ok ? { ...rest, refs: ok } : rest; }) : [];
   return {
     v: SUPER_STATE_VERSION,
     vault: v.vault,
@@ -1360,7 +1381,10 @@ export interface SuperDigestWire {
     own?: true;
     /** The member's title on a mirror, the routine's title on a routine item (flattened, at most
      *  DIGEST_MAX_TITLE characters): the phone names the row by it. Absent = name it by the slug. */
-    title?: string }>;
+    title?: string;
+    /** ajanda-filtre C5 (`ThreadKeySource`): a direct child question, an owner item with its
+     *  card, a team job's item. Absent in a digest from an older server. */
+    direct?: true; hasCard?: true; team?: true }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns (the phone's unread skips them, plan-r10 1). Absent in a
    *  digest from an older server. */
@@ -1397,11 +1421,15 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
   }
   return {
     // `for` and `by` roll a day over and flag a stale line on the phone as the desktop does.
-    pad: pad.map((p) => ({
-      id: p.id, section: p.section, text: p.text, at: p.at,
-      ...(typeof p.for === 'string' && p.for ? { for: p.for } : {}),
-      ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
-    })),
+    pad: pad.map((p) => {
+      const refs = readPadRefs(p.refs, MAX_DIGEST_PAD_REFS);
+      return {
+        id: p.id, section: p.section, text: p.text, at: p.at,
+        ...(typeof p.for === 'string' && p.for ? { for: p.for } : {}),
+        ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
+        ...(refs ? { refs } : {}),
+      };
+    }),
     waiting: waiting.map((q) => ({
       id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text,
       ...(q.kind === 'member' && typeof q.member === 'string' && q.member ? { member: q.member.slice(0, 64) } : {}),
@@ -1412,6 +1440,9 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       ...(q.kind === 'routine' && typeof q.routine === 'string' && MEMBER_SLUG_RE.test(q.routine) ? { routine: q.routine } : {}),
       ...(q.own === true && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
       ...((q.kind === 'member' || q.kind === 'routine') && digestTitle(q.title) ? { title: digestTitle(q.title) } : {}),
+      ...(q.direct === true && q.kind === 'question' ? { direct: true as const } : {}),
+      ...(q.hasCard === true && q.kind === 'owner' ? { hasCard: true as const } : {}),
+      ...(q.team === true ? { team: true as const } : {}),
     })),
     ownerBatches, mainBatches, names,
     // Checked and capped; only open ones travel (the phone draws and never drops them).

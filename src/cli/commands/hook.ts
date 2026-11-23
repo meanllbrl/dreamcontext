@@ -31,6 +31,7 @@ import {
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
 } from '../../lib/hook-delivery.js';
 import { judgedRecall, type JudgedHit, type JudgedRecall } from '../../lib/recall-judged.js';
+import { isAutomationFirePrompt } from '../../lib/automations/fire-prompt.js';
 import { callDir as judgeCallDir, type RunJudgeOpts } from '../../lib/recall-judge.js';
 import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
 import { readSleepState, writeSleepState, resolveRecallMode, type RecallMode } from './sleep.js';
@@ -225,6 +226,16 @@ export function grantGateAllow(
   } catch {
     return null;
   }
+}
+
+/**
+ * May a PreToolUse answer change the call's input (`updatedInput`)? Not under auto mode: its
+ * classifier reviewed the ORIGINAL input before any hook, and Claude Code refuses a call whose
+ * input a hook changed afterwards ("gave no verdict … a hook changed this call's input"). Every
+ * other mode has no review to invalidate. One predicate for every rewrite this hook makes.
+ */
+export function rewritesInput(input: Record<string, unknown> | null | undefined): boolean {
+  return input?.permission_mode !== 'auto';
 }
 
 function readStdin(): Record<string, unknown> | null {
@@ -2100,19 +2111,20 @@ function capLine(text: string, max: number): string {
 export const RECALL_SNIPPET_MAX_CHARS = 200;
 
 /**
- * Show the connected peers' hits? Only when the owner names the peer, or its top hit outscores
- * this vault's own top hit (audit MM-7: a peer block on 193 of 200 prompts, 0 of 579 hits opened).
- * Raw BM25 on both sides, so the scores compare.
+ * Show the connected peers' hits? Only when the owner names the peer. The older second arm (a peer
+ * top that outscored this vault's own top) compared BM25 across two corpora with different IDF, so a
+ * long, term-rich peer file won on most briefs: over 24 h of real turns it showed 282 peer files on
+ * 94 turns and the agent opened none (audit MM-7 found the same, 0 of 579). Checked before the peer
+ * read, so an unnamed peer costs nothing.
  */
-export function peerBlockWanted(query: string, peerNames: readonly string[], peerTop: number, ownTop: number): boolean {
+export function peerNamed(query: string, peerNames: readonly string[]): boolean {
   const q = query.toLowerCase();
-  const named = peerNames.some((n) => {
+  return peerNames.some((n) => {
     const name = n.trim().toLowerCase();
     if (name.length < 3) return false;
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^\\p{L}\\p{N}])${esc}($|[^\\p{L}\\p{N}])`, 'u').test(q);
   });
-  return named || peerTop > ownTop;
 }
 
 // ─── Dashboard Auto-Open ──────────────────────────────────────────────────────
@@ -3282,13 +3294,13 @@ export function registerHookCommand(program: Command): void {
           const granted = agy ? null : grantGateAllow(input as Record<string, unknown>, toolName, toolInput);
           // A dispatch's prompt carries his always and hot rules (learning loop C7, D8): merged into
           // the one answer, an existing grant kept, none added for the append.
-          if (granted || nudge || updatedInput) {
+          if (granted || nudge || (updatedInput && rewritesInput(input as Record<string, unknown>))) {
             console.log(JSON.stringify({
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 ...(granted ? { permissionDecision: 'allow', permissionDecisionReason: granted.reason } : {}),
                 ...(nudge ? { additionalContext: nudge } : {}),
-                ...(updatedInput ? { updatedInput } : {}),
+                ...(updatedInput && rewritesInput(input as Record<string, unknown>) ? { updatedInput } : {}),
               },
             }));
           }
@@ -3431,7 +3443,12 @@ export function registerHookCommand(program: Command): void {
       }
 
       // A dispatch's prompt with his always and hot rules appended; null on any error or when none ride.
+      // Never under auto mode: its classifier reviews the call BEFORE this hook, and a changed input
+      // is refused as unreviewed ("a hook changed this call's input after auto mode reviewed it"),
+      // so a harmless Agent call was lost and its refusal reached the owner as an Allow card. The
+      // same rules still reach the sub-agent through the SubagentStart hook (`subagent-start`).
       const dispatchInput = (): Record<string, unknown> | null => {
+        if (!rewritesInput(input as Record<string, unknown>)) return null;
         try {
           const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
           if (!dRoot || typeof toolInput.prompt !== 'string') return null;
@@ -3817,7 +3834,8 @@ export function registerHookCommand(program: Command): void {
         try {
           // The owner's words only (recallQuery: no Super roster or tools block, no notification,
           // no wrapper line, no paths). Null: a machine turn, no recall at all.
-          const prompt = query;
+          // An automation's fire prompt is the runner's text, the same on every fire: no recall, no peers.
+          const prompt = isAutomationFirePrompt(rawPrompt) ? null : query;
           if (prompt !== null) {
             const recallMode = resolveRecallMode(root);
 
@@ -3830,9 +3848,6 @@ export function registerHookCommand(program: Command): void {
               const prevOwner = promptSessionId ? readPrevOwnerTurn(promptSessionId) : null;
               if (promptSessionId && ownerText !== null) writePrevOwnerTurn(promptSessionId, prompt);
 
-              let hits: RecallHit[] = [];
-              let haiku = false;
-              let ownShown = false;
               const judge = judgeFor(recallMode);
               let judged: JudgedPromptRecall | null = null;
               if (judge !== null) {
@@ -3845,9 +3860,6 @@ export function registerHookCommand(program: Command): void {
                 if (r.hits.length > 0) {
                   emitPromptBlock('recall', renderJudgedBlock(r.hits, judged.label).join('\n'));
                   hadRecallHits = true;
-                  ownShown = true;
-                  haiku = true;
-                  hits = r.hits.map((h) => ({ doc: h.doc, score: 0, rankScore: 0, snippet: h.reason }));
                 }
                 // Passed over only when the judge decided: a failed or late judge looked at nothing.
                 markSessionRecall(recallSid, r.hits.map((h) => docKey(h.doc)), r.outcome === 'picked' ? r.shown : []);
@@ -3862,15 +3874,14 @@ export function registerHookCommand(program: Command): void {
                 const picked = await selectPromptRecall(prompt, root, recallMode);
                 const timingLine = recallTimingLine(picked.timing);
                 if (timingLine) console.error(timingLine);
-                haiku = picked.haiku;
+                const haiku = picked.haiku;
                 // A file this context already holds is not delivered again.
-                hits = picked.hits.filter((h) => !seen.inContext.has(docKey(h.doc)));
+                const hits = picked.hits.filter((h) => !seen.inContext.has(docKey(h.doc)));
 
                 // Hits are ordered by rankScore (field/recency/synonym signals), but the
                 // gate must test the RAW BM25 score, which may not sit at index 0 after
                 // re-ranking (see recallGatePasses).
-                ownShown = recallGatePasses(hits, haiku, prompt);
-                if (ownShown) {
+                if (recallGatePasses(hits, haiku, prompt)) {
                   const lines = renderRecallBlock(hits, picked.label);
                   emitPromptBlock('recall', lines.join('\n'));
                   hadRecallHits = true;
@@ -3880,14 +3891,6 @@ export function registerHookCommand(program: Command): void {
                   // `knowledge touch` still counts.
                 }
               }
-              // This vault's raw BM25 top, to weigh a peer against. Haiku hits carry score 0, so in that
-              // mode it is a BM25 pass over the same query (the corpus is cached; only when a peer is wired).
-              const ownTop = (): number => {
-                if (!ownShown) return 0;
-                if (!haiku) return Math.max(0, ...hits.map((h) => h.score));
-                return bm25Search(prompt, buildCorpusCached(root), 1)[0]?.score ?? 0;
-              };
-
               // ── Cross-vault LIVE READ (read-only federation) ──────────────
               // When this vault has read connections (out/both) to connected
               // peers, surface THEIR canonical docs at query time — a live
@@ -3899,7 +3902,8 @@ export function registerHookCommand(program: Command): void {
                 const peerTargets = resolveConnectedVaults(currentTarget, root).filter(
                   (t) => t.current !== true,
                 );
-                if (peerTargets.length > 0) {
+                const peerNames = peerTargets.flatMap((t) => [t.name, t.label ?? '']).filter(Boolean);
+                if (peerTargets.length > 0 && peerNamed(prompt, peerNames)) {
                   // curatedPeers: no session digests or changelog from another project (audit MM-7).
                   const { hits: peerHits } = crossVaultRecall(prompt, {
                     vaults: peerTargets,
@@ -3909,9 +3913,7 @@ export function registerHookCommand(program: Command): void {
                   // The same gate as this vault's block: a filler turn shows no peer either.
                   const terms = queryTermCount(prompt);
                   const strong = peerHits.filter((h: FederatedHit) => strongRecallHit(h, terms));
-                  const peerNames = peerTargets.flatMap((t) => [t.name, t.label ?? '']).filter(Boolean);
-                  const peerTop = Math.max(0, ...strong.map((h) => h.score));
-                  if (strong.length > 0 && peerBlockWanted(prompt, peerNames, peerTop, ownTop())) {
+                  if (strong.length > 0) {
                     const lines: string[] = ['', `— Connected peers (live read, top ${strong.length}) —`];
                     for (const h of strong) {
                       lines.push(`  [${h.doc.type}] ${h.vault}::${h.doc.relPath}`);

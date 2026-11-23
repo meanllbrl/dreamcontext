@@ -233,4 +233,13 @@ export function renderBrainSyncResult(result: SyncResult): void {
     if (two) warn(`${r.slug}: ${two} file${two === 1 ? '' : 's'} on this Mac differ${two === 1 ? 's' : ''} from the team's copy shared before you approved. Both versions are kept and nothing is sent until you pick one (dreamcontext apps data ${r.slug}).`);
   }
   for (const l of result.appData?.large ?? []) warn(largeDataLine(l.name, l.bytes));
+  // The boards travel even while a team merge waits (board-exchange.ts).
+  const b = result.boards;
+  if (b?.error) warn(`Boards: not exchanged (${b.error}).`);
+  else if (b?.stopped === 'no-session') warn('Boards: not exchanged (no GitHub sign-in; sign in from Settings in the app).');
+  else if (b) {
+    if (b.trashed) info(`Boards: ${b.trashed} board(s) your team deleted went to this Mac's board trash.`);
+    info(`Boards: ${b.sent} file(s) sent, ${b.received} received${b.waiting ? `, ${b.waiting} left for the next full sync` : ''}.`);
+    if (b.note) warn(b.note);
+  }
 }

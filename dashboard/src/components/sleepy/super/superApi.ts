@@ -129,6 +129,13 @@ export async function fetchAgendaDay(api: ApiClient, date: string, superId: Supe
   return r && r.date === date ? { date, done: list(r.done), open: list(r.open) } : null;
 }
 
+/** The days that have a file (`GET /api/super/agenda-days`), newest first: what the search reads. */
+export async function fetchAgendaDays(api: ApiClient, superId: SuperId = 'main'): Promise<string[]> {
+  api = forSuper(api, superId);
+  const r = await api.get<{ days?: unknown }>('/super/agenda-days');
+  return Array.isArray(r?.days) ? r.days.filter((d): d is string => typeof d === 'string' && DAY_RE.test(d)) : [];
+}
+
 /** `POST /api/super/owed/drop` — his "Gerek yok" on an unanswered line (owed.ts). The record's push redraws it. */
 export async function postSuperOwedDrop(api: ApiClient, id: string, superId: SuperId = 'main'): Promise<void> {
   api = forSuper(api, superId);

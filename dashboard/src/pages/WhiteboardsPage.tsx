@@ -4,14 +4,11 @@ import { useI18n } from '../context/I18nContext';
 import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
-import { useAgents } from '../hooks/useAgents';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
 import { PagePopupProvider } from '../components/whiteboard/PagePopup';
-import { BoardAgentPanel } from '../components/whiteboard/BoardAgentPanel';
-import { setAgentPanelOpen, useAgentPanelOpen, useBoardCards } from '../components/whiteboard/agentPanelState';
-import { dropBoardAgentScratch, sweepHomeSessions } from '../components/whiteboard/boardAgentScratch';
+import { dropBoardAgentScratch } from '../components/whiteboard/boardAgentScratch';
 import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPlace';
 import { dropWhiteboardPref, hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components/whiteboard/whiteboardPrefs';
 import { BoardExplorer } from './whiteboards/BoardExplorer';
@@ -26,6 +23,7 @@ import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardS
 import type { Region } from '../components/whiteboard/quickEditLogic';
 import { useCanvasBox } from './whiteboards/useCanvasBox';
 import { useTopRowFit } from './whiteboards/useTopRowFit';
+import { BoardSyncButton } from './whiteboards/BoardSyncButton';
 import type { SelectionRef } from '../components/whiteboard/agentDrop';
 import type { WhiteboardCanvasApi } from '../components/whiteboard/LazyWhiteboardCanvas';
 import './WhiteboardsPage.css';
@@ -75,11 +73,15 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   );
   useFocusTarget(focus, setOpenSlug);
   // Agent cards keep their composer buckets across remounts and board switches; they die with
-  // the page, all but the boards' home conversations, which the agent panel keeps alive while
-  // the owner is on another page (boardAgentScratch.ts).
-  useEffect(() => (vault ? () => dropBoardAgentScratch({ vault, keepHome: true }) : undefined), [vault]);
-  // The retired tab strip's memory (open tabs, coloured groups) leaves the prefs file once.
-  useEffect(() => { if (vault) dropWhiteboardPref(vault, 'tabs', `dreamcontext:whiteboard-tabs:${vault}`); }, [vault]);
+  // the page (boardAgentScratch.ts).
+  useEffect(() => (vault ? () => dropBoardAgentScratch({ vault }) : undefined), [vault]);
+  // The retired tab strip's memory (open tabs, coloured groups) and the retired agent panel's
+  // open state leave the prefs file once.
+  useEffect(() => {
+    if (!vault) return;
+    dropWhiteboardPref(vault, 'tabs', `dreamcontext:whiteboard-tabs:${vault}`);
+    dropWhiteboardPref(vault, 'agentPanel', `dc.wbAgentPanel.${vault}`);
+  }, [vault]);
   // With no deep link, the board the owner was on when they last left the page (boardPlace.ts),
   // once the list says it still exists; else the default board.
   const [remembered] = useState(() => (vault ? readLastBoard(vault) : null));
@@ -109,19 +111,6 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
     publishPageDetail(bus, 'whiteboards', { page: 'whiteboards', board: openSlug });
     return () => publishPageDetail(bus, 'whiteboards', null);
   }, [bus, openSlug]);
-
-  // Only the open board's agents' conversations stay alive (one `claude` each): its home agents
-  // and the agents with a card on it. The rest end once idle, so boards visited with the panel
-  // open, deleted boards, removed cards and re-homed agents never pile up.
-  // Read from the agent roster, the list the panel and the cards read, so the sweep and the
-  // panel agree on who is on the board.
-  const { data: roster } = useAgents();
-  const openCards = useBoardCards(vault, openSlug ?? undefined);
-  useEffect(() => {
-    if (!vault || !openSlug || !roster) return;
-    sweepHomeSessions(vault, (board, agent) => board === openSlug && roster.some((a) => a.slug === agent
-      && (a.whiteboard === board || openCards.some((c) => c.agent === agent))));
-  }, [vault, openSlug, roster, openCards]);
 
   // The board explorer (left sidebar) lives HERE, above the slug-keyed editor, so a board
   // switch keeps its search, its fields and its scroll, and it is there in every state.
@@ -227,8 +216,8 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   explorerToggle?: ReactNode;
 }) {
   const { t, locale } = useI18n();
-  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush } = useWhiteboardEditor(slug);
-  const { vault, bus } = useVault();
+  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh } = useWhiteboardEditor(slug);
+  const { bus } = useVault();
   // The board writing field (2026-11-11), on every ready board.
   const [selection, setSelection] = useState<SelectionRef | null>(null);
   const [work, setWork] = useState<FieldWork | null>(null);
@@ -241,10 +230,10 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   // in Excalidraw's top row both read it.
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
   const canvasBox = useCanvasBox(canvasEl);
-  // The save state and the Agents toggle ride Excalidraw's top-right row while it fits the
+  // The save state and the Sync button ride Excalidraw's top-right row while it fits the
   // canvas, else their own corner group under it (useTopRowFit decides, and re-measures on every
   // width change of the row or its controls).
-  const [toggleEl, setToggleEl] = useState<HTMLButtonElement | null>(null);
+  const [toggleEl, setToggleEl] = useState<HTMLElement | null>(null);
   const controlsAside = useTopRowFit(toggleEl, canvasBox, locale);
   const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
   const onCanvasApi = useCallback((api: WhiteboardCanvasApi | null) => {
@@ -256,7 +245,6 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const clearSelection = useCallback(() => {
     canvasRef.current?.excalidraw.updateScene({ appState: { selectedElementIds: {} } as never });
   }, []);
-  const panelOpen = useAgentPanelOpen(vault);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
   const boards = useWhiteboardList();
   useBoardHash(slug);
@@ -316,21 +304,11 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
 
   const canExport = saveState.kind === 'failed' || saveState.kind === 'deleted';
   // The page's controls in the canvas's own top-right row, before "+ Add": the save state, quiet
-  // until it fails, and the board agents panel's toggle.
+  // until it fails, and the Sync button (the brain sync, boards merged element by element).
   const controls = (
     <>
       <SaveStatus state={saveState} />
-      <button
-        ref={setToggleEl}
-        type="button"
-        className="wbp-agent-toggle"
-        aria-pressed={panelOpen}
-        title={t('whiteboard.agentPanel.toggle')}
-        onClick={() => setAgentPanelOpen(vault, !panelOpen)}
-      >
-        <AgentsGlyph />
-        {t('whiteboard.agentPanel.button')}
-      </button>
+      <BoardSyncButton ref={setToggleEl} flushAndWait={flushAndWait} refresh={refresh} />
     </>
   );
 
@@ -384,7 +362,6 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
             )}
           </div>
         </PagePopupProvider>
-        {panelOpen && <BoardAgentPanel board={slug} />}
       </div>
     </div>
   );
@@ -428,12 +405,4 @@ function SaveStatus({ state }: { state: SaveState }) {
     case 'deleted':
       return <span className="wbp-status wbp-status--bad" role="alert">{t('whiteboard.page.notSaved')}</span>;
   }
-}
-
-function AgentsGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="5.5" r="2.25" /><path d="M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4" /><path d="M10.5 3.5a2.25 2.25 0 0 1 0 4.25M11.5 9.2c1.5.5 2.5 1.9 2.5 3.8" />
-    </svg>
-  );
 }

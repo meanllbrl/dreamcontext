@@ -56,8 +56,9 @@ export function ManageMembersModal({ focus, onClose }: {
   const [selected, setSelected] = useState<string | null>(focus.slug ?? null);
   const [tab, setTab] = useState<PanelTab>('profile');
   const [org, setOrg] = useState(false);
-  const [creating, setCreating] = useState<{ start: TeamStarter; whiteboard?: string } | null>(
-    focus.create ? { start: 'blank', ...(focus.whiteboard ? { whiteboard: focus.whiteboard } : {}) } : null,
+  const createOf = (f: ManageMembersDetail) => ({ start: 'blank' as TeamStarter, ...(f.whiteboard ? { whiteboard: f.whiteboard } : {}), ...(f.global ? { global: true } : {}) });
+  const [creating, setCreating] = useState<{ start: TeamStarter; whiteboard?: string; global?: boolean } | null>(
+    focus.create ? createOf(focus) : null,
   );
   const [editing, setEditing] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<string | null>(null);
@@ -68,7 +69,7 @@ export function ManageMembersModal({ focus, onClose }: {
   useEffect(() => {
     if (focus.nonce === seen.current) return;
     seen.current = focus.nonce;
-    if (focus.create) setCreating({ start: 'blank', ...(focus.whiteboard ? { whiteboard: focus.whiteboard } : {}) });
+    if (focus.create) setCreating(createOf(focus));
     else if (focus.slug) { setSelected(focus.slug); setCreating(null); setOrg(false); setTab('profile'); }
   }, [focus]);
 
@@ -167,9 +168,10 @@ export function ManageMembersModal({ focus, onClose }: {
           <div className="mm-body">
             {creating ? (
               <NewTeammate
-                key={`${creating.start}:${creating.whiteboard ?? ''}`}
+                key={`${creating.start}:${creating.whiteboard ?? ''}:${creating.global ? 'all' : ''}`}
                 start={creating.start}
                 whiteboard={creating.whiteboard}
+                everywhere={creating.global}
                 onDraftTitle={() => { /* the list shows members, not drafts */ }}
                 onCancel={() => setCreating(null)}
                 onCreated={(slug, message) => { setCreating(null); setSelected(slug); setToast(message); }}

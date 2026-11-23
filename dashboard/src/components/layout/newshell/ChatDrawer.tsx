@@ -6,12 +6,12 @@ import { ProjectLogoPanel } from './ProjectLogoPanel';
 import { StatusMark, askRow, markWords, type MarkState } from './StatusMark';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import type { EkipMember } from '../../aiteam/teamModel';
-import { TeamList, TeamRowButton, type TeamListMember } from './TeamList';
+import { TeamList, TeamRowButton } from './TeamList';
 import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
+import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
 import './ChatDrawer.css';
 import { HiddenGroupToggle } from './HiddenGroupToggle';
 
@@ -58,20 +58,17 @@ export interface ChatDrawerProps {
   /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
    *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
   foot?: ReactNode;
-  /** The Global ekip row at the very bottom (plan-r10 1f), or null when no project has a member
-   *  of all projects. */
-  globalTeam?: GlobalTeamRow | null;
   /** A member's on/off switch in an Ekip list: `POST /api/agents/:slug/enabled` in `vault`. */
   onSwitchMember?(vault: string, slug: string, enabled: boolean): Promise<unknown>;
   /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view);
-   *  `create` opens it on New member. */
-  onManage?(vault: string | null, opts?: { create?: boolean }): void;
+   *  `create` opens it on New member, `global` with "All projects" picked. */
+  onManage?(vault: string | null, opts?: { create?: boolean; global?: boolean }): void;
 }
 
 interface Menu { kind: 'project' | 'new' | 'window' | 'new-chat'; name?: string; windowId?: string; x: number; y: number }
 
-/** Which Ekip list is open: a project's, or the Global ekip's. */
-type TeamOpen = { kind: 'project'; vault: string; x: number; y: number } | { kind: 'global'; x: number; y: number };
+/** Which Ekip list is open (the phone's sheet): a project's. */
+type TeamOpen = { kind: 'project'; vault: string; x: number; y: number };
 
 /** The stored name of a project's first window (agent-sessions.ts `DEFAULT_WINDOW`): drawn in the
  *  owner's language. */
@@ -339,34 +336,28 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (p.floating) p.onClose();
   };
 
-  /** The open member's slug when it is one of the global members. */
-  const globalOpenSlug = (() => {
-    const open = p.rows.flatMap((r) => r.children).find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team' && !!c.openSlug)?.openSlug;
-    return open && p.globalTeam?.members.some((m) => m.slug === open) ? open : null;
-  })();
-
   /** A project's Ekip row (r8-05). On the desktop it opens IN PLACE (plan r4 D1), and with no
    *  member yet it reads "Ekip · Ekip kur" and opens team setup (owner 2026-11-03, option A);
    *  a phone keeps its bottom sheet. */
   const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone ? (
-    <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
+    <TeamSection key="team" members={c.members} vault={c.vault} label={t('drawer.team.row')}
       openSlug={c.openSlug ?? null} className="ns-dr-child" testid="drawer-team-row"
       onOpen={(m) => openMember(c.vault, m)}
-      {...(p.onManage ? { onManage: () => p.onManage?.(c.vault), onNewMember: () => p.onManage?.(c.vault, { create: true }) } : {})} />
+      {...(p.onManage ? {
+        onManage: () => p.onManage?.(c.vault),
+        onNewMember: () => p.onManage?.(c.vault, { create: true }),
+        onNewGlobalMember: () => p.onManage?.(c.vault, { create: true, global: true }),
+      } : {})} />
   ) : (
     <TeamRowButton key="team" members={c.members} count={c.count} asking={c.asking} label={t('drawer.team.row')}
       selected={c.selected} className="ns-dr-child" testid={p.device ? 'phone-team-row' : 'drawer-team-row'} vault={c.vault}
-      expanded={teamOpen?.kind === 'project' && teamOpen.vault === c.vault}
+      expanded={teamOpen?.vault === c.vault}
       onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'project', vault: c.vault, x: r.right + 8, y: r.top }); }} />
   ));
 
-  /** A project's members for the New window menu: its own, then the members of all projects. */
-  const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
-    // Folded or open, the same members (a folded row keeps them beside its mark).
-    const own = ownMembersOf(row);
-    const global = (p.globalTeam?.members ?? []).filter((g) => !own.some((m) => m.slug === g.slug));
-    return [...own, ...global].filter((m) => m.enabled);
-  };
+  /** A project's members for the New window menu: its Ekip list (its own, then the members of
+   *  all projects), folded or open (a folded row keeps them beside its mark). */
+  const newChatMembers = (row: DrawerProjectRow): EkipMember[] => ownMembersOf(row).filter((m) => m.enabled);
 
   const teamOf = (vault: string): EkipMember[] => {
     const row = p.rows.find((r) => r.name === vault);
@@ -532,41 +523,13 @@ export function ChatDrawer(p: ChatDrawerProps) {
           </div>
         )}
       </div>
-      {p.globalTeam && (
-        // r8-12: outside every project, at the very bottom.
-        <div className="ns-team-global">
-          <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
-          {!phone ? (
-            <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row" openSlug={globalOpenSlug}
-              onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
-              {...(p.onManage ? { onManage: () => p.onManage?.(null), onNewMember: () => p.onManage?.(null, { create: true }) } : {})} />
-          ) : (
-          <TeamRowButton members={p.globalTeam.members} count={p.globalTeam.count} asking={p.globalTeam.asking}
-            label={t('drawer.team.global')} testid={p.device ? 'phone-global-team-row' : 'drawer-global-team-row'}
-            expanded={teamOpen?.kind === 'global'}
-            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'global', x: r.right + 8, y: r.bottom }); }} />
-          )}
-        </div>
-      )}
       {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
-      {teamOpen?.kind === 'project' && (
+      {teamOpen && (
         <TeamList title={t('drawer.team.listTitle').replace('{project}', () => teamOpen.vault)} members={teamOf(teamOpen.vault)}
           sheet={phone} testid="team-list" vault={teamOpen.vault} anchor={{ x: teamOpen.x, y: teamOpen.y }}
           onOpen={(m) => openMember(teamOpen.vault, m)}
           onSwitch={(m, enabled) => p.onSwitchMember?.(teamOpen.vault, m.slug, enabled) ?? Promise.resolve()}
           {...(!phone && p.onManage ? { onManage: () => p.onManage?.(teamOpen.vault) } : {})}
-          onClose={() => setTeamOpen(null)} />
-      )}
-      {teamOpen?.kind === 'global' && p.globalTeam && (
-        <TeamList title={`${t('drawer.team.global')} · ${t('drawer.team.globalAll')}`} members={p.globalTeam.members as TeamListMember[]}
-          sheet={phone} testid="global-team-list" anchor={{ x: teamOpen.x, y: teamOpen.y - 8 }}
-          onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
-          onSwitch={(m, enabled) => {
-            // A global member's switch writes its global manifest: any project it opens in will do.
-            const g = p.globalTeam?.members.find((x) => x.slug === m.slug);
-            return g?.openIn ? (p.onSwitchMember?.(g.openIn, m.slug, enabled) ?? Promise.resolve()) : Promise.reject(new Error('no project'));
-          }}
-          {...(!phone && p.onManage ? { onManage: () => p.onManage?.(null) } : {})}
           onClose={() => setTeamOpen(null)} />
       )}
 

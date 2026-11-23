@@ -27,7 +27,7 @@ import { projectKey } from '../../lib/local-store.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import {
   appendManagedHistory, bindingDir, listBindings, readBinding, readForward, readManagedHistory, readManagerBinding,
-  removeManager, scopeOfContextRoot, writeBinding, writeTelegramJson,
+  removeManager, scopeOfContextRoot, withKeptGroups, writeBinding, writeTelegramJson,
 } from '../../lib/telegram/config.js';
 import {
   CREATION_TTL_MS, PAIRING_ID_RE, TG_MANAGER_ALLOWED_UPDATES,
@@ -227,10 +227,10 @@ export class TelegramManager {
     const key = keyOf(scope, target);
     const old = this.hub.active.get(key);
     if (old && old.binding.botId !== botId) await this.hub.unbind(scope, target, { keyed: true, replaceManagedToken: this.hub.replaceManagedToken });
-    const b = writeBinding(scope, target, {
+    const b = writeBinding(scope, target, withKeptGroups(scope, target, {
       token, botId, botUsername: String(me.username ?? ''), chatId: manager.userId, userId: manager.userId,
       boundAt: new Date(this.hub.now()).toISOString(), managed: true, managerBotId: manager.botId,
-    }, this.hub.home);
+    }, this.hub.home), this.hub.home);
     appendManagedHistory({ target, projectKey: pk, botId, botUsername: b.botUsername, creatorId: manager.userId, managerBotId: manager.botId, adoptedAt: b.boundAt }, this.hub.home);
     const ab = this.hub.activate(scope, target, b);
     try { this.hub.deps.ensureDispatcher?.(); } catch { /* named in the sheet */ }

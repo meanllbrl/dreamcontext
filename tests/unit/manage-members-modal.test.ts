@@ -51,7 +51,10 @@ describe('the modal', () => {
 
   it('opens on the asked member, or the create flow, and follows a new request while open', () => {
     expect(modal).toMatch(/useState<string \| null>\(focus\.slug \?\? null\)/);
-    expect(modal).toMatch(/focus\.create \? \{ start: 'blank'/);
+    expect(modal).toMatch(/const createOf = \(f: ManageMembersDetail\) => \(\{ start: 'blank' as TeamStarter/);
+    expect(modal).toMatch(/focus\.create \? createOf\(focus\) : null/);
+    // "Tüm projelerde çalışan üye": the create step opens with "All projects" picked.
+    expect(modal).toMatch(/everywhere=\{creating\.global\}/);
     expect(modal).toMatch(/if \(focus\.nonce === seen\.current\) return;/);
   });
 });
@@ -98,15 +101,15 @@ describe('a project not on screen: queued, never a timer (end review Major 4)', 
     expect(body).toMatch(/setPendingManage\(\(prev\) => \(\{ \.\.\.prev, \[target\]: \{ nonce/);
     expect(body).toMatch(/if \(!intentLands\(result, !!tab && !tab\.cold\)\) consumeManage\(target, nonce\)/);
     expect(chrome).toMatch(/pendingManage=\{pendingManage\[p\.vault\] \?\? null\}/);
-    expect(inst).toMatch(/if \(pendingManage === null \|\| !isActive\) return;\s*onManageConsumed\?\.\(vault, pendingManage\.nonce\);\s*openManage\(pendingManage\.create \? \{ create: true \} : \{\}\);/);
+    expect(inst).toMatch(/if \(pendingManage === null \|\| !isActive\) return;\s*onManageConsumed\?\.\(vault, pendingManage\.nonce\);\s*openManage\(pendingManage\.create \? \{ create: true, \.\.\.\(pendingManage\.global \? \{ global: true \} : \{\}\) \} : \{\}\);/);
   });
 
   it('the ChromeApi exposes queueDrawerIntent: the drawer\'s own per-project pending-intent path', () => {
     expect(chrome).toMatch(/queueDrawerIntent\(vault: string, intent: DrawerIntent\): void;/);
     expect(chrome).toMatch(/queueDrawerIntent: \(\) => \{\},/);
     expect(chrome).toMatch(/queueDrawerIntent: \(vault: string, intent: DrawerIntent\) => \{ void queueDrawerIntent\(vault, intent\); \}/);
-    // The Global ekip list opens a member in its project through the same queue (`pick` -> onIntent).
-    expect(code(read('components/layout/newshell/ChatDrawer.tsx'))).toMatch(/if \(g\?\.openIn\) openMember\(g\.openIn, m\)/);
+    // A project's Ekip list (a global member's row too) opens it in that project through the same queue (`pick` -> onIntent).
+    expect(code(read('components/layout/newshell/ChatDrawer.tsx'))).toMatch(/onOpen=\{\(m\) => openMember\(c\.vault, m\)\}/);
     expect(chrome).toMatch(/onIntent=\{\(vault, intent\) => void queueDrawerIntent\(vault, intent\)\}/);
   });
 });

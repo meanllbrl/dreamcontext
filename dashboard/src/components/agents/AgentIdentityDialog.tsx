@@ -12,6 +12,7 @@ import {
   type AgentIdentityPatch,
   type AgentSummary,
 } from '../../hooks/useAgents';
+import { memberLevel } from '../../lib/memberLevel';
 import { useWhiteboardList } from '../../hooks/useWhiteboards';
 import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { SOUL_MAX_CHARS, SOUL_TEMPLATES, normalizeSoul, soulProblem, soulTemplate, type SoulTemplateId } from '../../generated/soul-templates';
@@ -43,7 +44,7 @@ export interface IdentityForm {
   autonomy: AgentAutonomy;
 }
 
-const AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['ask', 'balanced', 'free'];
+const AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['balanced', 'free'];
 
 /** A new agent's form: blank, and learning on (the store's own default for a new agent). */
 export const EMPTY_IDENTITY_FORM: IdentityForm = {
@@ -70,7 +71,7 @@ export function formFromAgent(agent: AgentSummary, prompt: string, learning: boo
     boardOnly: !!agent.whiteboard && agent.boardOnly === true,
     learning,
     soul,
-    autonomy: agent.autonomy ?? 'balanced',
+    autonomy: memberLevel(agent.autonomy),
   };
 }
 

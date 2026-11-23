@@ -16,6 +16,7 @@ import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
 import { writeConflictReport, readConflictReport, clearConflictReport } from './conflict-report.js';
+import { exchangeBoards, type BoardExchangeResult } from './board-exchange.js';
 import {
   resolveBrainSyncToken,
   resolveMode,
@@ -165,6 +166,14 @@ export interface SyncResult {
    * self-healed. Never carries any token value.
    */
   healedStaleProjectToken?: boolean;
+  /**
+   * The team merge waits (for /dream-sync or the human) yet the boards travelled anyway
+   * ({@link exchangeBoards}): what went out, what came in, what is left to the normal sync.
+   * `error` when the board exchange itself failed; the sync's own outcome stands either way.
+   */
+  boards?: BoardExchangeResult & { error?: string };
+  /** Brain files a waiting team merge left for /dream-sync (sleep), by count. */
+  awaitingSleep?: number;
 }
 
 const EMPTY_SCRUB = { blocks: [] as ScrubHit[], warns: [] as ScrubHit[] };
@@ -572,6 +581,10 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     // versions, so the stage never sends it over the team's copy.
     const restored = ctx.mode === 'full-repo' ? d.restoreTeamFiles(pullCtx(ctx)) : [];
     let result = await guardedSync(ctx, opts);
+    // A team merge that waits does not hold the boards back (owner, 2026-11-18).
+    if (opts.mode === 'auto' && !opts.continue && !opts.resume && BOARDS_TRAVEL_WHEN.has(result.action)) {
+      result = await withBoards(ctx, result);
+    }
     if (inStepWithRemote(opts, result)) {
       try { writeBrainLocal(projectRoot, { lastFullSyncAt: Date.now() }); } catch { /* the 24-hour sync just runs once more */ }
     }
@@ -584,6 +597,38 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     return { ...result, note: [result.note, ...recovered.notes].filter(Boolean).join(' ') };
   } finally {
     d.releaseBrainLock(contextRoot);
+  }
+}
+
+/** The waiting outcomes after which the boards still travel on their own. */
+const BOARDS_TRAVEL_WHEN: ReadonlySet<SyncAction> = new Set<SyncAction>(['awaiting-agent', 'already-awaiting-agent', 'code-conflict']);
+
+/**
+ * The boards' own exchange beside a team merge that waits, under the sync's brain lock. Never
+ * changes the sync's outcome: a failure is reported on `boards.error`.
+ */
+async function withBoards(ctx: Ctx, result: SyncResult): Promise<SyncResult> {
+  const awaitingSleep = readConflictReport(ctx.contextRoot)?.deferred.length ?? 0;
+  const prefix = appsPrefix(ctx);
+  const session = resolveTokenSession(ctx);
+  if (prefix === null) return { ...result, awaitingSleep };
+  // No GitHub sign-in: the boards cannot travel, and the button says why (never "up to date").
+  if (!session) return { ...result, awaitingSleep, boards: { sent: 0, received: 0, waiting: 0, stopped: 'no-session' } };
+  try {
+    const boards = await exchangeBoards({
+      gitCwd: ctx.gitCwd,
+      contextRoot: ctx.contextRoot,
+      prefix,
+      remote: REMOTE_NAME,
+      branch: ctx.branch,
+      network: (fn) => session.run(fn),
+      author: authorFor(ctx),
+      blocksPush: (scrub) => isBlockingScrub(scrub, ctx.strict),
+    });
+    return { ...result, awaitingSleep, boards };
+  } catch (err) {
+    const message = err instanceof GitSyncError ? err.message.split('\n')[0]! : 'The boards could not be exchanged.';
+    return { ...result, awaitingSleep, boards: { sent: 0, received: 0, waiting: 0, error: message } };
   }
 }
 

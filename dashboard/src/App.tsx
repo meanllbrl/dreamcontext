@@ -3,7 +3,7 @@ import { EmbedRoot } from './components/embed/EmbedRoot';
 import { ShellModeProvider } from './lib/uxMode';
 import { markOpenedForLink } from './lib/windowLaunch';
 import { LauncherRoot } from './pages/LauncherRoot';
-import { Component, type ReactNode } from 'react';
+import { Component, Suspense, lazy, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createInstanceQueryClient, registerInstanceClient } from './lib/instanceQueryClient';
 import { initWindowActivity } from './lib/windowActivity';
@@ -94,6 +94,9 @@ const checklistId = params.get('checklist');
 const assistantMode = params.get('assistant') === '1';
 /** `?viewer=<project-relative path>&vault=<v>`: the small document window (`openViewerWindow`). */
 const viewerPath = params.get('viewer');
+/** `?boardprint=<slug>`: a whiteboard drawn for `dreamcontext whiteboard export` (headless). */
+const boardPrintSlug = params.get('boardprint');
+const BoardPrint = lazy(() => import('./components/whiteboard/BoardPrint'));
 /** `?inbox=1`: the Notifications window (`openInboxWindow`). */
 const inboxMode = params.get('inbox') === '1';
 /**
@@ -192,6 +195,24 @@ export function App() {
             <I18nProvider>
               <VaultProvider vault={vault} instanceId="viewer" isActive bus={viewerBus}>
                 <ViewerWindow path={viewerPath} />
+              </VaultProvider>
+            </I18nProvider>
+          </QueryClientProvider>
+        </ThemeProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  // `whiteboard export`: one board, drawn the way the app draws it, for a headless browser to
+  // photograph section by section (components/whiteboard/BoardPrint.tsx). Light, always.
+  if (boardPrintSlug) {
+    return (
+      <ErrorBoundary>
+        <ThemeProvider forced="light">
+          <QueryClientProvider client={windowQueryClient}>
+            <I18nProvider>
+              <VaultProvider vault={params.get('vault')} instanceId="boardprint" isActive bus={viewerBus}>
+                <Suspense fallback={null}><BoardPrint slug={boardPrintSlug} /></Suspense>
               </VaultProvider>
             </I18nProvider>
           </QueryClientProvider>

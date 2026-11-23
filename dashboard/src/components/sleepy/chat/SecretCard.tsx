@@ -9,6 +9,7 @@ import { useOwnerCardT } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MaskedSecretInput } from '../../core/MaskedSecretInput';
 import { CardHeader } from './molecules';
+import { FolderConfirm } from './FolderConfirm';
 import type { SecretViewSpec } from '../../../lib/chatViewSpec';
 
 /**
@@ -104,12 +105,13 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
     [spec.fields, values],
   );
 
-  const submit = useCallback(async () => {
-    if (!filled || phase === 'saving' || phase === 'saved' || noFolder) return;
+  /** A save. `confirmed`: the folder the owner agreed to in the sheet; it is this save's root. */
+  const submit = useCallback(async (confirmed?: string) => {
+    if (!filled || phase === 'saving' || phase === 'saved' || (!confirmed && noFolder)) return;
     setPhase('saving');
     setError('');
     setCheck(null);
-    const root = drawnRoot;
+    const root = confirmed ?? drawnRoot;
     try {
       // Every path is the owner's own press (K4): the owner key rides with it, and the folder the
       // owner saw (end review r2).
@@ -238,9 +240,17 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
       </div>
 
       {error && <p className="chat-secretcard-error">{error}</p>}
+      {check?.state === 'now' && (
+        <FolderConfirm
+          message={t('ownerCard.folderConfirmSave').replace('{name}', cardFolderText(check.folder, spec) ?? check.folder.name)}
+          confirmLabel={t('ownerCard.folderConfirmSaveGo')}
+          onConfirm={() => { void submit(check.folder.path); }}
+          onCancel={() => setCheck(null)}
+        />
+      )}
       {(() => {
         const line = folderLine(t, { check, spec, unknown: needsFolder && !drawnRoot && loaded, reading: !!phoneFolder?.reading, cannot: !!phoneFolder && !phoneFolder.reading });
-        return line && <p className={check ? 'chat-secretcard-error' : 'chat-secretcard-note'} data-testid="secret-card-folder-line">{line}</p>;
+        return line && <p className={check?.state === 'cannot' ? 'chat-secretcard-error' : 'chat-secretcard-note'} data-testid="secret-card-folder-line">{line}</p>;
       })()}
       {sessionId && loaded && phone && !record && (
         <p className="chat-secretcard-note">This card is older than the chat's newest cards; fill it on the Mac.</p>

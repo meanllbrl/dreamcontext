@@ -8,6 +8,7 @@ import {
   TelegramShellError, atName, botLink, rowOf, telegramRoutes, telegramShell, useInvalidateTelegram, useTelegramStatus,
 } from '../../api/telegram';
 import { TelegramBindSheet } from './TelegramBindSheet';
+import { TelegramGroups } from './TelegramGroups';
 import './telegram.css';
 
 /**
@@ -23,7 +24,7 @@ export function TelegramMemberSection({ slug, name }: { slug: string; name: stri
   const { t } = useI18n();
   const api = useApi();
   const routes = telegramRoutes(api);
-  const status = useTelegramStatus();
+  const status = useTelegramStatus({ watch: true });
   const invalidate = useInvalidateTelegram();
   const row = rowOf(status.data, slug);
   const bound = row?.state === 'active';
@@ -108,6 +109,7 @@ export function TelegramMemberSection({ slug, name }: { slug: string; name: stri
               </ul>
             )}
             <p className="agp-hint">{t('telegram.forward.always')}</p>
+            {row && <TelegramGroups row={row} />}
             <div className="tg-member-links">
               {link && <button type="button" className="tg-link" onClick={() => void openExternalUrl(link)}>{t('telegram.openInTelegram')}</button>}
               <button type="button" className="tg-link tg-link--danger" onClick={remove} data-testid="tg-member-unbind">

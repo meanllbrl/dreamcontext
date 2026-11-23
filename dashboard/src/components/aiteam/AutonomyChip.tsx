@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { findAgent, useAgents, type AgentAutonomy } from '../../hooks/useAgents';
+import { memberLevel } from '../../lib/memberLevel';
 import { AgentIdentityDialog } from '../agents/AgentIdentityDialog';
 import './AutonomyChip.css';
 
@@ -44,7 +45,7 @@ export function MemberAutonomy({ slug, variant }: { slug: string; variant: 'head
   return (
     <>
       {/* A teammate's read-only member has no edit (its Save would be refused): a plain word. */}
-      <AutonomyChip level={agent.autonomy ?? 'balanced'} variant={variant} onEdit={agent.readOnly ? undefined : () => setEditing(true)} />
+      <AutonomyChip level={memberLevel(agent.autonomy)} variant={variant} onEdit={agent.readOnly ? undefined : () => setEditing(true)} />
       {editing && createPortal(
         <div data-member-card-layer onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
           <AgentIdentityDialog slug={slug} focusField="autonomy" onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />

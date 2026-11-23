@@ -1,6 +1,5 @@
 /**
- * Where the owner was on the Whiteboard page (boardPlace.ts: last board, each board's viewport,
- * the agent panel) and which home agent the panel shows (agentPanelState.ts).
+ * Where the owner was on the Whiteboard page (boardPlace.ts: last board, each board's viewport).
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -12,7 +11,6 @@ vi.stubGlobal('localStorage', {
 });
 
 const place = await import('../../dashboard/src/components/whiteboard/boardPlace.js');
-const { homeAgentsOf, panelAgentOf } = await import('../../dashboard/src/components/whiteboard/agentPanelState.js');
 
 beforeEach(() => store.clear());
 
@@ -45,14 +43,6 @@ describe('boardPlace', () => {
     store.set('dc.wbViewport.acme.q3-plan', '{not json');
     expect(place.readViewport('acme', 'q3-plan')).toBeNull();
   });
-
-  it('remembers whether the agent panel was open, closed by default', () => {
-    expect(place.readPanelOpen('acme')).toBe(false);
-    place.writePanelOpen('acme', true);
-    expect(place.readPanelOpen('acme')).toBe(true);
-    place.writePanelOpen('acme', false);
-    expect(place.readPanelOpen('acme')).toBe(false);
-  });
 });
 
 describe('viewportShowsAny', () => {
@@ -69,24 +59,5 @@ describe('viewportShowsAny', () => {
     expect(place.viewportShowsAny(vp, 800, 600, [{ x: 900, y: 10, width: -200, height: 0 }])).toBe(true);
     expect(place.viewportShowsAny(vp, 800, 600, [])).toBe(true);
     expect(place.viewportShowsAny(vp, 0, 0, [{ x: 5000, y: 5000, width: 1, height: 1 }])).toBe(true);
-  });
-});
-
-describe('the panel’s home agent', () => {
-  const agent = (slug: string, title: string, whiteboard?: string) => ({ slug, title, whiteboard }) as never;
-  const all = [agent('z', 'Zed', 'q3-plan'), agent('a', 'Ada', 'q3-plan'), agent('o', 'Other', 'growth'), agent('n', 'None')];
-
-  it('home agents are the ones whose manifest names the board, by title', () => {
-    expect(homeAgentsOf(all, 'q3-plan').map((a: { slug: string }) => a.slug)).toEqual(['a', 'z']);
-    expect(homeAgentsOf(undefined, 'q3-plan')).toEqual([]);
-    expect(homeAgentsOf(all, 'empty')).toEqual([]);
-  });
-
-  it('shows the picked one, else the first; a pick from another board falls back', () => {
-    const homes = homeAgentsOf(all, 'q3-plan');
-    expect(panelAgentOf(homes, null)?.slug).toBe('a');
-    expect(panelAgentOf(homes, 'z')?.slug).toBe('z');
-    expect(panelAgentOf(homes, 'o')?.slug).toBe('a');
-    expect(panelAgentOf([], 'z')).toBeNull();
   });
 });

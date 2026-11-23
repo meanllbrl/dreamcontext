@@ -187,6 +187,28 @@ describe('his own conversation with a member: its question is his alone (owner 2
     expect((await mirrors()).filter((m) => m.answers === item && m.state !== 'done')).toEqual([]);
   });
 
+  it('a message he wrote ABOUT something else leaves the member\'s card open, so it never comes back as a new card (open note 2026-11-19)', async () => {
+    registerChat({ sessionId: MAIN, conversationId: null, vault: 'acme', mode: 'super' });
+    const session = await rotaSession();
+    superOwnerSpoke(session);
+    const r = await verb(tokenFor(session, 'm:rota'), 'ask', { text: 'Which reference should the update video follow?', options: ['I send one', 'You start'] });
+    await _superInboxDrained();
+    const item = (r.json.result as { item: string }).item;
+    // Written about a task (an [About …] header), not about the card.
+    const elsewhere = [{ kind: 'task' as const, id: 'video-edit' }];
+    expect(superAskStillOpen(session, elsewhere)).toContain('<super-ask-still-open');
+    expect(superAskStillOpen(session, elsewhere)).toContain('never ask that card again');
+    superOwnerSpoke(session, Date.now(), [], elsewhere);
+    await _superInboxDrained();
+    expect((await rota()).queue.find((q) => q.id === item)?.state).toBe('escalated');
+    // A reply to the card's message is how he answers it in his own chat: it closes.
+    const reply = [{ kind: 'reply' as const, id: 'abc123' }];
+    expect(superAskStillOpen(session, reply)).toContain('<super-ask-closed');
+    superOwnerSpoke(session, Date.now(), [], reply);
+    await _superInboxDrained();
+    expect((await rota()).queue.find((q) => q.id === item)?.state).toBe('done');
+  });
+
   it('a turn he did not write (a server continue, a run report) closes nothing in the member\'s chat', async () => {
     registerChat({ sessionId: MAIN, conversationId: null, vault: 'acme', mode: 'super' });
     const session = await rotaSession();

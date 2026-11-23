@@ -13,6 +13,8 @@
  * Fictional members and commands (synthetic-fixtures pattern).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 
@@ -225,11 +227,28 @@ describe("the Super chat's member card (B1, B2)", () => {
     expect(cut).toContain('owner.answer.cut');
   });
 
-  it("the member's own question takes his words (a reply field and Send)", () => {
-    const html = tail(mirror({ id: 'q-m4', member: 'otobot', of: 'ask', ownerText: 'Which list?', ask: { questions: [{ question: 'Which list?', options: [{ label: 'Growth' }, { label: 'Sales' }] }] } }));
-    expect(html.match(/data-testid="super-member-option"/g)?.length).toBe(2);
-    expect(has(html, 'super-member-reply')).toBe(true);
-    expect(has(html, 'super-member-send')).toBe(true);
+  it("the member's own question is the chat's own question card, who asks and Open on one line", () => {
+    const html = tail(mirror({ id: 'q-m4', member: 'otobot', of: 'ask', ownerText: 'Which list?', ask: { questions: [{ question: 'Which list?', options: [{ label: 'Growth', description: 'the growth list' }, { label: 'Sales' }] }] } }));
+    expect(has(html, 'super-member-open')).toBe(true);
+    // The card itself is SurveyCard (mocked here): the head is the only thing this card draws.
+    expect(html).toContain('chat-memberask-head');
+    expect(readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/super/SuperQuestionCard.tsx', import.meta.url)), 'utf8')).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} draftKey/);
+    // No look-alike controls of its own.
+    expect(has(html, 'super-member-option')).toBe(false);
+    expect(has(html, 'super-member-reply')).toBe(false);
+    expect(has(html, 'super-member-send')).toBe(false);
+  });
+  it('are the same question card too, never the old list', () => {
+    const multi = tail(mirror({ id: 'q-m7', member: 'otobot', of: 'ask', ask: { questions: [
+      { question: 'Which list?', options: [{ label: 'Growth' }, { label: 'Sales' }, { label: 'Both' }, { label: 'None' }, { label: 'Later' }] },
+      { question: 'Which channel?', multiSelect: true, options: [{ label: 'Mail' }, { label: 'SMS' }] },
+    ] } }));
+    expect(multi).toContain('chat-memberask-head');
+    // A child's question carries no card of its own on the mirror (only its words): Open, as before.
+    const child = tail(mirror({ id: 'q-m8', member: 'otobot', of: 'question', ownerText: 'Ship it? (options: Yes | No)' }));
+    expect(child).not.toContain('chat-memberask-head');
+    expect(has(child, 'super-member-open')).toBe(true);
+    expect(has(child, 'super-member-option')).toBe(false);
   });
 });
 
@@ -439,7 +458,7 @@ describe("the profile's Permissions (C1, C2)", () => {
   });
 
   it('explains a level change: stricter now (or next session), freer at the next session', () => {
-    expect(levelChangeKey('balanced', 'ask', data.applies)).toBe('agents.permissions.narrowNow');
+    expect(levelChangeKey('free', 'balanced', data.applies)).toBe('agents.permissions.narrowNow');
     expect(levelChangeKey('free', 'balanced', { narrowing: 'next_session', widening: 'next_session' })).toBe('agents.permissions.narrowNext');
     expect(levelChangeKey('balanced', 'free', data.applies)).toBe('agents.permissions.widen');
     expect(levelChangeKey('balanced', 'balanced', data.applies)).toBeNull();
