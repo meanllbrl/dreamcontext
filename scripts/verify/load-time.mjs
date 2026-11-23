@@ -281,8 +281,9 @@ async function main() {
     report.boards.push({ round, serverCpu: bCpu, pageLong: bLong, list: list ? Math.round(list - t0) : null, board: board ? Math.round(board - t0) : null, quiet: Math.round(bQuiet - t0), requests: reqs.length - n1, kb: reqs.slice(n1).reduce((s, r) => s + r.kb, 0), top: top(reqs, t0, bQuiet, 15) });
     if (flag('shots') && round === ROUNDS - 1) await p.screenshot({ path: join(OUT, `${TAG}-board-${WIDTH}.png`) });
 
-    // The heavy board (--board), opened from the list: the click to its drawn canvas.
-    if (BOARD) {
+    // The heavy board (--board), opened from the list (--heavy-click): the click to its drawn canvas.
+    // Without it the board step above already opens --board (the remembered board).
+    if (BOARD && flag('heavy-click')) {
       const heavyRow = p.locator(`[data-slug="${BOARD}"] .wbx-row-open`).filter({ visible: true }).first();
       if (await heavyRow.isVisible().catch(() => false)) {
         const n2 = reqs.length;
