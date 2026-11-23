@@ -1764,9 +1764,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       ? (intent.page === 'chat' ? targetOf({ vault, kind: 'chat' }) : targetOf({ vault, kind: 'page', page: intent.page, id: intent.id ?? null, label: null }))
       : landsOnChat(intent) ? targetOf({ vault, kind: 'chat' }) : null;
     if (!target) return queueDrawerIntent(vault, intent);
+    stampInput();
     const id = recorder.move(target);
-    return queueDrawerIntent(vault, intent).then((r) => { settleMove(id, vault, r); return r; });
-  }, [recorder, queueDrawerIntent, settleMove]);
+    // A row of the project a move is landing in (the accordion shows its rows at once): the press
+    // retargets that prepare, so the project still comes forward whole, on the row's place.
+    const prepare = vault !== activeRef.current && gate.current()?.vault === vault;
+    return queueDrawerIntent(vault, intent, undefined, prepare ? { prepare: true, moveId: id } : undefined)
+      .then((r) => { settleMove(id, vault, r); return r; });
+  }, [recorder, queueDrawerIntent, settleMove, stampInput, gate]);
   queueDrawerIntentRef.current = trackedIntent;
   /** A folded project's header in the sidebar (Chat and Whiteboards): that project, at the place
    *  it was left (switchTo's carry), and only it open. On Chat with no chat open there it lands on

@@ -57,8 +57,8 @@ export interface DrawerEkipFacts {
 
 /** What a mounted instance publishes up (`DrawerFactsBridge`). */
 export interface DrawerFacts {
-  /** The project's Super Agent is handed over (its stage exists). */
-  superOn: boolean;
+  /** The project's Super Agent is handed over (its stage exists). Absent: not read yet. */
+  superOn?: boolean;
   /** The overlay is showing the Super stage right now. */
   superSelected: boolean;
   /** The overlay is expanded: this project is "on Chat". */
@@ -418,7 +418,9 @@ function childrenOf(
   const marks = mine?.superMarks ?? far?.superMarks;
   const children: DrawerChild[] = [
     // Always there, even before anything is read: it is how a project with no chat starts one.
-    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking, waiting: marks?.waiting ?? 0 },
+    // Off only once a read says so: a project still loading has no record yet, and "off" there
+    // would be a wrong word on the row the owner is about to press.
+    { kind: 'super', on: (mine?.superOn ?? far?.superOn) !== false, selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking, waiting: marks?.waiting ?? 0 },
   ];
   // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
   // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.
