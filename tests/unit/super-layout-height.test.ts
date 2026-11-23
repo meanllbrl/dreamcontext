@@ -93,14 +93,17 @@ describe('what is not the bare stage keeps its layout', () => {
     expect([p.othersInHead, p.agendaInHead]).toEqual([true, true]);
   });
 
-  it('a sheet over a narrow stage keeps both bands: its exits live there, its tab row over the chat', () => {
-    const p = planStage([card('a')], { mode: 'half', card: 'a' }, { width: 854, height: 918 });
-    // The row of tabs sits at the content's top; the chat (and the open sheet) start under it.
-    expect(gaps(p)).toEqual({ top: M + BAND + STAGE.TAB_H + STAGE.GAP / 2, bottom: M + BAND });
-    expect(p.tabs!.rect.y).toBe(M + BAND);
-    expect(p.othersInHead).toBe(false);
+  it('a page on a narrow stage keeps both bands: its one row of tabs lives in the top one', () => {
+    // The chat's tab picked: the chat runs the whole content, under the band that holds the row.
     const folded = planStage([card('a')], { mode: 'half', card: 'a' }, { width: 854, height: 918 }, { folded: true });
-    expect(gaps(folded)).toEqual(gaps(p));
+    expect(gaps(folded)).toEqual({ top: M + BAND, bottom: M + BAND });
+    expect(folded.tabs!.rect.y + folded.tabs!.rect.height).toBeLessThanOrEqual(M + BAND);
+    expect(folded.othersInHead).toBe(false);
+    // The page's tab picked: the page from the band down, the chat's composer bar at the foot.
+    const open = planStage([card('a')], { mode: 'half', card: 'a' }, { width: 854, height: 918 });
+    expect(open.cards.a.rect.y).toBe(M + BAND);
+    expect(open.chat).toBe('bar');
+    expect(open.centre.y + open.centre.height).toBe(918 - M - BAND);
   });
 
   it('side by side and a presentation on a wide stage keep their bands', () => {
