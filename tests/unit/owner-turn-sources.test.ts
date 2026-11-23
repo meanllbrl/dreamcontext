@@ -218,14 +218,14 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe('writeOwnerTurn: every call names its source', () => {
   it('the source is a required argument', () => {
-    expect(AGENT_CHAT).toMatch(/const writeOwnerTurn = \(raw: string, source: OwnerTurnSource, opts: \{ frame\?: Buffer \| string; fromHold\?: boolean \} = \{\}\): void =>/);
+    expect(AGENT_CHAT).toMatch(/const writeOwnerTurn = \(raw: string, source: OwnerTurnSource, opts: \{ frame\?: Buffer \| string; fromHold\?: boolean; fromMirror\?: boolean \} = \{\}\): void =>/);
   });
 
   it('its call sites are exactly these three, each with a source', () => {
     const calls = codeLines(AGENT_CHAT).filter((l) => l.includes('writeOwnerTurn(')).map((l) => l.trim());
     expect(calls).toEqual([
       "writeOwnerTurn(RESET_CONTINUE_TEXT, silentOwnerTurn('server-continue'));",
-      'writeOwnerTurn(text, source, { frame: raw, ...(o.fromHold ? { fromHold: true } : {}) });',
+      'writeOwnerTurn(text, source, { frame: raw, ...(o.fromHold ? { fromHold: true } : {}), ...(o.fromMirror ? { fromMirror: true } : {}) });',
       "for (const text of texts) writeOwnerTurn(text, takeHeldOwnerMark(chatRegistryId, text) ?? silentOwnerTurn('held-replay'));",
     ]);
   });

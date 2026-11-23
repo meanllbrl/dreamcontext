@@ -1038,7 +1038,8 @@ describe('a Super child runs the child ladder; every other pane the human one', 
   });
 
   it('Eco off: no nudge for a child at any size', () => {
-    config({ enabled: false });
+    // The switch is the pane's own CHOSEN answer, else this Mac's Eco mode (`.config.json` no longer decides).
+    writeTabHandoff(contextRoot, CHILD, { enabled: false, chosen: true });
     writeSuper();
     expect(hook(CHILD, 900_000)).toBeNull();
   });

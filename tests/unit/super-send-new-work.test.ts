@@ -117,7 +117,7 @@ describe('sendLeadFor (the route\'s decision, read from the pane\'s current conv
     writeHandoffRecord(contextRoot, CHILD, { task: 'orbit-checkout', title: 'Orbit', at: new Date().toISOString(), contextTokens: 300_000, fromSession: CHILD, tab: CHILD });
     expect(sendLeadFor(contextRoot, CHILD, {}, false)).toBeNull();
     rmSync(join(contextRoot, 'state', '.handoff-requests'), { recursive: true, force: true });
-    writeTabHandoff(contextRoot, CHILD, { enabled: false });
+    writeTabHandoff(contextRoot, CHILD, { enabled: false, chosen: true });
     expect(sendLeadFor(contextRoot, CHILD, {}, false)).toBeNull();
   });
 });

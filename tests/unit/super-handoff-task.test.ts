@@ -29,7 +29,7 @@ beforeEach(() => {
   projectRoot = mkdtempSync(join(tmpdir(), 'dc-super-handoff-'));
   contextRoot = join(projectRoot, '_dream_context');
   mkdirSync(join(contextRoot, 'state'), { recursive: true });
-  writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '1', contextHandoff: { enabled: true, nudgeAt: 3000, remindEvery: 2000 } }));
+  writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '1', contextHandoff: { enabled: true, nudgeAt: 3000, remindEvery: 2000, child: { nudgeAt: 3000, remindEvery: 2000 } } }));
   superRecord(true);
   // Three open tasks, one of which reads like a coordination list: none of them is the super's.
   task('odev-ver-akisi', 'Ödev Ver akışı', 'in_progress', '2026-10-21');
