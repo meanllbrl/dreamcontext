@@ -95,7 +95,7 @@ describe('the briefing tells the Super how to pick a tool', () => {
 
   it('the spawn appends the block and an owner turn carries <super-tools> (agent-chat.ts)', () => {
     const src = readFileSync(join(__dirname, '../../src/server/routes/agent-chat.ts'), 'utf-8');
-    expect(src).toMatch(/\[ownBrief, subagents\?\.roster \?\? '', superTeamBlock, superToolsSpawn\]/);
+    expect(src).toMatch(/\[ownBrief, subagents\?\.roster \?\? '', superTeamBlock, superToolsSpawn(, superModelsSpawn)?\]/);
     expect(src).toMatch(/superOwnerToolsBlock\(\{ text, block: toolsBlockNow\(\), delivered: superTools\.delivered \}\)/);
   });
 });
@@ -125,7 +125,7 @@ describe('the record keeps the tool a child runs on', () => {
     // Antigravity gets no effort of ours: its model id carries it.
     expect(route).toContain("jobIn.effort || jobIn.tool === 'antigravity' ? jobIn");
     const chat = readFileSync(join(__dirname, '../../src/server/routes/agent-chat.ts'), 'utf-8');
-    expect(chat).toMatch(/!isSuper && obj\.type === 'system' && obj\.subtype === 'init'[\s\S]{0,300}noteChildModel\(chatRegistryId, m\)\.then\(\(\) => \{ notedChildModel = m; \}/);
+    expect(chat).toMatch(/!isSuper && obj\.type === 'system' && obj\.subtype === 'init'[\s\S]{0,300}noteChildModel\(chatRegistryId, m(, ecoSpawn\.lowered)?\)\.then\(\(\) => \{ notedChildModel = m; \}/);
     // Only what `super resume` takes back: a `[1m]` id is never written.
     const inbox = readFileSync(join(__dirname, '../../src/lib/super/inbox.ts'), 'utf-8');
     expect(inbox).toContain('if (!root || model.length > 60 || sanitizeModel(model) !== model) return;');
