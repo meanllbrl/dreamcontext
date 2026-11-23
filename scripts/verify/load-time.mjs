@@ -219,7 +219,7 @@ async function main() {
     await p.addInitScript(([board]) => {
       try { localStorage.setItem('dc.announcements.seen', '9999'); if (board) localStorage.setItem('dc.wbLastBoard.acme', board); } catch { /* none */ }
     }, [BOARD]);
-    await p.route('**/api/onboarding/readiness**', async (r) => { const res = await r.fetch(); const j = await res.json(); await r.fulfill({ json: { ...j, ready: true } }); });
+    await p.route('**/api/onboarding/readiness**', async (r) => { try { const res = await r.fetch(); const j = await res.json(); await r.fulfill({ json: { ...j, ready: true } }); } catch { await r.abort().catch(() => {}); } });
     const reqs = recorder(p);
     await p.goto(`http://127.0.0.1:${PORT}/?vault=acme`, { waitUntil: 'commit' });
     const rail = await waitMark(p, 'rail', () => window.__vis('[data-testid="ns-tab-chat"]'), 90000);
