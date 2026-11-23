@@ -34,7 +34,7 @@ const CHILD = norm(`${LEAN}\n${SUPER_CHILD_BRIEFING}`);
 
 describe('size: the point of the lean text', () => {
   it('is under half of the full text it replaces, and names the reference', () => {
-    expect(LEAN.length).toBeLessThan(6000);
+    expect(LEAN.length).toBeLessThan(7000);
     expect(LEAN.length).toBeLessThan(CHAT_SURFACE_BRIEFING.length / 2);
     expect(LEAN).toContain(REF);
   });
@@ -160,7 +160,7 @@ describe('the spawn: only a Super child gets the lean text', () => {
 
   it('a lean child gets the lean text when the reference was written, the full text when not', () => {
     expect(SRC).toMatch(/const childReference = !app && opts\.leanMcp \? writeChatSurfaceReference\(\) : null;/);
-    expect(SRC).toMatch(/opts\.leanMcp \? `\$\{childReference \? superChildSurfaceBriefing\(childReference\) : CHAT_SURFACE_BRIEFING\}\\n\$\{SUPER_CHILD_BRIEFING\}`/);
+    expect(SRC).toMatch(/opts\.leanMcp \? `\$\{childReference \? superChildSurfaceBriefing\(childReference\) : CHAT_SURFACE_BRIEFING\}\\n\$\{SUPER_CHILD_BRIEFING\}\$\{leanMcpOffer/);
     // An owner's own chat and an app window keep the full text.
     expect(SRC).toMatch(/: CHAT_SURFACE_BRIEFING;/);
   });

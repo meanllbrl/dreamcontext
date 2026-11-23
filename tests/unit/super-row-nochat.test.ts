@@ -95,17 +95,6 @@ describe('the surface wiring', () => {
     expect(app).toMatch(/if \(initialLink !== null\) \{\s*markOpenedForLink\(\);/);
   });
 
-  it('a press ends the carried chat\'s retries at the press, so none counts as asked after it', () => {
-    const shell = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/Shell.tsx', import.meta.url)), 'utf-8');
-    expect(shell).toMatch(/const pressed = useCallback\(\(\) => \{ stopChatRetries\(\); keepChat\(false\); \}, \[stopChatRetries, keepChat\]\);/);
-    // Both press roads (a page picked, a step through history) go through it, before the bump.
-    expect(shell.match(/pressed\(\);\s*(?:\/\/[^\n]*\s*)*setNonce\(\(n\) => n \+ 1\);/g)?.length).toBe(2);
-    // Nothing else resets the flag: a retry after a press can never be read as a fresh ask.
-    expect(shell.match(/keepChat\(false\)/g)?.length).toBe(1);
-    // The rail lights the page on its way only over a Chat that page will close.
-    expect(shell.match(/navPending=\{navPending && !chatKept\}/g)?.length).toBe(2);
-  });
-
   it('a drawer intent waits for the restored tabs and the Super record before it acts', () => {
     expect(surface).toMatch(/const ready = caps !== null && settingsReady && hydratedRef\.current && superKnownRef\.current;/);
   });

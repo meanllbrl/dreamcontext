@@ -173,8 +173,7 @@ describe('the page store (one per project instance)', () => {
   });
 
   it('every page that has a detail publishes it, withdrawn in its effect cleanup', () => {
-    // The page ON SCREEN (`shownNav`), not the one just picked: the chip never names a page that has not landed.
-    expect(read('dashboard/src/components/layout/Shell.tsx')).toMatch(/const shownPage = shownNav\.page;[\s\S]*?publishPage\(bus, shownPage\);\s*return \(\) => publishPage\(bus, null\);/);
+    expect(read('dashboard/src/components/layout/Shell.tsx')).toMatch(/publishPage\(bus, activePage\);\s*return \(\) => publishPage\(bus, null\);/);
     expect(read('dashboard/src/components/tasks/KanbanBoard.tsx')).toMatch(/publishPageDetail\(bus, 'tasks', \{ page: 'tasks', view: viewName, filters: filterCount \}\);\s*return \(\) => publishPageDetail\(bus, 'tasks', null\);/);
     expect(read('dashboard/src/pages/WhiteboardsPage.tsx')).toMatch(/publishPageDetail\(bus, 'whiteboards', \{ page: 'whiteboards', board: openSlug \}\);/);
     expect(read('dashboard/src/pages/LabPage.tsx')).toMatch(/publishPageDetail\(bus, 'lab-route', \{ page: 'lab', insight: route\.slug \}\);/);

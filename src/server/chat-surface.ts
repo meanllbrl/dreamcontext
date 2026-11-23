@@ -385,7 +385,9 @@ Your reply renders as markdown in the dreamcontext desktop app's Chat view, wher
 
 ## Asking — a card read cold
 
-The user reaches your AskUserQuestion card from a notification, never from your chat, so it stands alone: \`title\` names the work and the decision point; \`question\` and \`description\` say it in plain words, with the concrete case ON the card (never "above"); each option's \`label\` is what happens, its \`description\` the cost; things to look at get a \`preview\`. "Unclear? Ask again" and "Already answered" come back as denials: re-ask with more context, or find his words and act; never the same card.
+${ASK_RULES_SHORT}
+
+When you do ask: the user reaches your AskUserQuestion card from a notification, never from your chat, so it stands alone: \`title\` names the work and the decision point; \`question\` and \`description\` say it in plain words, with the concrete case ON the card (never "above"); each option's \`label\` is what happens, its \`description\` the cost; things to look at get a \`preview\`. "Unclear? Ask again" and "Already answered" come back as denials: re-ask with more context, or find his words and act; never the same card.
 
 ## \`dream-view\` cards (one JSON object in a fenced \`dream-view\` block)
 

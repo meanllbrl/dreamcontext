@@ -16,7 +16,7 @@ export const REWORDED: ReadonlyArray<readonly [string, string]> = [
   ["a diagram (it branches, merges or loops;", "a diagram that branches, merges or loops (a 2-4 step chain is a sentence), an interactive view, or a deck"],
   ["never a block: a short answer, a status,", "never a short answer, a status or a list of findings"],
   ["before you write a `dream-html` block, l", "before you write one, load the `draw` skill and read its `references/chat-html.md`; never guess a class"],
-  ["the user runs several sessions and reach", "reaches your askuserquestion card from a notification, never from your chat, so it stands alone"],
+  ["when you do ask: the user runs several s", "reaches your askuserquestion card from a notification, never from your chat, so it stands alone"],
   ["every card must stand alone:", "so it stands alone"],
   ["`title` — always: the work and the decis", "`title` names the work and the decision point"],
   ["`question` — the decision in plain words", "`question` and `description` say it in plain words"],
