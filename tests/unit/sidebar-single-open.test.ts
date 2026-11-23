@@ -51,8 +51,8 @@ describe('wiring (source pins)', () => {
   it('the desktop sidebar gets the enter press; a device shell does not', () => {
     expect(chrome).toContain('{...(deviceShell ? {} : { onEnterProject: enterProject })}');
   });
-  it('the accordion covers Chat and Whiteboards only, never a device shell or the projects mode', () => {
-    expect(drawer).toContain("const accordion = !!sb && !p.device && !!p.onEnterProject && (mode === 'chat' || mode === 'boards');");
+  it('the accordion covers Whiteboards only (Chat keeps independent folds, owner 2026-11-24), never a device shell or the projects mode', () => {
+    expect(drawer).toContain("const accordion = !!sb && !p.device && !!p.onEnterProject && mode === 'boards';");
   });
   it('the open project\'s header only folds; a folded one is entered', () => {
     expect(drawer).toContain('else p.onToggleExpanded(row.name);');

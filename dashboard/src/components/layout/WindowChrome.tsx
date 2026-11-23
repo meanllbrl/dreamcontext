@@ -1311,7 +1311,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   /** The desktop sidebar's one open project (wb-sol-panel): the project the owner folded, if he
    *  folded the one on screen. A move to another project lands it open. */
   const [foldedVault, setFoldedVault] = useState<string | null>(null);
-  const accordionShell = newShell && !deviceShell;
+  // Boards only (owner 2026-11-24): on Chat the projects open and fold on their own, each kept.
+  const accordionShell = boardsMode;
   const toggleExpanded = useCallback((name: string) => {
     if (accordionShell) { setFoldedVault((f) => (f === name ? null : name)); return; }
     setDrawerExpanded((cur) => {

@@ -965,11 +965,10 @@
 @media (prefers-reduced-motion: reduce) { .ns-dr-chev { transition: none; } }
 
 /* The open project: its header sticks to the column's top while the column scrolls (many
-   projects), its body (capped in ChatDrawer's fitOpen) scrolls inside itself, and a hairline
-   parts it from the folded headers below. */
+   projects) and its body (capped in ChatDrawer's fitOpen) scrolls inside itself. No hairline
+   under it (owner 2026-11-24: too many dividers under Team). */
 .ns-dr-scroll[data-accordion] .ns-dr-project[data-open] {
   padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--color-border);
   margin-bottom: var(--space-1);
 }
 .ns-dr-scroll[data-accordion] .ns-dr-project[data-open] > .ns-dr-proj {

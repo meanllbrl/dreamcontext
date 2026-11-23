@@ -375,9 +375,9 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const sb = p.sidebar;
   const mode: SidebarMode = sb?.mode ?? 'chat';
   const navMode = !!sb && mode !== 'chat';
-  /** Chat and Whiteboards on the desktop sidebar: one project open (wb-sol-panel). A folded
+  /** Whiteboards on the desktop sidebar: one project open (wb-sol-panel; Chat keeps its own, owner 2026-11-24). A folded
    *  header enters its project; the open project's header only folds and unfolds. */
-  const accordion = !!sb && !p.device && !!p.onEnterProject && (mode === 'chat' || mode === 'boards');
+  const accordion = !!sb && !p.device && !!p.onEnterProject && mode === 'boards';
   /** A header press under the accordion: the project on screen folds or unfolds, any other is entered. */
   const headerPress = (row: DrawerProjectRow, el: Element) => {
     if (row.active) {
