@@ -56,11 +56,11 @@ import { softMotionOff } from '../../lib/softMotion';
 import { useInstanceHold } from './useInstanceHold';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
-  sidebarMode, type DeviceChats, type DrawerFacts, type SidebarMode,
+  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, landsOnChats, mountedChats, moveAmong, NO_DEVICE_CHATS,
+  sidebarMode, openProjects, type DeviceChats, type DrawerFacts, type SidebarMode,
 } from './newshell/drawerModel';
 import { useBoardsFanout } from './newshell/boardsFanout';
-import { useDrawerProjects } from '../../hooks/useDrawerProjects';
+import { readChatCount, useDrawerProjects } from '../../hooks/useDrawerProjects';
 import { ApiClient } from '../../api/client';
 import { setMemberEnabled } from '../aiteam/teamModel';
 import { requestManageMembers } from '../../lib/openAgents';
@@ -1308,13 +1308,18 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     const stored = readLayoutPrefs().drawerExpanded;
     return stored.length ? stored : (initialVault ? [initialVault] : []);
   });
+  /** The desktop sidebar's one open project (wb-sol-panel): the project the owner folded, if he
+   *  folded the one on screen. A move to another project lands it open. */
+  const [foldedVault, setFoldedVault] = useState<string | null>(null);
+  const accordionShell = newShell && !deviceShell;
   const toggleExpanded = useCallback((name: string) => {
+    if (accordionShell) { setFoldedVault((f) => (f === name ? null : name)); return; }
     setDrawerExpanded((cur) => {
       const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
       writeLayoutPrefs({ drawerExpanded: next });
       return next;
     });
-  }, []);
+  }, [accordionShell]);
   /** New project landed: its row open and selected at once, with no reload. */
   const queueDrawerIntentRef = useRef<(vault: string, intent: DrawerIntent | null) => Promise<AddTabResult>>(async () => 'refused-ceiling');
   const landNewProject = useCallback<NewProjectLanding>((name, how) => {
@@ -1390,12 +1395,20 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   drawerHiddenRef.current = drawerHidden;
 
   const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
-  const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);
+  // Desktop: the open set is derived (the project being prepared, else the one on screen, unless
+  // folded); a device shell keeps its stored list.
+  const openTarget = preparing?.vault ?? activeVault;
+  const sidebarOpen = useMemo(
+    () => (accordionShell ? openProjects(openTarget, foldedVault) : drawerExpanded),
+    [accordionShell, openTarget, foldedVault, drawerExpanded],
+  );
+  useEffect(() => { setFoldedVault((f) => (f !== null && f !== activeVault ? null : f)); }, [activeVault]);
+  const drawerFolded = useMemo(() => projectOrder.filter((name) => !sidebarOpen.includes(name)), [projectOrder, sidebarOpen]);
   // A device shell reads no project's roster or team (its drawer is chats only), so no fan-out
   // and no vault-less avatar request.
   // The projects and boards modes show every project folded with its mark: no roster is read open.
   const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(
-    newShell && !deviceShell && !navMode ? drawerExpanded : [], mountedNames, drawerVisible,
+    newShell && !deviceShell && !navMode ? sidebarOpen : [], mountedNames, drawerVisible,
     newShell && !deviceShell ? (navMode ? projectOrder : drawerFolded) : [], drawerHidden);
   // The Mac's running chats, for the chat rows of projects this window has not mounted.
   const { live: liveChats, answered: liveAnswered } = useDrawerChats({ activeVault, drawerVisible, enabled: newShell });
@@ -1428,12 +1441,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     return buildDrawerRows({
       projects: drawerProjects,
       activeVault,
-      expanded: drawerExpanded,
+      expanded: sidebarOpen,
       facts: drawerFacts,
       fanout,
       ...(deviceShell ? { device: deviceChats } : {}),
     });
-  }, [newShell, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
+  }, [newShell, drawerProjects, activeVault, sidebarOpen, drawerFacts, fanout, deviceShell, deviceChats]);
   /** The projects and boards modes' rows: every project folded, the active one too (C3). */
   const navRows = useMemo(() => {
     if (!navMode) return [];
@@ -1755,6 +1768,34 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     return queueDrawerIntent(vault, intent).then((r) => { settleMove(id, vault, r); return r; });
   }, [recorder, queueDrawerIntent, settleMove]);
   queueDrawerIntentRef.current = trackedIntent;
+  /** A folded project's header in the sidebar (Chat and Whiteboards): that project, at the place
+   *  it was left (switchTo's carry), and only it open. On Chat with no chat open there it lands on
+   *  its Super Agent's stage, which starts no turn. */
+  const enterSeqRef = useRef(0);
+  const sidebarModeRef = useRef(sidebarModeNow);
+  sidebarModeRef.current = sidebarModeNow;
+  const enterProject = useCallback((name: string) => {
+    // Nothing is opened here: the open set follows the move (openProjects), so a refused one
+    // leaves the sidebar as it was.
+    if (!name || name === activeRef.current) return;
+    const seq = ++enterSeqRef.current;
+    const land = (chats: boolean) => {
+      if (chats) switchTo(name);
+      else void trackedIntent(name, { kind: 'super', quiet: true });
+    };
+    if (sidebarModeNow !== 'chat') { switchTo(name); return; }
+    const live = mountedChats(drawerFacts[name]);
+    if (live !== null) { land(live); return; }
+    // Not mounted here: ask the project itself on the press, never the sidebar's background
+    // reads. A failed read keeps the plain move; a newer press wins.
+    // The answer is dropped when anything moved meanwhile: a newer press, another way to another
+    // project (picker, ⌘1-9, a notification), or the owner leaving Chat.
+    const from = activeRef.current;
+    void readChatCount(name).then((tabs) => {
+      if (seq !== enterSeqRef.current || activeRef.current !== from || sidebarModeRef.current !== 'chat') return;
+      land(landsOnChats(tabs));
+    });
+  }, [sidebarModeNow, drawerFacts, trackedIntent, switchTo]);
   const reportShown = useCallback((vault: string, shown: ShownReport) => {
     if (vault !== activeRef.current) return;
     shownByVaultRef.current[vault] = shown;
@@ -2034,6 +2075,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onClose={closeOverlay}
                 onResize={resizeDrawer}
                 onToggleExpanded={toggleExpanded}
+                {...(deviceShell ? {} : { onEnterProject: enterProject })}
                 onIntent={(vault, intent) => void trackedIntent(vault, intent)}
                 onHistory={openHistory}
                 onRelations={() => { if (activeVault) void trackedIntent(activeVault, { kind: 'page', page: 'relations' }); closeOverlay(); }}
@@ -2068,7 +2110,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   sidebar: {
                     mode: sidebarModeNow,
                     navRows,
-                    boardsOpen: drawerExpanded,
+                    boardsOpen: sidebarOpen,
                     boards: boardEntries,
                     preparingVault: preparing?.vault ?? null,
                     boardQuery,

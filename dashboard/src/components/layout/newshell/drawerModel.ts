@@ -761,3 +761,30 @@ export function anchorScroll(o: { scrollTop: number; rowTop: number; wantTop: nu
   if (target > o.max) return { scrollTop: target, spacerTop: 0, spacerBottom: target - o.max };
   return { scrollTop: target, spacerTop: 0, spacerBottom: 0 };
 }
+
+/**
+ * The sidebar's one-open-project rule (wb-sol-panel, owner 2026-11-22, option A), derived, never
+ * stored: the project being prepared, else the one on screen, open unless the owner folded THAT
+ * project. A move that never lands (another window, the ceiling) leaves nothing behind to undo.
+ */
+export function openProjects(target: string | null, folded: string | null): string[] {
+  return target && folded !== target ? [target] : [];
+}
+
+/**
+ * Where a Chat-side header press lands (D2): the project's last chat, or its Super Agent when it
+ * has none. Answered only from what is held live, a project mounted here (its published chats
+ * or windows); every other project is read on the press itself (`readFoldedMarks`'s `tabs`),
+ * never from the sidebar's background reads, which cover only some projects. Null = read it.
+ */
+export function mountedChats(mine: Pick<DrawerFacts, 'chats' | 'windows'> | undefined): boolean | null {
+  if (mine?.chats) return mine.chats.length > 0;
+  if (mine?.windows) return mine.windows.some((w) => (w.tabs ?? 0) > 0);
+  return null;
+}
+
+/** The press's answer from a read: its saved chat count, a failed read or no count = the plain
+ *  move to Chat (a chat that exists is never hidden). */
+export function landsOnChats(tabs: number | null | undefined): boolean {
+  return typeof tabs === 'number' ? tabs > 0 : true;
+}

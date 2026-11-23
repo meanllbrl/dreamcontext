@@ -18,8 +18,9 @@ export const DRAWER_SURFACE_EVENT = 'dc-drawer-surface';
 
 export type DrawerIntent =
   /** The Super Agent row: open the stage, handing over first (and starting a chat first when
-   *  the project has none, F2). */
-  | { kind: 'super' }
+   *  the project has none, F2). `quiet`: a sidebar header press landing on it (wb-sol-panel C6)
+   *  hands over without queueing the hand-over turn, so arriving starts nothing. */
+  | { kind: 'super'; quiet?: true }
   /** A new chat tab in this project's window on screen. */
   | { kind: 'new-tab' }
   /** "+" on a project row, ⌘N or New chat window's pick: a new named chat window (W3, D8). */
