@@ -39,6 +39,75 @@ interface ImageLike {
   type?: unknown;
   isDeleted?: unknown;
   fileId?: unknown;
+  x?: unknown;
+  y?: unknown;
+  width?: unknown;
+  height?: unknown;
+}
+
+/** A point on the board (scene coordinates): where the owner is looking. */
+export interface BoardPoint {
+  x: number;
+  y: number;
+}
+
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * The live pictures' file ids, nearest to `near` first (the distance from the point to the
+ * picture's box; 0 inside it). A board opens with every picture to fetch (113 of 400 KB on a real
+ * one): fetched in drawing order, the ones on screen waited behind the rest (task: opening a board
+ * is slow, 2026-11-23). Without `near`, drawing order.
+ */
+export function picturesNearestFirst(elements: readonly unknown[], near?: BoardPoint | null): string[] {
+  if (!near) return liveFileIds(elements);
+  const best = new Map<string, number>();
+  for (const raw of elements) {
+    const el = raw as ImageLike | null;
+    if (!el || el.type !== 'image' || el.isDeleted === true || typeof el.fileId !== 'string' || !el.fileId) continue;
+    const x = num(el.x); const y = num(el.y);
+    const w = Math.abs(num(el.width)); const h = Math.abs(num(el.height));
+    const dx = Math.max(x - near.x, 0, near.x - (x + w));
+    const dy = Math.max(y - near.y, 0, near.y - (y + h));
+    const d = Math.hypot(dx, dy);
+    const had = best.get(el.fileId);
+    if (had === undefined || d < had) best.set(el.fileId, d);
+  }
+  return [...best].sort((a, b) => a[1] - b[1]).map(([id]) => id);
+}
+
+/**
+ * Where a board OPENS, before the canvas has placed its view (Excalidraw reads its default view,
+ * scroll 0,0, until its scene is set up): the saved view when it shows any element (the page puts
+ * the owner back there), else the middle of the live elements (the page fits the content). Null
+ * for an empty board. `width`/`height`: the window, the canvas's size to within its panels.
+ */
+export function openViewCentre(
+  elements: readonly unknown[],
+  saved: { scrollX: number; scrollY: number; zoom: number } | null,
+  width: number,
+  height: number,
+): BoardPoint | null {
+  let x1 = Infinity; let y1 = Infinity; let x2 = -Infinity; let y2 = -Infinity;
+  const boxes: { x: number; y: number; width: number; height: number }[] = [];
+  for (const raw of elements) {
+    const el = raw as ImageLike | null;
+    if (!el || el.isDeleted === true) continue;
+    const b = { x: num(el.x), y: num(el.y), width: num(el.width), height: num(el.height) };
+    boxes.push(b);
+    x1 = Math.min(x1, b.x, b.x + b.width); x2 = Math.max(x2, b.x, b.x + b.width);
+    y1 = Math.min(y1, b.y, b.y + b.height); y2 = Math.max(y2, b.y, b.y + b.height);
+  }
+  if (boxes.length === 0) return null;
+  if (saved && saved.zoom > 0 && width > 0 && height > 0) {
+    const left = -saved.scrollX; const top = -saved.scrollY;
+    const right = left + width / saved.zoom; const bottom = top + height / saved.zoom;
+    if (boxes.some((b) => Math.max(b.x, b.x + b.width) >= left && Math.min(b.x, b.x + b.width) <= right
+      && Math.max(b.y, b.y + b.height) >= top && Math.min(b.y, b.y + b.height) <= bottom)) {
+      return { x: (left + right) / 2, y: (top + bottom) / 2 };
+    }
+  }
+  return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
 }
 
 /** The file ids of the live pictures in `elements`, each once. */
@@ -148,9 +217,11 @@ export class BoardPictures {
   /**
    * Fetch every live picture in `elements` that `has` says the page lacks, one request at a
    * time per id, and hand what arrives to `onLoaded`. One missing on disk stays a placeholder.
+   * The requests go out nearest to `near` (the middle of the view) first, so the pictures on
+   * screen arrive before the ones off it.
    */
-  load(elements: readonly unknown[], has: (id: string) => boolean, onLoaded: (file: PictureFile) => void): void {
-    for (const id of liveFileIds(elements)) {
+  load(elements: readonly unknown[], has: (id: string) => boolean, onLoaded: (file: PictureFile) => void, near?: BoardPoint | null): void {
+    for (const id of picturesNearestFirst(elements, near)) {
       if (has(id) || this.loading.has(id) || this.absent.has(id) || this.refused.has(id)) continue;
       // Ours and not sent yet: Excalidraw holds it, nothing to fetch.
       if (this.held.has(id)) continue;

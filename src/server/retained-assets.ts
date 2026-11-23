@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -56,7 +57,15 @@ function init(): void {
   });
 }
 
-/** Snapshot the assets of the build whose index.html is being served, once per distinct build. */
+/** The last snapshot's links, for tests that wait for them. */
+let lastSnapshot: Promise<void> = Promise.resolve();
+
+/**
+ * Snapshot the assets of the build whose index.html is being served, once per distinct build.
+ * The links are made OFF the server's thread (160+ files): made in line, they held the app's first
+ * page and every asset request behind it on each launch (task: opening the app is slow,
+ * 2026-11-23). A rebuild cannot finish inside the few milliseconds they take.
+ */
 export function retainBuildAssets(staticDir: string, indexHtml: Buffer): void {
   const key = createHash('sha1').update(indexHtml).digest('hex').slice(0, 12);
   if (seenBuilds.has(key)) return;
@@ -65,13 +74,10 @@ export function retainBuildAssets(staticDir: string, indexHtml: Buffer): void {
 
   const source = join(staticDir, 'assets');
   const target = join(snapshotRoot, key);
+  let names: string[];
   try {
     mkdirSync(target, { recursive: true });
-    for (const name of readdirSync(source)) {
-      // A file the build is still writing, or a cross-device temp dir, just isn't
-      // retained — a miss falls through to the 404 the client already recovers from.
-      try { linkSync(join(source, name), join(target, name)); } catch { /* skip */ }
-    }
+    names = readdirSync(source);
   } catch {
     return;
   }
@@ -79,6 +85,14 @@ export function retainBuildAssets(staticDir: string, indexHtml: Buffer): void {
   while (snapshots.length > MAX_BUILDS) {
     rmSync(snapshots.shift()!, { recursive: true, force: true });
   }
+  // A file the build is still writing, or a cross-device temp dir, just isn't retained: a miss
+  // falls through to the 404 the client already recovers from.
+  lastSnapshot = Promise.all(names.map((name) => link(join(source, name), join(target, name)).catch(() => undefined))).then(() => undefined);
+}
+
+/** Tests only: resolves once the newest snapshot's links are made. */
+export function retainedSettledForTests(): Promise<void> {
+  return lastSnapshot;
 }
 
 /** The retained copy of a missing `/assets/<file>`, newest build first, or null. */
