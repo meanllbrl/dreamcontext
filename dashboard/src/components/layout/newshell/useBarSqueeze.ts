@@ -8,10 +8,11 @@ import { useLayoutEffect, type RefObject } from 'react';
  *   2 the tracker is the face and a small bar (the full reading stays in its title)
  *   3 the zoom icon goes (Settings › General keeps the control)
  *   4 the project name shortens with an ellipsis, its logo stays
+ *   5 (a phone-width window, ~390 px) the tracker goes and the tabs sit closer: nothing overlaps
  * Measured, not guessed from a width: the bar's own contents differ with the zoom, the language,
  * the project name and the tab count, so a fixed breakpoint would be wrong the moment one moves.
  */
-export const BAR_SQUEEZE_MAX = 4;
+export const BAR_SQUEEZE_MAX = 5;
 
 /** True while what the bar holds is wider than the bar (levels 0–3 never let a cluster shrink). */
 function overflows(bar: Pick<HTMLElement, 'scrollWidth' | 'clientWidth'>): boolean {

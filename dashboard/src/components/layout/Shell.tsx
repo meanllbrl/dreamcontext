@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Header } from './Header';
+import { fadeIn } from '../../lib/softMotion';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
 import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultContext';
@@ -23,6 +24,10 @@ import './Shell.css';
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
 const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'settings', 'whiteboards', 'relations', 'stats', 'apps'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
+/** How many times the background render of a picked page may be restarted before it is forced. */
+const LANDING_ATTEMPTS = 3;
+/** The longest a picked page waits behind what is on screen, however the render is going. */
+const LANDING_CAP_MS = 1200;
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
 
 /** A page name this shell knows (a window landing's page is checked against it). */
@@ -191,15 +196,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar, preparing =
   // The open page, on the same element, for surfaces outside this tree that step aside on a
   // page: the corner agent dock and Chat button do not sit over a whiteboard's cards
   // (owner, 2026-10-05; AgentTerminal.css).
-  useLayoutEffect(() => {
-    const instanceEl = shellRef.current?.closest('.project-instance');
-    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = activePage;
-  }, [activePage]);
-  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
-  useEffect(() => {
-    publishPage(bus, activePage);
-    return () => publishPage(bus, null);
-  }, [bus, activePage]);
+  // (Both follow the page that is ON SCREEN: see `shownNav` below.)
 
   // The rail's motion — see useRailGlide.ts. Declared after the attribute above, so the
   // slab measures the rail with the overlay's edge already moved.
@@ -404,17 +401,86 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar, preparing =
     [activePage, focusId, nonce, origin, navigate, clearFocus],
   );
 
+  // ── What is ON SCREEN lags what was picked by exactly one render ────────────────────────
+  //
+  // A page is a big tree (the task board mounts thousands of elements). Rendered at the press it
+  // held the main thread for one long task, during which nothing answered, least of all while a
+  // chat was streaming (302 ms to the first frame, measured 2026-11-22). So the page the children
+  // draw is the DEFERRED navigation: React builds the picked page in the background, in slices,
+  // while the screen stays whole and live, then swaps in one commit. What must answer at the
+  // press (the stored page, the window's report, the chat closing, the lit tab) still reads
+  // `activePage`; this window's own bookkeeping is untouched.
+  //
+  // Not while this project is prepared out of sight (the window's reveal gate reads what the
+  // project shows): then the page is drawn at once, as before.
+  //
+  // A background render is thrown away and started again by every urgent update in the window (a
+  // streaming chat makes them many times a second), so left alone a page could wait for seconds
+  // behind a busy agent. The landing is therefore FORCED, in one ordinary render like before this
+  // existed, once the background render was restarted `LANDING_ATTEMPTS` times or took
+  // `LANDING_CAP_MS`.
+  const deferredNav = useDeferredValue(nav);
+  const deferring = isActive && preparing === null;
+  const [forcedNonce, setForcedNonce] = useState(-1);
+  // What landed last. After a forced landing the deferred value is still one navigation behind
+  // until its own render commits: the screen never steps back to it.
+  const landedNavRef = useRef(nav);
+  const shownNav = !deferring || forcedNonce === nonce ? nav
+    : deferredNav.nonce < landedNavRef.current.nonce ? landedNavRef.current : deferredNav;
+  const navPending = shownNav.nonce !== nonce;
+  const landedNonceRef = useRef(shownNav.nonce);
+  // Counted in render on purpose: a render React throws away runs no effect, and those thrown
+  // away are exactly what is being counted. Only a ref is written, and only to be compared.
+  const attemptsRef = useRef({ nonce: -1, count: 0 });
+  if (deferring && deferredNav.nonce === nonce && landedNonceRef.current !== nonce && forcedNonce !== nonce) {
+    if (attemptsRef.current.nonce !== nonce) attemptsRef.current = { nonce, count: 0 };
+    attemptsRef.current.count += 1;
+    if (attemptsRef.current.count === LANDING_ATTEMPTS + 1) queueMicrotask(() => setForcedNonce(nonce));
+  }
+  useEffect(() => {
+    if (!navPending) return undefined;
+    const timer = window.setTimeout(() => setForcedNonce(nonce), LANDING_CAP_MS);
+    return () => window.clearTimeout(timer);
+  }, [navPending, nonce]);
+  const mainRef = useRef<HTMLElement>(null);
+  const landedPageRef = useRef(shownNav.page);
+  useLayoutEffect(() => {
+    if (shownNav.nonce === landedNonceRef.current) return;
+    landedNonceRef.current = shownNav.nonce;
+    landedNavRef.current = shownNav;
+    // The page arrives with a short fade of what the frame holds (opacity only: the frame itself,
+    // and anything a page positions against it, stays where it is). A move inside the same page
+    // (a focused item) is not an arrival.
+    if (shownNav.page === landedPageRef.current) return;
+    landedPageRef.current = shownNav.page;
+    for (const el of mainRef.current?.children ?? []) fadeIn(el);
+  }, [shownNav]);
+  // The page on screen, on the instance element, for surfaces outside this tree that step aside
+  // on a page: the corner agent dock and Chat button do not sit over a whiteboard's cards
+  // (owner, 2026-10-05; AgentTerminal.css).
+  const shownPage = shownNav.page;
+  useLayoutEffect(() => {
+    const instanceEl = shellRef.current?.closest('.project-instance');
+    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = shownPage;
+  }, [shownPage]);
+  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
+  useEffect(() => {
+    publishPage(bus, shownPage);
+    return () => publishPage(bus, null);
+  }, [bus, shownPage]);
+
   if (newShell) {
     return (
       <div className="shell" ref={shellRef}>
         <NewShellControls
           activePage={activePage}
+          navPending={navPending}
           onNavigate={(page) => navigate(page, null, 'rail')}
           onOpenSearch={() => setPaletteOpen(true)}
         />
         <div className="shell-body">
-          <main className="shell-main" data-region="page">
-            {children(nav)}
+          <main className="shell-main" data-region="page" ref={mainRef}>
+            {children(shownNav)}
           </main>
         </div>
         <CommandPalette
@@ -440,8 +506,8 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar, preparing =
       <div className="shell-body">
         <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
-        <main className="shell-main">
-          {children(nav)}
+        <main className="shell-main" ref={mainRef}>
+          {children(shownNav)}
         </main>
       </div>
       <CommandPalette
