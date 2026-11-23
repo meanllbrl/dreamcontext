@@ -1723,7 +1723,7 @@ export function sendPhotoFile(res: ServerResponse, abs: string | null, req?: Inc
   }
   const st = statSync(abs);
   const etag = `"${Math.round(st.mtimeMs).toString(36)}-${st.size.toString(36)}"`;
-  if (req?.headers['if-none-match'] === etag) {
+  if (req?.headers?.['if-none-match'] === etag) {
     res.writeHead(304, { ETag: etag, 'Cache-Control': 'private, no-cache' });
     res.end();
     return;
