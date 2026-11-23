@@ -29,9 +29,11 @@
     "NOTICE",
     "install.sh",
     "install.ps1",
+    "scripts/postinstall-pty.mjs",
     "npm-shrinkwrap.json"
   ],
   "scripts": {
+    "postinstall": "node scripts/postinstall-pty.mjs",
     "build:dashboard": "cd dashboard && npm run build && cd .. && node scripts/sync-dashboard-dist.mjs",
     "build:cli": "tsup",
     "build": "npm run build:dashboard && npm run build:cli",
