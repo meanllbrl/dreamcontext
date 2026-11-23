@@ -15,7 +15,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, carryChatModelPick, createChatSession, noteChatModelPick, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
@@ -301,6 +301,13 @@ interface SessionMeta {
 /** A fresh Claude conversation UUID for a new tab. `crypto.randomUUID()` works on the
  *  loopback (secure-context) origin; the manual RFC-4122-shaped fallback only fires if
  *  it's ever unavailable, so a tab always has a resumable id. */
+/** A new conversation id that carries an explicit model pick ('' = none: a plain new id). */
+function pickedClaudeId(model: string): string | undefined {
+  if (!model) return undefined;
+  const id = newClaudeId();
+  noteChatModelPick(id, model);
+  return id;
+}
 function newClaudeId(): string {
   try { return crypto.randomUUID(); } catch { /* fall through */ }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -1945,6 +1952,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // The phone's Super conversation is a mirror in an ordinary chat mode: told here, on every
       // spawn of it, that it shows the Super (reply strips, groups, the ↩ chip).
       const mirror = mode !== 'super' && isSuperMirrorId(cid);
+      // Eco Plus: the spawn never decides the model's source. Only a pick event writes one
+      // (`noteChatModelPick`: the picker, a composer model changed on purpose, an explicit
+      // `--model`); every other model this conversation gets is `saved` (agentSettings
+      // `chatModelSource`). The Super is always its saved model, decided on the server.
       const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean, mirror);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
@@ -2563,6 +2574,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }
     // An agent speaks on Claude: from a Codex pane, Codex's model, effort and account stay behind.
     const sameTool = !chat.tool;
+    // The carried model is the owner's only if the old conversation's was (its pick record).
+    if (sameTool) carryChatModelPick(chat.claudeId, claudeId);
     const s = spawn(chat.bypass, claudeId, false, 'chat', '', sameTool ? modelForSession(chat) : '', true, '', false, sameTool ? effortForSession(chat) : '', true, chat.mode, sameTool ? chat.accountId : '') as ChatSession;
     carryDraftInto(s, carried);
     // The box moved to the new conversation; its kept copy under the old id would be orphaned.
@@ -2630,6 +2643,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       sessions.current.delete(chat.id);
     }
     // Another tool never inherits this one's effort or account; the model is the owner's pick.
+    noteChatModelPick(claudeId, pickedModel);
     const s = spawn(chat.bypass, claudeId, false, 'chat', '', pickedModel, true, '', false, '', true, chat.mode, '') as ChatSession;
     carryDraftInto(s, carried);
     if (carried) clearDraft(vault, chat.claudeId);
@@ -2800,8 +2814,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         return;
       }
       // A Codex plan is built on Codex: its model means nothing to Claude.
-      const developId = cs.tool ? newClaudeId() : undefined;
-      if (developId) bindChatTool(developId, cs.tool);
+      const developId = newClaudeId();
+      if (cs.tool) bindChatTool(developId, cs.tool);
+      // The plan's model is the owner's only if the plan conversation's was (its pick record).
+      carryChatModelPick(cs.claudeId, developId);
       const s = spawn(false, developId, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
       const meta: SessionMeta = {
         // Opens under the task's name read as words, and `titleByAgent` lets the Develop agent
@@ -3138,7 +3154,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return true;
     }
     if (!admitTab()) return false;
-    const s = spawn(detail.bypass, undefined, false, claudeKind, detail.prompt, model, serverCurrent, detail.promptToken, false, '', true);
+    const s = spawn(detail.bypass, pickedClaudeId(model), false, claudeKind, detail.prompt, model, serverCurrent, detail.promptToken, false, '', true);
     setSessionList((prev) => [...prev, { id: s.id, title, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     // Seed the picker's readout so a delegated pane names the model it was actually launched
     // on from the first frame, instead of showing the global default until the transcript poll
@@ -3872,7 +3888,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   const changeChatModelFor = useCallback((sid: string, id: string) => {
     if (!id) return;
-    liveChat(sid)?.setModel(id);
+    const live = liveChat(sid);
+    // The picker IS the pick event: a live chat records it in `setModel`, a parked one here, so its
+    // Resume keeps the picked model under Eco Plus.
+    if (live) live.setModel(id);
+    else noteChatModelPick(sessionListRef.current.find((m) => m.id === sid)?.claudeId ?? '', id);
     setSessionModel((prev) => ({ ...prev, [sid]: id }));
   }, [liveChat]);
   const changeChatEffortFor = useCallback((sid: string, level: string) => {
@@ -3955,7 +3975,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (!admitTab()) return '';
       const s = o.terminal
         ? spawn(false, undefined, false, 'shell')
-        : spawn(false, undefined, false, 'chat', inline, o.model, true, token, false, o.effort, false, o.mode);
+        : spawn(false, pickedClaudeId(o.model), false, 'chat', inline, o.model, true, token, false, o.effort, false, o.mode);
       setSessionList((prev) => [...prev, {
         id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
         ...(s.kind === 'chat' ? { mode: o.mode } : {}),
@@ -4654,6 +4674,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // tab never claims bypass (explicitBypass with bp = false); every other child follows the
       // vault's switch as before.
       const firstRead = args.firstRead === true;
+      // An explicit `--model` (an escalated `--model opus` job among them) is a pick: kept under Eco Plus.
+      noteChatModelPick(childId, d.model);
       const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, firstRead, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise
@@ -4731,6 +4753,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const r = delegateArgs({ prompt: '-', mode: args.mode, model: args.model, effort: args.effort, title: args.title });
       if (!r.ok) return r;
       if (!admitTab()) return { ok: false, error: 'tabs_full' };
+      noteChatModelPick(child, r.model);
       const s = spawn(false, child, true, 'chat', '', r.model, true, '', false, r.effort, false, r.mode) as ChatSession;
       s.setSuperChild(true);
       setSessionList((prev) => [...prev, {

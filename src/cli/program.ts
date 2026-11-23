@@ -49,6 +49,7 @@ import { registerPeerCommand } from './commands/peer.js';
 import { registerAskCommand } from './commands/ask.js';
 import { registerFederationCommand } from './commands/federation.js';
 import { registerConfigCommand } from './commands/config.js';
+import { registerEcoCommand } from './commands/eco.js';
 import { registerPeopleCommand } from './commands/people.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
@@ -135,6 +136,7 @@ export function createProgram(): Command {
   registerAskCommand(program);
   registerFederationCommand(program);
   registerConfigCommand(program);
+  registerEcoCommand(program);
   registerPeopleCommand(program);
   registerFeedbackCommand(program);
   registerMigrationsCommand(program);

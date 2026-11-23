@@ -433,7 +433,8 @@ export function buildResumeArgs(
   const args = ['--resume', sessionId, '-p', prompt, ...permission, '--output-format', 'json'];
   // Same envelope the run was approved with — a verdict must not quietly grant
   // a bigger model or a higher effort than the hash covers. The one exception is
-  // the owner picking one for the message they are typing right now.
+  // the owner picking one for the message they are typing right now. Eco Plus may LOWER it
+  // (plan eco-plus D3: the manifest model read as `saved`; costs only a cache miss).
   const { model, effort } = spawnModel(m, override);
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
@@ -996,7 +997,7 @@ function spawnSessionResume(
     if (resume || !node || !cli || !('account' in pick)) {
       return Promise.resolve({ spawned: false, timedOut: false, exitCode: null, stdout: '', stderrTail: resume ? 'A home board stays on Claude.' : `${name} cannot resume here: no signed-in account or no Node 22.16.`, startedAt: at, finishedAt: at, result: null });
     }
-    const { model, effort } = spawnModel(m, opts.override);
+    const { model, effort } = spawnModel(m, opts.override, { tool });
     const said = opts.override?.light ? `${LIGHT_JOB_BLOCK}\n\n${prompt}` : prompt;
     return executeClaudeDetached(codexRunArgs({
       surface: opts.override?.light ? 'light' : 'verdict', prompt: sanitizeAutomationPrompt(said), model: codexModelOf(model), effort,

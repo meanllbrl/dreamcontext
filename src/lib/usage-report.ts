@@ -26,6 +26,7 @@ import type { LimitHit } from './usage-readers.js';
 import { currentLedger, rowAccount, scanProgress, type Ledger, type LedgerFile, type LedgerRow, type ScanProgress } from './usage-ledger.js';
 import { listVaults, type Vault } from './vaults.js';
 import { superEffect, type SuperEffect } from './usage-super-effect.js';
+import { ecoPlusDefault, ecoPlusHistoryPath } from './context-watch.js';
 
 export type StatsRange = '24h' | '7d' | '30d' | '90d';
 
@@ -98,6 +99,77 @@ export interface ProjectRow {
 
 export interface EcoRow { project: string; title: string; at: number; kind: 'eco' | 'fresh'; before: number; after: number | null; turns: number; estSaved: number; estSavedCost: number }
 
+/**
+ * Stats → dreamcontext's Eco Plus row. `before`/`during` are MEASURED shares of Claude tokens spent
+ * on Opus/Fable: the 14 days before Eco Plus was first turned on, and every hour it was on. The
+ * saving is an ESTIMATE: the share drop times the tokens spent during, at the Opus-minus-Sonnet price
+ * per token this Mac actually paid. A rise in the share is a negative saving, never clipped. `short`
+ * (under 7 days on, or no 14-day baseline) shows the shares and no estimate.
+ */
+export interface EcoPlusRow {
+  on: boolean; since: number | null; days: number; before: number | null; during: number | null;
+  short: boolean; estShifted: number | null; estSavedCost: number | null;
+}
+/** Claude tokens and cost of one ledger hour, split by model family. */
+export interface EcoPlusHour { heavyTokens: number; heavyCost: number; sonnetTokens: number; sonnetCost: number; tokens: number }
+
+const ECO_PLUS_DAY = 86_400_000;
+const ECO_PLUS_BASELINE = 14 * ECO_PLUS_DAY;
+
+/** `{at, on}` lines of `~/.dreamcontext/eco-plus-history.jsonl`, oldest first; torn lines skipped. */
+export function readEcoPlusHistory(home: string = homedir()): Array<{ at: number; on: boolean }> {
+  let raw = '';
+  try { raw = readFileSync(ecoPlusHistoryPath(home), 'utf-8'); } catch { return []; }
+  const out: Array<{ at: number; on: boolean }> = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const r = JSON.parse(line) as { at?: unknown; on?: unknown };
+      const at = typeof r.at === 'string' ? Date.parse(r.at) : NaN;
+      if (Number.isFinite(at) && typeof r.on === 'boolean') out.push({ at, on: r.on });
+    } catch { /* a torn line */ }
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/** The Eco Plus row, or null when Eco Plus is off and was never on. Pure: the caller reads the files. */
+export function ecoPlusRow(history: Array<{ at: number; on: boolean }>, on: boolean, hours: Map<number, EcoPlusHour>, now: number): EcoPlusRow | null {
+  const periods: Array<[number, number]> = [];
+  let open: number | null = null;
+  for (const h of history) {
+    if (h.on && open === null) open = h.at;
+    else if (!h.on && open !== null) { periods.push([open, h.at]); open = null; }
+  }
+  // The file says on but the setting is off (a torn write): the period ends at the last line, not now.
+  if (open !== null) periods.push([open, on ? now : Math.max(open, history[history.length - 1].at)]);
+  if (!on && periods.length === 0) return null;
+  const since = periods.length ? periods[0][0] : null;
+  const days = periods.reduce((a, [s, e]) => a + Math.max(0, e - s), 0) / ECO_PLUS_DAY;
+  const inside = (hour: number) => periods.some(([s, e]) => hour >= s && hour < e);
+  const b = { heavy: 0, all: 0 };
+  const d = { heavy: 0, all: 0 };
+  const price = { heavyT: 0, heavyC: 0, sonT: 0, sonC: 0 };
+  let earliest = Infinity;
+  for (const [hour, x] of hours) {
+    if (x.tokens > 0 && hour < earliest) earliest = hour;
+    price.heavyT += x.heavyTokens; price.heavyC += x.heavyCost; price.sonT += x.sonnetTokens; price.sonC += x.sonnetCost;
+    if (since !== null && hour >= since - ECO_PLUS_BASELINE && hour < since) { b.heavy += x.heavyTokens; b.all += x.tokens; }
+    else if (inside(hour)) { d.heavy += x.heavyTokens; d.all += x.tokens; }
+  }
+  const before = b.all > 0 ? b.heavy / b.all : null;
+  const during = d.all > 0 ? d.heavy / d.all : null;
+  // The ledger reaches back to the baseline's first day (an hour into it still counts).
+  const baseline = since !== null && earliest < since - ECO_PLUS_BASELINE + ECO_PLUS_DAY && before !== null;
+  const short = days < 7 || !baseline || during === null;
+  let estShifted: number | null = null;
+  let estSavedCost: number | null = null;
+  if (!short && before !== null && during !== null) {
+    estShifted = (before - during) * d.all;
+    if (price.heavyT > 0 && price.sonT > 0) estSavedCost = estShifted * (price.heavyC / price.heavyT - price.sonC / price.sonT);
+  }
+  return { on, since, days, before, during, short, estShifted, estSavedCost };
+}
+
 export interface ToolWindow { id: string; kind: string; label: string; usedPercent: number; resetsAt: number | null; durationMins: number | null; estSleepPercent: number | null }
 export interface ToolAccount { id: string; label: string; plan: string; fetchedAt: number | null; windows: ToolWindow[]; signedIn: boolean }
 export interface ToolLimits { id: 'claude' | 'codex'; name: string; accounts: ToolAccount[] }
@@ -120,6 +192,8 @@ export interface StatsWire {
     /** ESTIMATE: sleep's share of this week's limit, averaged over accounts with a reading. */
     estWeekShare: number | null;
     eco: { rows: EcoRow[]; estSaved: number; estSavedCost: number; turns: number; avgBefore: number; avgAfter: number };
+    /** This Mac's Eco Plus row, whole ledger, every filter ignored: the setting is machine-wide. */
+    ecoPlus: EcoPlusRow | null;
     memory: { first: number; carried: number; starts: number; messages: number; inputShare: number };
     answer: LimitAnswer;
     projects: ProjectRow[];
@@ -418,6 +492,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
 
   interface RunTotals { tokens: number; cost: number; byAgent: Map<string, SleepSpecialist> }
   const runTotals = new Map<string, RunTotals>();
+  const ecoPlusHours = new Map<number, EcoPlusHour>();
 
   for (const v of views) {
     const on = shown(v);
@@ -445,6 +520,13 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
           h.sleepCost += cost;
           if (run) h.runs.set(run.id, (h.runs.get(run.id) ?? 0) + cost);
         }
+      }
+      if (claude) {
+        const e = ecoPlusHours.get(hour) ?? { heavyTokens: 0, heavyCost: 0, sonnetTokens: 0, sonnetCost: 0, tokens: 0 };
+        ecoPlusHours.set(hour, e);
+        e.tokens += tokens;
+        if (/opus|fable|mythos/i.test(model)) { e.heavyTokens += tokens; e.heavyCost += cost; }
+        else if (/sonnet/i.test(model)) { e.sonnetTokens += tokens; e.sonnetCost += cost; }
       }
       if (run) {
         const rt = runTotals.get(run.id) ?? { tokens: 0, cost: 0, byAgent: new Map<string, SleepSpecialist>() };
@@ -790,6 +872,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         avgBefore: measured.length ? measured.reduce((a, e) => a + e.before, 0) / measured.length : 0,
         avgAfter: measured.length ? measured.reduce((a, e) => a + (e.after as number), 0) / measured.length : 0,
       },
+      ecoPlus: ecoPlusRow(readEcoPlusHistory(home), ecoPlusDefault(home), ecoPlusHours, now),
       memory: { ...memory, inputShare: claudeInput ? (memory.first + memory.carried) / claudeInput : 0 },
       answer,
       projects: projectRows, ecoFrom, ecoPartial: ecoFrom === null || ecoFrom > rangeStart, trend,

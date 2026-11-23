@@ -42,7 +42,7 @@ import {
 import { agentFileUrl, peerLogoUrl } from '../../../api/client';
 import { usePeerMentions } from '../../../hooks/usePeerMentions';
 import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
-import { patchAgentSettings, readAgentSettings } from '../../../lib/agentSettings';
+import { onAgentSettings, patchAgentSettings, readAgentSettings } from '../../../lib/agentSettings';
 import { useIsNewShell } from '../../../lib/uxMode';
 import { savedDefaultReceipt } from './defaultReceipt';
 import { MemberAutonomy } from '../../aiteam/AutonomyChip';
@@ -339,8 +339,10 @@ const PhotoButton = memo(function PhotoButton({ onFiles, label }: { onFiles: (fi
 });
 
 /** The model + effort trigger. */
-const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle, temporary = false }: {
+const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle, temporary = false, tag }: {
   modelLabel: string;
+  /** A small tag after the model (Eco Plus: this Mac's saving mode chose Sonnet). */
+  tag?: string;
   effortValue: string;
   disabled: boolean;
   open: boolean;
@@ -362,6 +364,7 @@ const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disab
       >
         <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
         {effortValue && <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>}
+        {tag && <span className="chat-cmp-modeltrigger-tag">{tag}</span>}
         <Chevron />
       </button>
     </div>
@@ -2247,6 +2250,9 @@ export function Composer({
   // works (a disabled textarea drops focus to <body>, killing surface-level chords).
   const disabled = !canCompose;
   const modelLabel = modelLabelFor(modelConfig, model);
+  // This Mac's Eco Plus, live (Settings → Chat → Tasarruf modu): the chip's tag and the menu's line.
+  const [ecoPlus, setEcoPlus] = useState(() => readAgentSettings().ecoPlus);
+  useEffect(() => onAgentSettings((c) => setEcoPlus(c.ecoPlus)), []);
   const effortValue = effort || modelConfig.defaultEffort;
   // The agent this chat speaks as, read live from the agent roster so a rename on the Agents
   // page shows here. Only a bound chat asks for the list; while it loads (or if the agent is
@@ -2326,6 +2332,8 @@ export function Composer({
   const newShell = useIsNewShell();
   const newChatsLine = () => {
     const s = readAgentSettings();
+    // Eco Plus (plan eco-plus): the Super and new chats run on Sonnet; a pick here is not silent.
+    if (s.ecoPlus && !session.tool) return t(mode === 'super' ? 'shell.settings.eco.plus.superLive' : 'shell.settings.eco.plus.chat');
     const codex = mode !== 'super' && s.chatDefaultTool === 'codex';
     const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : codex ? [s.codexDefaultModel, s.codexDefaultEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
     const value = [codex ? 'Codex' : '', m ? (codex ? m : modelLabelFor(modelConfig, m)) : t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
@@ -2461,7 +2469,7 @@ export function Composer({
             head={modelMenu?.head}
             foot={modelMenu?.foot}
             defaultId={modelMenu?.defaultId}
-            defaultLine={newShell && !modelMenu?.foot && !onSetModelDefault ? newChatsLine() : undefined}
+            defaultLine={(ecoPlus && !session.tool) || (newShell && !modelMenu?.foot && !onSetModelDefault) ? newChatsLine() : undefined}
           />}
         </div>
       )}
@@ -2865,6 +2873,7 @@ export function Composer({
             open={menu.open === 'model'}
             onToggle={toggleModel}
             temporary={modelMenu?.temporary}
+            tag={ecoPlus && !session.tool && /sonnet/i.test(model) ? t('shell.settings.eco.plus.tag') : undefined}
           />
         )}
 

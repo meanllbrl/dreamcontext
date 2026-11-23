@@ -1,3 +1,4 @@
+import { chatModelSource } from '../../lib/agentSettings';
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';
@@ -1081,6 +1082,55 @@ let chatSessionSeq = 0;
  * the vault also names this session's alarm source, which is what lets a background project's
  * chip raise the user (see `pushAsk` below). Empty string = no project pinned.
  */
+/**
+ * The owner's model picks, per conversation (plan eco-plus D3, `chatModelSource` in agentSettings):
+ * written ONLY by a real pick event ({@link noteChatModelPick}), never inferred from a spawn's
+ * arguments. Every spawn of a conversation with no pick here tags its URL `modelSource=saved`, so
+ * the server's Eco Plus lowers it; a picked one sends no tag (`pick`). Kept in localStorage so a
+ * pick, an escalated `--model opus` child among them, survives the app's relaunch and restore.
+ */
+const MODEL_PICKS_KEY = 'dc.chatModelPicks.v1';
+const MAX_MODEL_PICKS = 400;
+let modelPicks: Map<string, string> | null = null;
+function picks(): Map<string, string> {
+  if (modelPicks) return modelPicks;
+  modelPicks = new Map();
+  try {
+    const raw = JSON.parse(globalThis.localStorage?.getItem(MODEL_PICKS_KEY) ?? '[]') as unknown;
+    if (Array.isArray(raw)) for (const e of raw) if (Array.isArray(e) && typeof e[0] === 'string' && typeof e[1] === 'string') modelPicks.set(e[0], e[1]);
+  } catch { /* unreadable = no picks: Eco Plus applies, the safe saving default */ }
+  return modelPicks;
+}
+/** A real pick event: the model picker, a composer model changed on purpose, an explicit `--model`. */
+export function noteChatModelPick(claudeId: string, model: string): void {
+  if (!claudeId || !model) return;
+  const m = picks();
+  m.delete(claudeId);
+  m.set(claudeId, model);
+  // Oldest first: a long-lived window never grows this without bound.
+  while (m.size > MAX_MODEL_PICKS) m.delete(m.keys().next().value as string);
+  try { globalThis.localStorage?.setItem(MODEL_PICKS_KEY, JSON.stringify([...m])); } catch { /* in memory still holds it */ }
+}
+/**
+ * A new conversation that carries another one's model (an agent switch, the Develop hand-off) carries
+ * its pick RECORD with it: an event copied, not inferred. No record on the old one = none on the new.
+ */
+export function carryChatModelPick(from: string, to: string): void {
+  const m = picks().get(from);
+  if (m) noteChatModelPick(to, m);
+}
+export function chatModelPicked(claudeId: string): boolean {
+  return picks().has(claudeId);
+}
+/** Test seam: forget every pick (and the in-memory copy of the stored ones). */
+export function resetChatModelPicks(): void {
+  modelPicks = null;
+}
+export function chatModelSourceParam(claudeId: string): string {
+  const s = chatModelSource(chatModelPicked(claudeId));
+  return s === 'pick' ? '' : `&modelSource=${s}`;
+}
+
 export function createChatSession(
   vault: string,
   bypass: boolean,
@@ -1125,7 +1175,7 @@ export function createChatSession(
   const firstReattach = resume ? reattach : '';
   const idParam = (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`)
     + (firstReattach ? `&reattach=${firstReattach}` : '');
-  const modelParam = model ? `&model=${encodeURIComponent(model)}` : '';
+  const modelParam = (model ? `&model=${encodeURIComponent(model)}` : '') + chatModelSourceParam(claudeId);
   const effortParam = effort ? `&effort=${encodeURIComponent(effort)}` : '';
   // Omitted for `basic`, not sent as `&mode=basic`: the server's `sanitizeChatMode` already
   // resolves an absent param to the same value, so the default costs no bytes and every
@@ -3233,6 +3283,8 @@ export function createChatSession(
     const requestId = `sm-${id}-${++ctrlSeq}`;
     // Registered before the send, for the same reason as `setPermissionMode` above.
     pendingModels.set(requestId, model);
+    // A live pick IS a pick event: every later respawn of this conversation keeps it (Eco Plus never lowers it).
+    noteChatModelPick(claudeId, model);
     if (!sendControl({ type: 'setModel', requestId, model })) pendingModels.delete(requestId);
   }
 

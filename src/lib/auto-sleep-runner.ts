@@ -1,3 +1,5 @@
+import { ECO_PLUS_KEEP_ENV, resolveSpawnModel } from './eco-plus.js';
+import { appendLowered, ecoPlusDefault } from './context-watch.js';
 import { toolRunArgs, type HeadlessTool } from './t3-bridge/headless-envelope.js';
 import { toolText } from './tool-text.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
@@ -164,6 +166,7 @@ export async function runAutoSleep(
           '--permission-mode', 'bypassPermissions',
           '--output-format', 'json',
           '--disallowedTools', AUTO_SLEEP_DISALLOWED_TOOLS,
+          ...autoSleepModelArgs(),
         ],
       {
         ...(codexNode ? { command: { file: codexNode, prefix: [codexCli] } } : {}),
@@ -172,7 +175,9 @@ export async function runAutoSleep(
         // DREAMCONTEXT_AUTO_SLEEP is the guard that stops this session's own
         // Stop hooks chaining a second background sleep, AND switches the
         // task-filing bar on for everything it runs.
-        env: { DREAMCONTEXT_AUTO_SLEEP: '1' },
+        // A sleep is its project's own work, never part of the session that fired it: an
+        // escalated session's kept-heavy marker (eco-plus.ts) does not reach it.
+        env: { DREAMCONTEXT_AUTO_SLEEP: '1', [ECO_PLUS_KEEP_ENV]: undefined },
         // Written SYNCHRONOUSLY at spawn: a sidecar written after an await can
         // be missed by a dispatcher that dies in between, leaving an orphaned
         // process group with no record — the one failure with no recovery.
@@ -374,4 +379,16 @@ export function recordAutoSleepChangelog(
   } catch {
     return false;
   }
+}
+
+/**
+ * Eco Plus (plan eco-plus K3): an auto-sleep run names no model (`default`, the CLI's own, often
+ * Opus), so under Eco Plus it runs `--model sonnet`; off, the argv is today's. The consent
+ * fingerprint never reads this. Exported for the spawn-site test.
+ */
+export function autoSleepModelArgs(on: boolean = ecoPlusDefault()): string[] {
+  const r = resolveSpawnModel({ model: '', source: 'default', tool: 'claude', on });
+  if (!r.lowered) return [];
+  appendLowered({ site: 'auto-sleep', from: '', to: r.model });
+  return ['--model', r.model];
 }

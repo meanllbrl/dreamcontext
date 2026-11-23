@@ -88,6 +88,7 @@ import {
   isDestructiveAllowed,
   type ConsolidationDepth,
 } from '../../lib/sleep-consolidation.js';
+import { appendEcoPlusHistory } from '../../lib/context-watch.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1080,6 +1081,10 @@ interface AgentUiSettings {
    *  A pane's own composer switch still wins for that pane and never writes this. Read on the
    *  spawn path by `ecoModeDefault` (src/lib/context-watch.ts). Mirrors the dashboard. */
   ecoMode: boolean;
+  /** Eco Plus (Settings → Chat → Tasarruf modu, plan eco-plus D1): most work on Sonnet. OFF by
+   *  default; true only for an explicit `true` on a blob whose `ecoMode` is not `false`. Read on
+   *  every spawn by `ecoPlusDefault` (src/lib/context-watch.ts). Mirrors the dashboard. */
+  ecoPlus: boolean;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -1105,6 +1110,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   superEffort: SUPER_AGENT_DEFAULT.effort,
   readAloud: false,
   ecoMode: true,
+  ecoPlus: false,
 };
 
 function agentSettingsPath(): string {
@@ -1176,6 +1182,8 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     readAloud: raw.readAloud === true,
     // Default-TRUE: only an explicit `false` turns Eco mode off for new chats.
     ecoMode: raw.ecoMode !== false,
+    // Default-FALSE, and Kapalı wins: `{ecoMode:false, ecoPlus:true}` reads as Kapalı.
+    ecoPlus: raw.ecoPlus === true && raw.ecoMode !== false,
   };
 }
 
@@ -1229,12 +1237,15 @@ export async function handleAgentSettingsSet(
     return;
   }
   const b = body as Record<string, unknown>;
+  const before = readAgentUiSettings().ecoPlus;
   const settings = b.merge === true
     ? mergeAgentSettings(readAgentUiSettings(), b.patch && typeof b.patch === 'object' && !Array.isArray(b.patch) ? b.patch as Record<string, unknown> : {})
     : coerceAgentSettings(b);
   try {
     mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
     writeFileSync(agentSettingsPath(), JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+    // Eco Plus periods for the Stats row: one line per real change, compared within this call.
+    if (settings.ecoPlus !== before) appendEcoPlusHistory(settings.ecoPlus);
     sendJson(res, 200, settings);
   } catch (err) {
     console.error('[launcher] agent-settings write failed:', err);

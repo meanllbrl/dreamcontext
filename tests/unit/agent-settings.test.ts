@@ -154,6 +154,25 @@ describe('ecoMode (Settings → Chat → Eco mode, one switch for this Mac)', ()
   });
 });
 
+describe('ecoPlus (Settings → Chat → Tasarruf modu: Eco Plus, plan eco-plus D1)', () => {
+  it('is OFF by default on both sides', () => {
+    expect(DEFAULT_AGENT_SETTINGS.ecoPlus).toBe(false);
+    expect(coerceAgentSettings({}).ecoPlus).toBe(false);
+    expect(coerceServerAgentSettings({}).ecoPlus).toBe(false);
+  });
+
+  it('runs one table through BOTH coercers: only an explicit true, and Kapalı wins', () => {
+    const table: Array<[unknown, unknown, boolean]> = [
+      [true, undefined, true], [true, true, true], [true, false, false],
+      [false, true, false], ['true', true, false], [1, true, false], [null, true, false], [undefined, undefined, false],
+    ];
+    for (const [ecoPlus, ecoMode, want] of table) {
+      expect(coerceAgentSettings({ ecoPlus: ecoPlus as never, ecoMode: ecoMode as never }).ecoPlus).toBe(want);
+      expect(coerceServerAgentSettings({ ecoPlus, ecoMode }).ecoPlus).toBe(want);
+    }
+  });
+});
+
 describe('coerceAgentSettings renderer', () => {
   it('defaults to webgl when the key is absent (old persisted blob)', () => {
     expect(coerceAgentSettings({}).renderer).toBe('webgl');

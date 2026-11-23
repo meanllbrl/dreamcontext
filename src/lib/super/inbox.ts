@@ -996,17 +996,19 @@ export function memberTitle(contextRoot: string, slug: string): string {
  * included): `super state`, its card and `super resume` read it from the record. Written only when
  * it differs; not a child of any Super, nothing.
  */
-export async function noteChildModel(sessionId: string, model: string): Promise<void> {
+export async function noteChildModel(sessionId: string, model: string, lowered = false): Promise<void> {
   const root = superKeyOfChild(sessionId);
   // Only what `super resume` accepts back (sanitizeModel): a `[1m]`-tagged id would make the
   // child impossible to resume, so the record keeps what it had.
   if (!root || model.length > 60 || sanitizeModel(model) !== model) return;
   const st = await readSuperState(root);
   const have = st.children[sessionId];
-  if (!have || have.endedAt !== undefined || have.model === model) return;
+  // `lowered` (Eco Plus, plan eco-plus K3) is only ever set, never cleared: a resumed child keeps it.
+  if (!have || have.endedAt !== undefined || (have.model === model && (!lowered || have.lowered))) return;
   await writeSuper(root, (s) => {
     const c = s.children[sessionId];
     if (c && c.model !== model) c.model = model;
+    if (c && lowered) c.lowered = true;
   });
 }
 
