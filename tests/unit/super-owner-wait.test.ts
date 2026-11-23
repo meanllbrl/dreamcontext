@@ -36,12 +36,14 @@ import {
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
-  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, OWNER_WAIT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
+  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, CUT_LINE, OWNER_WAIT_LINE, noteChatStarted, noteChildEnding, setCutChildResumer, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
   noteChildParking, reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn, refusalWait, refusalWaitId, stalledWait } from '../../src/lib/super/owner-wait.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import { superBriefing } from '../../src/server/chat-modes.js';
+import { ToWire } from '../../src/lib/t3-bridge/to-wire.js';
+import { BACKGROUND_CUT_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
 import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runReport.js';
 import { buildSubmitMarkdown } from '../../dashboard/src/lib/checklistMarkdown.js';
 import { secretReceipt } from '../../src/lib/env-secrets.js';
@@ -66,6 +68,8 @@ const roster = (h: ChatHandle, tasks: Array<{ type?: string; desc: string }>) =>
   type: 'system', subtype: 'background_tasks_changed',
   tasks: tasks.map((t, i) => ({ task_id: `bg${i}`, task_type: t.type ?? 'local_bash', description: t.desc })),
 });
+/** The field command (2026-11-22, child 635cf43c): no description, so the roster carries it bare. */
+const FIELD_SOL_PANEL = 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do WB_SOL_OUT=/tmp/wb-sol-panel dreamcontext builder heavy --tail 80 -- node scripts/verify/wb-sol-panel.mjs > tmp/develop/wb-sol/look3.txt 2>&1; rc=$?; [ $rc -ne 75 ] && break; done; echo exit=$rc >> tmp/develop/wb-sol/look3.txt';
 const runReport = (command = RUN.command) => buildRunReport(command, { code: 0, tail: 'You are now logged in.', seconds: 21 }, { includeOutput: true });
 
 async function drain(): Promise<void> {
@@ -138,12 +142,21 @@ describe('owner-wait: what a child leaves for the owner, and his answer', () => 
     expect(answeredBy(runReport('firebase login'), two).map((w) => w.id)).toEqual(['fb']);
   });
 
-  it('a background roster entry: a dev server or a watch is persistent, a script or an agent is a job', () => {
+  it('a background roster entry: a dev server or a follow is persistent; a script, an agent and a Monitor are jobs', () => {
     expect(persistentBackground({ task_type: 'local_bash', description: 'Start the dev server' })).toBe(true);
     expect(persistentBackground({ task_type: 'local_bash', description: 'npm run dev on port 5173' })).toBe(true);
-    expect(persistentBackground({ task_type: 'monitor', description: 'deploy log' })).toBe(true);
+    expect(persistentBackground({ task_type: 'local_bash', description: 'Start API server' })).toBe(true);
+    expect(persistentBackground({ task_type: 'local_bash', description: 'python3 -m http.server 8000' })).toBe(true);
+    expect(persistentBackground({ task_type: 'local_bash', description: 'tail -f logs/app.log' })).toBe(true);
+    expect(persistentBackground({ task_type: 'local_bash', description: 'npx vitest --watch' })).toBe(true);
+    expect(persistentBackground({ task_type: 'local_tool', description: 'watch deploys', persistent: true })).toBe(true);
     expect(persistentBackground({ task_type: 'local_bash', description: 'Run live exploration script' })).toBe(false);
-    expect(persistentBackground({ task_type: 'local_agent', description: 'Review the diff' })).toBe(false);
+    expect(persistentBackground({ task_type: 'local_bash', description: 'Run server tests' })).toBe(false);
+    expect(persistentBackground({ task_type: 'local_agent', description: 'Start the dev server review' })).toBe(false);
+    // Field 2026-11-22/23: a Monitor the child waits on, and a bare command whose flag says `--tail`.
+    expect(persistentBackground({ task_type: 'monitor', description: 'wb-sol-panel browser check run 2' })).toBe(false);
+    expect(persistentBackground({ task_type: 'monitor', description: 'eco round 2: finished runs, errors, guard stops' })).toBe(false);
+    expect(persistentBackground({ task_type: 'local_bash', description: FIELD_SOL_PANEL })).toBe(false);
   });
 
   it('an mcp card is an owner wait; its own report clears only it, never a run or secret wait (task mcp-management)', async () => {
@@ -540,6 +553,211 @@ describe('a background JOB holds the row for as long as the CLI runs it', { time
     roster(h, [{ desc: 'Run tests' }]); // one ended mid-turn: its notification may still come after
     h.observe({ type: 'result' });
     expect(getChat('w1')?.wakeOwedAt).toBeDefined();
+  });
+
+  // Field 2026-11-22 21:35 -> 21:46 (child 635cf43c, awaited): its turn ended on "Ölçüm yeniden
+  // çalışıyor." over a background browser check; 10 min later it was `done awaited=owner` and the
+  // owner was told a result that did not exist. Its command's `--tail 80` read as a `tail`.
+  it('a bare command with a `--tail` flag is a job: past the quiet bar no done, no awaited event (field 2026-11-22)', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    roster(hs[0], [{ desc: FIELD_SOL_PANEL }]);
+    say(hs[0], 'Ölçüm yeniden çalışıyor.');
+    hs[0].observe({ type: 'result' });
+    await advance(BACKGROUND_QUIET_MS + 15 * 60_000, 30_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(0);
+    expect((await state()).children.c1.row).toBe('working');
+    expect(delivered.some((d) => d.text.includes('event=done'))).toBe(false);
+  });
+
+  // Field 2026-11-22 (Eco benchmark, child cc299534): a Monitor on a 96-run matrix; the turn
+  // ended on "waiting for the queue", and it read done at the quiet bar.
+  it('a Monitor the child waits on holds the row past the quiet bar like any job', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    roster(hs[0], [{ type: 'monitor', desc: 'eco round 2: finished runs, errors, guard stops' }]);
+    say(hs[0], 'Continuing to wait for the queue to finish.');
+    hs[0].observe({ type: 'result' });
+    await advance(BACKGROUND_QUIET_MS + 15 * 60_000, 30_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(0);
+    expect(delivered).toHaveLength(0);
+    roster(hs[0], []);
+    await advance(BACKGROUND_WAKE_MS + STALE_SWEEP_MS + 5_000, 5_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+
+  // Every tool: a Codex child's background terminal and an Antigravity sub-agent that runs on
+  // reach the same roster through the bridge (to-wire), so they hold the row exactly as Claude's.
+  it.each([
+    ['codex', { id: 'cmd-1', type: 'command_execution', status: 'running', input: 'npm test -- --run' }],
+    ['antigravity', { id: 'sub-1', type: 'subagent', subagentId: 'node-1', status: 'running', title: '/root/reviewer', prompt: 'Review it', childThreadId: null, result: null }],
+  ] as const)('a %s child whose turn ends over running work is not done until that work ends', async (tool, item) => {
+    const { hs, delivered } = await boot(['c1']);
+    const w = new ToWire({ tool, model: 'm', cwd: '/p', permissionMode: 'auto', threadId: 'pane-1' });
+    const feed = (e: Record<string, unknown>) => { for (const f of w.translate(e as never)) hs[0].observe(f); };
+    const turnItem = (extra: Record<string, unknown>) => ({ type: 'turn_item.updated', turnItem: { threadId: 'pane-1', nativeItemRef: null, title: null, ...item, ...extra } });
+    feed({ type: 'provider_turn.updated', providerTurn: { status: 'running' } });
+    feed(turnItem({}));
+    feed({ type: 'turn_item.updated', turnItem: { id: 'msg-1', threadId: 'pane-1', type: 'assistant_message', status: 'completed', streaming: false, text: 'Bekliyorum.' } });
+    feed({ type: 'turn.terminal', status: 'completed', failure: null });
+    expect(getChat('c1')?.backgroundJobs).toBe(1);
+    await advance(BACKGROUND_QUIET_MS + 15 * 60_000, 30_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(0);
+    expect(delivered).toHaveLength(0);
+    // The work ends; the tool's own wake turn follows and ends: done then, once.
+    feed(turnItem({ status: 'completed', output: 'ok', exitCode: 0, result: 'Looks fine.' }));
+    expect(getChat('c1')?.backgroundTasks).toBe(0);
+    feed({ type: 'provider_turn.updated', providerTurn: { status: 'running' } });
+    feed({ type: 'turn_item.updated', turnItem: { id: 'msg-2', threadId: 'pane-1', type: 'assistant_message', status: 'completed', streaming: false, text: 'Testler yeşil.' } });
+    feed({ type: 'turn.terminal', status: 'completed', failure: null });
+    await advance(DONE_SETTLE_MS + STALE_SWEEP_MS + 5_000, 5_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+
+  // Owner 2026-11-23: children ended while their background job ran; the job died with them and
+  // each reached him as `gone`. Now: a silent `restarted`, a turn that says the work stopped, and
+  // the server reopens it itself.
+  it('a child whose process ends over running background work is reopened, never told as gone', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_key, sid) => { asked.push(sid); return true; });
+    const { hs, delivered } = await boot(['c1']);
+    await writeSuper(root, (s) => { s.children.c1.awaited = true; });
+    roster(hs[0], [{ type: 'monitor', desc: 'browser check run 4' }]);
+    say(hs[0], 'Bekliyorum.');
+    hs[0].observe({ type: 'result' });
+    await advance(60_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+    expect(await ofKind('gone', 'c1')).toHaveLength(0);
+    expect(await ofKind('restarted', 'c1')).toHaveLength(1);
+    const st = await state();
+    expect(st.children.c1.row).toBe('working');
+    expect(st.children.c1.resuming).toBeDefined();
+    const outbox = await readOutbox(root);
+    expect(outbox.some((i) => i.child === 'c1' && i.text === BACKGROUND_CUT_TEXT)).toBe(true);
+    const told = delivered.map((d) => d.text).join('\n');
+    expect(told).toMatch(/child=c1 event=restarted/);
+    expect(told).not.toMatch(/child=c1 event=(?:gone|done)|child=c1[^\n]*awaited=owner/);
+  });
+
+  it('a cut child the server cannot reopen is `gone background=cut`: no result, the Super resumes it', async () => {
+    setCutChildResumer(async () => false);
+    const { hs, delivered } = await boot(['c1']);
+    await writeSuper(root, (s) => { s.children.c1.awaited = true; });
+    roster(hs[0], [{ desc: 'Run the benchmark judge' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    const gone = await ofKind('gone', 'c1');
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBe(true);
+    expect((await ofKind('restarted', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(0);
+    const text = delivered.map((d) => d.text).join('\n');
+    expect(text).toMatch(/child=c1 event=gone background=cut/);
+    expect(text).not.toMatch(/child=c1[^\n]*awaited=owner/);
+    expect(text).toContain(CUT_LINE);
+  });
+
+  it('review 2026-11-23: the owner closing the tab (its end frame) is never a cut, whatever still ran', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'Run the load test' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    noteChildEnding('c1');
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual([]);
+    const gone = await ofKind('gone', 'c1');
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBeUndefined();
+  });
+
+  it('review 2026-11-23: a child with only a dev server left running is no cut', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'npm run dev on port 5173' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual([]);
+    expect((await ofKind('gone', 'c1'))[0]?.cut).toBeUndefined();
+  });
+
+  it('review 2026-11-23: reopened once, cut again within the hour: `gone background=cut`, no second reopen, never a result', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs, delivered } = await boot(['c1']);
+    await writeSuper(root, (s) => { s.children.c1.awaited = true; });
+    roster(hs[0], [{ desc: 'Run the benchmark' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+    // It came back, started the job again, and its process ended again.
+    const h2 = reg('c1');
+    h2.userSent(BACKGROUND_CUT_TEXT);
+    roster(h2, [{ desc: 'Run the benchmark' }]);
+    h2.observe({ type: 'result' });
+    await advance(30_000);
+    h2.exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+    const gone = (await ofKind('gone', 'c1')).filter((q) => q.state !== 'done' || q.cut);
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBe(true);
+    expect(delivered.map((d) => d.text).join('\n')).not.toMatch(/child=c1[^\n]*awaited=owner/);
+  });
+
+  it('review r2: an end the window asked of an OLD process (a respawn) does not hide a later real cut', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    noteChildEnding('c1');
+    await noteChatStarted('c1'); // the respawn's new process
+    roster(hs[0], [{ desc: 'Run the load test' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+  });
+
+  it('review r2: a finished child is no plain cut, even reopened within the hour', async () => {
+    setCutChildResumer(async () => true);
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'Run the benchmark' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    // Back, finished its job (its row done), then its process ended with a stale job entry.
+    const h2 = reg('c1');
+    h2.userSent(BACKGROUND_CUT_TEXT);
+    roster(h2, [{ desc: 'Run the benchmark' }]);
+    h2.observe({ type: 'result' });
+    await writeSuper(root, (s) => { s.children.c1.row = 'done'; delete s.children.c1.resuming; });
+    h2.exited();
+    await advance(60_000);
+    expect((await ofKind('gone', 'c1')).some((q) => q.cut)).toBe(false);
+  });
+
+  it('a child that exits with nothing running in the background is a plain gone (no resume asked)', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual([]);
+    const gone = await ofKind('gone', 'c1');
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBeUndefined();
   });
 
   it('a dev server does not hold the row past the quiet bar, whatever the reply says (review round 1)', async () => {

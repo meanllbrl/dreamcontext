@@ -1095,6 +1095,9 @@ export interface SuperQueueItem {
   toSuper?: true;
   /** A result debt was opened for this item when it reached the Super (owed.ts): never twice. */
   owedAt?: number;
+  /** A `gone` whose process ended while its background work still ran (the work died with it)
+   *  and the server could not bring it back: no result, the Super resumes it. Never on another kind. */
+  cut?: true;
   /** An `owed` item's debts (`SuperOwed.id`), fixed when it was queued. */
   owed?: string[];
   /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
