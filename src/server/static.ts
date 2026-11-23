@@ -5,6 +5,16 @@ import { mediaContentType, serveMedia } from './media.js';
 import { isPhoneSocket } from './phone-origin.js';
 import { findRetainedAsset, retainBuildAssets } from './retained-assets.js';
 
+/**
+ * Snapshot the served build's chunks right AFTER this answer goes out, not before it: the first
+ * snapshot links every file of the build (160+), and it sat in front of the app's first page on
+ * every launch (task: opening the app is slow, 2026-11-23). A rebuild cannot land between this
+ * answer and the next turn of the loop, which is when the snapshot runs.
+ */
+function retainAfterAnswer(staticDir: string, indexHtml: Buffer): void {
+  setImmediate(() => retainBuildAssets(staticDir, indexHtml));
+}
+
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -100,7 +110,7 @@ export function serveStatic(
 
     const raw = readFileSync(filePath);
     const isIndex = filePath === join(staticDir, 'index.html');
-    if (isIndex) retainBuildAssets(staticDir, raw);
+    if (isIndex) retainAfterAnswer(staticDir, raw);
     const content = isIndex ? indexHtmlFor(raw, indexSurfaceFor(req)) : raw;
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
@@ -126,7 +136,7 @@ export function serveStatic(
     const indexPath = join(staticDir, 'index.html');
     if (existsSync(indexPath)) {
       const raw = readFileSync(indexPath);
-      retainBuildAssets(staticDir, raw);
+      retainAfterAnswer(staticDir, raw);
       const content = indexHtmlFor(raw, indexSurfaceFor(req));
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',

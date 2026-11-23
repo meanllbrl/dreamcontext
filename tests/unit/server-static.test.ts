@@ -198,8 +198,10 @@ describe('serveStatic — chunks of a build a tab is still running', () => {
     return captured;
   }
 
-  it('still serves a lazy chunk the rebuild removed, once its index.html was handed out', () => {
+  it('still serves a lazy chunk the rebuild removed, once its index.html was handed out', async () => {
     expect(get('/', 'text/html').status).toBe(200);
+    // The snapshot runs right after the answer (the next turn of the loop).
+    await new Promise((r) => setImmediate(r));
 
     // The rebuild: remove-then-copy, new hashes.
     rmSync(join(dir, 'assets'), { recursive: true, force: true });
