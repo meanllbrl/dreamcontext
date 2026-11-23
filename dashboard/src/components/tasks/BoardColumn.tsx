@@ -1,4 +1,4 @@
-import type { TaskListItem as Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task, StatusModel } from '../../hooks/useTasks';
 import type { CardProps } from './boardModel';
 import { BoardCard } from './BoardCard';
 
@@ -26,6 +26,9 @@ export interface BoardColumnData {
 interface BoardColumnProps {
   col: BoardColumnData;
   cardProps: CardProps;
+  sm: StatusModel;
+  /** Draw at most this many cards (the board's first frame); undefined draws them all. */
+  cardLimit?: number;
   dragId: string | null;
   draggable: boolean;
   isDropTarget?: boolean;
@@ -51,7 +54,7 @@ interface BoardColumnProps {
 }
 
 export function BoardColumn({
-  col, cardProps, dragId, draggable, isDropTarget, showDropSilhouette, assigneeName,
+  col, cardProps, sm, cardLimit, dragId, draggable, isDropTarget, showDropSilhouette, assigneeName,
   childrenOf, parentNameOf, showVersionChip, subtasksOpen, onToggleSubtasks, onOpenTask,
   onToggleCollapse, onAddTask, onCardClick, onCardContextMenu, onCardDragStart, onCardDragEnd, onColumnDragOver, onColumnDragLeave, onColumnDrop,
 }: BoardColumnProps) {
@@ -97,11 +100,12 @@ export function BoardColumn({
               )}
               {!sub.collapsed && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                  {sub.cards.map((t) => (
+                  {(cardLimit === undefined ? sub.cards : sub.cards.slice(0, cardLimit)).map((t) => (
                     <BoardCard
                       key={t.id}
                       task={t}
                       cardProps={cardProps}
+                      sm={sm}
                       dragging={dragId === t.id}
                       assigneeName={assigneeName}
                       subtasks={childrenOf?.(t.slug) ?? []}

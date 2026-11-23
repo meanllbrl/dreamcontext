@@ -12,6 +12,8 @@
  *        [--stream]         # also: the same page changes while a chat is streaming an answer
  *        [--walk]           # first: the owner's own steps (2026-11-22), with a filmstrip of each
  *        [--video]
+ *        [--profile]        # one more apps→tasks hop under a Chromium trace (script, style, layout)
+ *        [--shots]          # the settled task board at 1440 and 390 px, light and dark
  *
  * What it prints (ms, median unless said):
  *   pages     click on a rail row -> `first`: the first frame the page (or Chat) is on screen;
@@ -223,6 +225,7 @@ const PROBE = `(() => {
 })();`;
 
 const wait = (p, ms) => p.waitForTimeout(ms);
+const line0 = (o) => process.stdout.write(`${o}\n`);
 const med = (a) => { const s = a.filter((x) => x !== null && x !== undefined).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; };
 const max = (a) => a.filter((x) => x !== null && x !== undefined).reduce((m, x) => Math.max(m, x), 0);
 
@@ -424,6 +427,50 @@ async function main() {
       report.pages[name] = { first: med(of.map((x) => x.first)), firstMax: max(of.map((x) => x.first)), content: med(of.map((x) => x.content)), contentMax: max(of.map((x) => x.content)), long: med(of.map((x) => x.long)), longMax: max(of.map((x) => x.long)), longSum: med(of.map((x) => x.longSum)), gap: med(of.map((x) => x.gap)), gapMax: max(of.map((x) => x.gap)), click: med(of.map((x) => x.click)), els: med(of.map((x) => x.els)), missed: of.filter((x) => x.first === null).length };
     }
     report.rows = rows;
+
+    // ── one apps→tasks hop under a Chromium trace (--profile): where the mount's time goes ──
+    if (flag('profile')) {
+      await rail('apps').click(); await wait(p, 1500);
+      const file = join(OUT, `${TAG}-apps-tasks.trace.json`);
+      await browser.startTracing(p, { path: file, categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'v8.execute', 'disabled-by-default-v8.cpu_profiler', 'disabled-by-default-devtools.screenshot'] });
+      await rail('tasks').click(); await wait(p, 1500);
+      await browser.stopTracing();
+      line0(`profile: ${file}`);
+      await rail('chat').click(); await wait(p, 1500);
+    }
+
+    // ── the settled task board at 1440 and 390 px, light and dark (--shots): before/after pairs ──
+    if (flag('shots')) {
+      await rail('tasks').click(); await wait(p, 2000);
+      for (const width of [1440, 390]) {
+        for (const scheme of ['light', 'dark']) {
+          await p.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+          await p.emulateMedia({ colorScheme: scheme });
+          await wait(p, 1200);
+          await p.screenshot({ path: join(OUT, `${TAG}-board-${width}-${scheme}.png`) });
+        }
+      }
+      await p.setViewportSize(view); await p.emulateMedia({ colorScheme: 'light' }); await wait(p, 800);
+      // The board still behaves: every card is in the page, search narrows it, a drag moves a card.
+      const board = p.locator('.project-instance:not([hidden]) .shell-main');
+      const cards = async () => board.locator('[data-task-slug]').count();
+      const counts = async () => board.locator('.bd-col-count').allInnerTexts();
+      const all = await cards();
+      const before = await counts();
+      await board.locator('input[placeholder^="Search"]').first().fill('Örnek görev 12:');
+      await wait(p, 800);
+      const searched = await cards();
+      await board.locator('input[placeholder^="Search"]').first().fill('');
+      await wait(p, 1200);
+      const src = board.locator('[data-column="todo"] [data-task-slug="ornek-gorev-000"]');
+      await src.dragTo(board.locator('[data-column="in_review"]').first());
+      let moved = '';
+      for (let i = 0; i < 40 && !/status: in_review/.test(moved); i++) { await wait(p, 200); moved = readFileSync(join(SCRATCH, 'acme', '_dream_context', 'state', 'ornek-gorev-000.md'), 'utf-8'); }
+      await wait(p, 1200);
+      report.boardCheck = { cards: all, counts: before, searched, dragged: /status: in_review/.test(moved), countsAfterDrag: await counts() };
+      line0(`board: ${all} cards, counts ${before.join('/')}, search 'Örnek görev 12:' -> ${searched}, drag todo->in_review ${report.boardCheck.dragged ? 'moved' : 'DID NOT MOVE'}, counts after ${report.boardCheck.countsAfterDrag.join('/')}`);
+      await rail('chat').click(); await wait(p, 1500);
+    }
 
     // ── typing ─────────────────────────────────────────────────────────────────────────
     const text = 'Merhaba, bu bir akıcılık ölçümüdür: yazarken ekranın geri kalanı kıpırdamasın. '.repeat(4).slice(0, KEYS);
