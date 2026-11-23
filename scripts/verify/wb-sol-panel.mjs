@@ -76,6 +76,10 @@ const browser = await chromium.launch();
 const keep = (file, name) => { app.taken.push(file); if (OUT) copyFileSync(file, join(OUT, name)); };
 const check = (name, cond, detail = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${!cond && detail ? ` — ${detail}` : ''}`); if (!cond) app.findings.push(`${name}${detail ? `: ${detail}` : ''}`); };
 const measures = {};
+/** Which block runs now: a WebSocket console error is kept with it (K9b). */
+let phase = 'K';
+const wsLog = [];
+const WS_RE = /\/ws\b|WebSocket/;
 
 async function open(width, height, theme) {
   const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme });
@@ -83,7 +87,11 @@ async function open(width, height, theme) {
   await markAnnouncementsSeen(context, app.base);
   const page = await context.newPage();
   const where = `${width}x${height} ${theme}`;
-  page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket|^Failed to load resource/.test(m.text())) app.findings.push(`${where} console: ${m.text().slice(0, 200)}`); });
+  page.on('console', (m) => {
+    if (m.type() !== 'error' || /\/@vite\/|favicon|^Failed to load resource/.test(m.text())) return;
+    if (WS_RE.test(m.text())) wsLog.push({ phase, where, text: m.text().slice(0, 200) });
+    else app.findings.push(`${where} console: ${m.text().slice(0, 200)}`);
+  });
   page.on('pageerror', (e) => app.findings.push(`${where} crash: ${String(e.message).slice(0, 200)}`));
   page.on('response', (r) => {
     if (r.status() < 400) return;
@@ -208,6 +216,18 @@ try {
     await page.waitForTimeout(1200);
     l = await layout(page);
     check('K8 a ⌘-number move opens the new project and folds the old', (await activeVault(page)) === 'orbit' && l.projects.orbit.open && !l.projects.northwind.open, JSON.stringify({ active: await activeVault(page), orbit: l.projects.orbit.open, northwind: l.projects.northwind.open }));
+    // K8b: the top-left project picker (C3): to northwind, then back to orbit.
+    const pick = async (name) => {
+      await page.getByTestId('ns-picker-btn').click();
+      await page.getByTestId(`ns-picker-${name}`).click();
+      await page.waitForFunction((v) => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === v, name, { timeout: 20_000 }).catch(() => {});
+      await page.waitForTimeout(1200);
+      const lp = await layout(page);
+      return { active: await activeVault(page), open: Object.entries(lp.projects).filter(([, v]) => v.open).map(([k]) => k) };
+    };
+    const viaPicker = await pick('northwind');
+    const backPicker = await pick('orbit');
+    check('K8b the top-left picker opens only the project it moves to', viaPicker.active === 'northwind' && viaPicker.open.join() === 'northwind' && backPicker.active === 'orbit' && backPicker.open.join() === 'orbit', JSON.stringify({ viaPicker, backPicker }));
 
     // K6: Chat, a folded project with no chat lands on its Super Agent, and nothing is sent.
     await tab(page, 'chat');
@@ -274,6 +294,44 @@ try {
     await page.screenshot({ path: f6 }); keep(f6, 'sonra-6-chat-uzak-proje-light-1440.png');
     await context.close();
   }
+  /* ── K3m/K4m: twelve projects, the 34-board one open: the column scrolls, the open header sticks ── */
+  {
+    phase = 'K3m';
+    const { context, page } = await open(1440, 900, 'light');
+    await tab(page, 'whiteboards');
+    await page.waitForSelector('[data-testid="sidebar-explorer"] .wbx-row', { timeout: 20_000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    const outer = (where) => page.evaluate((w) => {
+      const sc = document.querySelector('[data-testid="chat-drawer"] .ns-dr-scroll');
+      sc.scrollTop = w === 'end' ? sc.scrollHeight : 0;
+      return { scrollTop: sc.scrollTop, scrollHeight: sc.scrollHeight, clientHeight: sc.clientHeight };
+    }, where);
+    const bodyH = () => page.evaluate(() => document.querySelector('[data-open-body]')?.getBoundingClientRect().height ?? 0);
+    let l = await layout(page);
+    const n = Object.keys(l.projects).length;
+    const half = Math.round(l.frame.h / 2);
+    const bh = await bodyH();
+    const o0 = await outer('top');
+    check('K3m 12 projects: the column itself scrolls and the open body keeps at least half of it', n >= 12 && o0.scrollHeight > o0.clientHeight && bh >= half - 2, JSON.stringify({ n, bodyH: bh, half, outer: o0 }));
+    check('K3m at the column top: the open header and its chevron visible', l.projects[BIG].visible && l.projects[BIG].chevVisible, JSON.stringify(l.projects[BIG]));
+    await scrollBody(page, 'end');
+    await page.waitForTimeout(200);
+    l = await layout(page);
+    check('K4m the open body scrolled to its end: header and chevron visible', l.projects[BIG].visible && l.projects[BIG].chevVisible, JSON.stringify(l.projects[BIG]));
+    const oEnd = await outer('end');
+    await page.waitForTimeout(300);
+    l = await layout(page);
+    measures.manyEnd = { outer: oEnd, layout: l };
+    const lastName = Object.keys(l.projects).at(-1);
+    check('K4m the column scrolled to its end: the open header and chevron still visible, the last header reachable', l.projects[BIG].visible && l.projects[BIG].chevVisible && l.projects[lastName].visible, JSON.stringify({ open: l.projects[BIG], last: lastName, lastBox: l.projects[lastName] }));
+    const f = join(app.shots, 'sonra-12-cok-proje-sona-kaydirilmis-light-1440.png');
+    await page.screenshot({ path: f }); keep(f, 'sonra-12-cok-proje-sona-kaydirilmis-light-1440.png');
+    // The open header still folds from there.
+    await header(page, BIG).click();
+    await page.waitForTimeout(500);
+    check('K4m from the scrolled column, the open header folds', (await layout(page)).projects[BIG].open === false);
+    await context.close();
+  }
   /* ── L: the branches the first run did not reach ── */
   // What is selected in a project's open body: the Super Agent, a window or a chat row.
   const selOf = (page, name) => page.evaluate((v) => {
@@ -297,6 +355,7 @@ try {
   };
   const turnLike = (u) => /ws input|not quiet|\/super\/(fresh|recap)|turn|message|send|prompt/i.test(u);
   {
+    phase = 'L1';
     // L1 Whiteboards: a project left on a board comes back on that board.
     const { context, page } = await open(1440, 900, 'light');
     await tab(page, 'whiteboards');
@@ -387,6 +446,7 @@ try {
     await context.close();
   }
   {
+    phase = 'L2';
     // L2 Chat: a project with a chat. Make one in northwind from the New window menu.
     const { context, page } = await open(1440, 900, 'light');
     await tab(page, 'chat');
@@ -413,12 +473,23 @@ try {
     check('L1 Chat: a project with a chat comes back on its last chat (mounted here)', backTo === made, JSON.stringify({ made, backTo }));
     let f = join(app.shots, 'sonra-8-chat-son-sohbet-light-1440.png');
     await page.screenshot({ path: f }); keep(f, 'sonra-8-chat-son-sohbet-light-1440.png');
+    // K8c: New chat window's pick of a MOUNTED project goes through activate(), the same call a
+    // notification's link lands with (landLink). Only that project is open after it.
+    await enter(page, 'orbit');
+    await page.getByTestId('drawer-new-window').click();
+    await page.getByTestId('drawer-new-menu').getByRole('menuitem', { name: 'northwind', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === 'northwind', null, { timeout: 20_000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const la = await layout(page);
+    const openNow = Object.entries(la.projects).filter(([, v]) => v.open).map(([k]) => k);
+    check('K8c a move through activate() (a notification link\'s landing call) opens only that project', (await activeVault(page)) === 'northwind' && openNow.join() === 'northwind', JSON.stringify({ active: await activeVault(page), openNow }));
     check('K6c no turn started in L2 (every POST listed)', !sends.some(turnLike), sends.join(', ') || 'none');
     console.log(`POSTs L2: ${sends.join(', ') || 'none'}`);
     await page.waitForTimeout(1500);
     await context.close();
   }
   {
+    phase = 'L1b';
     // L1b + L5: a fresh window, northwind NOT mounted, its saved chat read on the press. Folded
     // headers carry a question (orbit) and work (proj): their summaries answer with the marks.
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
@@ -432,7 +503,11 @@ try {
       return route.fulfill({ response: res, json: v === 'orbit' ? { ...body, superAsking: true } : { ...body, superOn: true, superWorking: 1 } });
     });
     const page = await context.newPage();
-    page.on('console', (m) => { if (m.type() === 'error' && !/\/@vite\/|favicon|\/ws\b|WebSocket|^Failed to load resource/.test(m.text())) app.findings.push(`L5 console: ${m.text().slice(0, 200)}`); });
+    page.on('console', (m) => {
+      if (m.type() !== 'error' || /\/@vite\/|favicon|^Failed to load resource/.test(m.text())) return;
+      if (WS_RE.test(m.text())) wsLog.push({ phase, where: 'L5', text: m.text().slice(0, 200) });
+      else app.findings.push(`L5 console: ${m.text().slice(0, 200)}`);
+    });
     page.on('pageerror', (e) => app.findings.push(`L5 crash: ${String(e.message).slice(0, 200)}`));
     page.on('response', (r) => { const u = r.url().replace(app.base, ''); if (r.status() >= 400 && !(r.status() === 403 && /^\/api\/super\/first-read/.test(u))) app.findings.push(`L5 HTTP ${r.status()} ${u}`); });
     await page.goto(`${app.base}/?vault=${BIG}`, { waitUntil: 'domcontentloaded' });
@@ -447,6 +522,17 @@ try {
     measures.marksChat = marks;
     check('L5 Chat: a folded header carries its question mark', marks.orbit.asking && marks.orbit.askRow, JSON.stringify(marks.orbit));
     check('L5 Chat: a folded header carries its work mark', marks.proj.working, JSON.stringify(marks.proj));
+    // Unread replies: a live Super pane publishes its count into superUnreadStore; a headless run
+    // has no Super with replies, so the count goes into that SAME module (Vite serves one instance).
+    await page.evaluate(async () => { const m = await import('/src/components/sleepy/super/superUnreadStore.ts'); m.publishSuperUnread('lumen', 2, {}); });
+    await page.waitForTimeout(500);
+    const unreadOf = () => page.evaluate(() => {
+      const h = document.querySelector('[data-drawer-project="lumen"] > .ns-dr-proj');
+      return { unread: h?.querySelector('[data-testid="mark-unread"]')?.textContent ?? null, label: h?.querySelector('.ns-dr-toggle')?.getAttribute('aria-label') ?? '' };
+    });
+    const un = await unreadOf();
+    measures.unreadChat = un;
+    check('L5 Chat: a folded header carries its unread mark', un.unread === '2', JSON.stringify(un));
     let f = join(app.shots, 'sonra-9-isaretler-chat-light-1440.png');
     await page.screenshot({ path: f }); keep(f, 'sonra-9-isaretler-chat-light-1440.png');
     const mountedNow = await page.evaluate(() => Array.from(document.querySelectorAll('.project-instance')).map((e) => e.getAttribute('data-instance-vault')));
@@ -472,10 +558,14 @@ try {
     measures.marksWb = wb;
     // Its 3 seeded boards, plus the default one the app adds on a project's first open.
     check('L5 Whiteboards: folded headers carry question, work and board count', wb.orbit.asking && wb.proj.working && Number(wb.orbit.count) >= 3, JSON.stringify(wb));
+    const unWb = await unreadOf();
+    measures.unreadWb = unWb;
+    check('L5 Whiteboards: a folded header carries its unread mark', unWb.unread === '2', JSON.stringify(unWb));
     f = join(app.shots, 'sonra-11-isaretler-wb-light-1440.png');
     await page.screenshot({ path: f }); keep(f, 'sonra-11-isaretler-wb-light-1440.png');
     await context.close();
   }
+  phase = 'phone';
   {
     const { context, page } = await open(390, 844, 'light');
     await page.waitForTimeout(1000);
@@ -486,6 +576,13 @@ try {
 } catch (err) {
   app.findings.push(`could not finish: ${err instanceof Error ? err.message : err}`);
 }
+// K9b: every WebSocket console error, listed. The scratch app's `claude` is a stand-in that exits
+// 0, so a chat tab's socket closes and reconnects; that happens only where a chat was opened (L2,
+// L1b). Anywhere else it is a finding.
+for (const w of wsLog) console.log(`WS console [${w.phase}] ${w.where}: ${w.text}`);
+const wsElsewhere = wsLog.filter((w) => w.phase !== 'L2' && w.phase !== 'L1b');
+check('K9b WebSocket console errors only where a chat with the stand-in claude was opened', wsElsewhere.length === 0, JSON.stringify(wsElsewhere.slice(0, 5)));
+measures.ws = wsLog;
 if (OUT) writeFileSync(join(OUT, 'sonra-olcumler.json'), JSON.stringify(measures, null, 1));
 await browser.close();
 process.exit(await app.finish());
