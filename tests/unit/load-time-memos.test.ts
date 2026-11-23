@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readTaskHead, readTaskHeads, resetTaskHeadsForTests } from '../../src/lib/task-heads.js';
+import { readFrontmatterText, readTaskHead, readTaskHeads, resetTaskHeadsForTests } from '../../src/lib/task-heads.js';
 import { SyncLedger, MEMBERS_LIVE_MS, membersStale } from '../../src/lib/task-backend/sync-state.js';
 import { getTaskSyncStatus } from '../../src/lib/task-backend/index.js';
 
@@ -88,5 +88,32 @@ describe('sync state peek', () => {
     expect(membersStale(null, 10)).toBe(true);
     expect(membersStale(1_000, 1_000 + MEMBERS_LIVE_MS - 1)).toBe(false);
     expect(membersStale(1_000, 1_000 + MEMBERS_LIVE_MS)).toBe(true);
+  });
+});
+
+describe('readFrontmatterText reads the head only', () => {
+  it('stops at the closing line of the frontmatter, never reading a long body', () => {
+    const p = join(ctx, 'state', 'long.md');
+    writeFileSync(p, `---\nname: Long\nagent: scout\n---\n${'log line\n'.repeat(200_000)}`);
+    expect(readFrontmatterText(p)).toBe('---\nname: Long\nagent: scout\n---\n');
+    expect(readTaskHead(ctx, 'long.md')?.data).toEqual({ name: 'Long', agent: 'scout' });
+  });
+
+  it('a frontmatter longer than one chunk, with Turkish text across the boundary, reads whole', () => {
+    const p = join(ctx, 'state', 'wide.md');
+    const desc = 'çğış'.repeat(6000);
+    writeFileSync(p, `---\nname: Geniş\ndescription: '${desc}'\nagent: scout\n---\nbody\n`);
+    const head = readTaskHead(ctx, 'wide.md');
+    expect(head?.data.description).toBe(desc);
+    expect(head?.data.agent).toBe('scout');
+  });
+
+  it('a file without frontmatter, or with a dash rule in the body, parses the same as before', () => {
+    const p = join(ctx, 'state', 'plain.md');
+    writeFileSync(p, 'no frontmatter here\n---\nagent: scout\n');
+    expect(readTaskHead(ctx, 'plain.md')?.data).toEqual({});
+    const q = join(ctx, 'state', 'rule.md');
+    writeFileSync(q, '---\nname: R\n---\nbody\n---\nagent: thief\n---\n');
+    expect(readTaskHead(ctx, 'rule.md')?.data).toEqual({ name: 'R' });
   });
 });

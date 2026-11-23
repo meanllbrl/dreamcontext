@@ -1,7 +1,7 @@
-import { lstatSync, readdirSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import matter from 'gray-matter';
-import { readVaultFileSafe } from './vault-read.js';
+import { safeVaultPath } from './vault-read.js';
 
 /**
  * Every task file's FRONTMATTER, for the scans that read only it (who a task is assigned to, its
@@ -12,8 +12,10 @@ import { readVaultFileSafe } from './vault-read.js';
  *
  * One memo for both, keyed by the file, valid while its stamp (inode, size, mtime, ctime) holds:
  * a write from anywhere (this process, the CLI, a pull) moves the stamp and the file is read
- * again. A miss reads through `readVaultFileSafe` (no symlink, never outside the brain); a hit is
- * a stamp taken with `lstat`, so a file replaced by a symlink is a miss and is refused there.
+ * again. A miss reads through `safeVaultPath` (no symlink, never outside the brain), and only the
+ * file's head: a task file can carry a long log (the brain's task folder is 100 MB), and reading
+ * every file whole was most of the first scan's time. A hit is a stamp taken with `lstat`, so a
+ * file replaced by a symlink is a miss and is refused there.
  *
  * The returned objects are SHARED with the memo: read them, never change them.
  */
@@ -29,6 +31,37 @@ export interface TaskHead {
 const MEMO_MAX = 8192;
 const memo = new Map<string, { stamp: string; head: TaskHead }>();
 const TASK_FILE = /^[a-z0-9][a-z0-9-]*\.md$/;
+const HEAD_CHUNK = 16 * 1024;
+/** Past this the frontmatter is read no further: a head that long is not a task's. */
+const HEAD_MAX = 1024 * 1024;
+
+/**
+ * The frontmatter block of a file (`---` line to the closing `---` line, both kept), read a
+ * chunk at a time; the whole text read so far when the file has no frontmatter or no closing line.
+ */
+export function readFrontmatterText(abs: string): string {
+  const fd = openSync(abs, 'r');
+  try {
+    const parts: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const buf = Buffer.alloc(HEAD_CHUNK);
+      const n = readSync(fd, buf, 0, HEAD_CHUNK, total);
+      if (n <= 0) break;
+      parts.push(n < HEAD_CHUNK ? buf.subarray(0, n) : buf);
+      total += n;
+      const text = Buffer.concat(parts).toString('utf-8');
+      if (!/^---[ \t]*\r?\n/.test(text)) return text;
+      const close = /\r?\n---[ \t]*(\r?\n|$)/.exec(text.slice(3));
+      // The closing line, whole (a chunk boundary inside it reads one more chunk).
+      if (close && (close[1] !== '' || n < HEAD_CHUNK)) return text.slice(0, 3 + close.index + close[0].length);
+      if (total >= HEAD_MAX) return text;
+    }
+    return Buffer.concat(parts).toString('utf-8');
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function stampOf(abs: string): string | null {
   try {
@@ -50,7 +83,13 @@ export function readTaskHead(contextRoot: string, fileName: string): TaskHead | 
   }
   const hit = memo.get(abs);
   if (hit && hit.stamp === stamp) return hit.head;
-  const raw = readVaultFileSafe(contextRoot, join('state', fileName));
+  const safe = safeVaultPath(contextRoot, join('state', fileName));
+  let raw: string | null = null;
+  try {
+    raw = safe ? readFrontmatterText(safe) : null;
+  } catch {
+    raw = null;
+  }
   if (raw === null) {
     memo.delete(abs);
     return null;
