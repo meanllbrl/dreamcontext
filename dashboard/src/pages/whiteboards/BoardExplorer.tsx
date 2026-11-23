@@ -19,6 +19,7 @@ import {
   useSetWhiteboardGroupOrder, useWhiteboardGroupOrder, useWhiteboardList, type GroupMoveNote, type WhiteboardSummary,
 } from '../../hooks/useWhiteboards';
 import { BoardGlyph, ChevronRightGlyph, ClockGlyph, DotsGlyph, FolderGlyph, PinGlyph, PlusGlyph, SearchGlyph, SidebarGlyph } from './boardGlyphs';
+import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
 import { TrashSection } from './BoardTrash';
 import { DEFAULT_BOARD_SLUG, canDeleteBoard, fold, isDefaultBoard, newBoardName } from './boardSwitcherLogic';
 import {
@@ -552,7 +553,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
       )}
 
       <div className="wbx-scroll" ref={scrollRef} onDragEnd={endDrag}>
-        {list.isLoading && <p className="wbx-hint">{t('common.loading')}</p>}
+        {list.isLoading && <LoadingSkeleton shape="list" label={t('common.loading')} />}
         {list.isError && <p className="wbx-hint wbx-hint--bad">{t('whiteboard.page.loadFailed')} {list.error?.message}</p>}
 
         {view.pinned.length > 0 && (

@@ -86,11 +86,24 @@ describe('the surface wiring', () => {
 
   it('open-on-restore yields to a page the window was opened for or already went to', () => {
     expect(surface).toMatch(/if \(navigatedRef\.current \|\| openedForLink\(\)\) \{ openedOnRestoreThisWindow = true; return; \}/);
-    expect(surface).toMatch(/useInstanceEvent\('dreamcontext-navigate', \(\) => \{\s*navigatedRef\.current = true;/);
+    expect(surface).toMatch(/useInstanceEvent<\{ keepChat\?: boolean \} \| undefined>\('dreamcontext-navigate', \(signal\) => \{\s*navigatedRef\.current = true;/);
+    // A chat opened after the press survives that press's landing (Shell.tsx `NavigateSignal`).
+    expect(surface).toMatch(/navigatedRef\.current = true;\s*if \(signal\?\.keepChat\) return;\s*setExpanded\(\(cur\) => \(cur \? false : cur\)\);/);
     // The link flag survives App.tsx stripping `&open=` (it is marked before the strip).
     expect(surface).toMatch(/const openedForLink = wasOpenedForLink;/);
     const app = readFileSync(fileURLToPath(new URL('../../dashboard/src/App.tsx', import.meta.url)), 'utf-8');
     expect(app).toMatch(/if \(initialLink !== null\) \{\s*markOpenedForLink\(\);/);
+  });
+
+  it('a press ends the carried chat\'s retries at the press, so none counts as asked after it', () => {
+    const shell = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/Shell.tsx', import.meta.url)), 'utf-8');
+    expect(shell).toMatch(/const pressed = useCallback\(\(\) => \{ stopChatRetries\(\); keepChat\(false\); \}, \[stopChatRetries, keepChat\]\);/);
+    // Both press roads (a page picked, a step through history) go through it, before the bump.
+    expect(shell.match(/pressed\(\);\s*(?:\/\/[^\n]*\s*)*setNonce\(\(n\) => n \+ 1\);/g)?.length).toBe(2);
+    // Nothing else resets the flag: a retry after a press can never be read as a fresh ask.
+    expect(shell.match(/keepChat\(false\)/g)?.length).toBe(1);
+    // The rail lights the page on its way only over a Chat that page will close.
+    expect(shell.match(/navPending=\{navPending && !chatKept\}/g)?.length).toBe(2);
   });
 
   it('a drawer intent waits for the restored tabs and the Super record before it acts', () => {

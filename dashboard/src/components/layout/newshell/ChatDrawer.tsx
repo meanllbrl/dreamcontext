@@ -50,6 +50,8 @@ export interface ChatDrawerProps {
   onHideProject?(name: string): void;
   /** "Show again" on a hidden project: back into the list where it was. */
   onShowProject?(name: string): void;
+  /** Sliding away after it stopped being docked (WindowChrome): out of the row, not clickable. */
+  leaving?: boolean;
   /** "+" beside Projects: the app's Add Project flow. */
   onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
@@ -638,7 +640,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
   };
 
   return (
-    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
+    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} data-leaving={p.leaving ? 'true' : undefined}
+      inert={p.leaving || undefined} style={{ width: p.floating ? undefined : p.width }}
       ref={rootRef} aria-label={sb ? t('shell.sidebar.label') : t('shell.drawer.projects')} data-testid="chat-drawer"
       data-sidebar={sb ? 'true' : undefined} data-mode={sb ? mode : undefined}
       onMouseEnter={() => p.onHover?.(true)} onMouseLeave={() => p.onHover?.(false)}>

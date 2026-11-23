@@ -16,12 +16,6 @@
   white-space: nowrap;
 }
 
-.wbp-loading {
-  padding: var(--space-10);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-}
-
 /* No board drawn (loading, missing, corrupt, error): the explorer's show toggle above the card. */
 .wbp-state-top {
   flex-shrink: 0;
