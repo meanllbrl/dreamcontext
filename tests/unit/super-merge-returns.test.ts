@@ -126,6 +126,21 @@ describe('super worktree remove / list (K5, K7)', () => {
       expect.objectContaining({ child: 'a', worktree: null, branch: a.branch, repo: 'product' }),
     ]);
   });
+
+  it('review r2: a worktree moved to fix/x removed by the verb records movedTo; the next merge refuses naming fix/x instead of merging super/<slug> alone', { timeout: 60_000 }, async () => {
+    const a = await createChildWorktree({ projectRoot: project, repo: 'product', slug: 'a', home });
+    commitIn(a.path, 'a.txt');
+    g(a.path, 'checkout', '-q', '-b', 'fix/x');
+    commitIn(a.path, 'x.txt');
+    const { call, state } = await harness({ a: { worktree: a.path, branch: a.branch, repo: 'product', endedAt: 2 } });
+    const r = await call('worktree-remove', { child: 'a' });
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect((await state()).children.a).toMatchObject({ branch: a.branch, movedTo: 'fix/x' });
+    const m = await call('merge', { children: ['a'], into: 'cut' });
+    expect(m.status).toBe(409);
+    expect(m.json.error).toBe('work_elsewhere');
+    expect(JSON.stringify(m.json)).toContain('fix/x');
+  });
 });
 
 describe('super returns ask (K8, D16)', () => {

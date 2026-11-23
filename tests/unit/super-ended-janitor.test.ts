@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { linkedReposFilePath } from '../../src/lib/linked-repos.js';
 import { canonicalRemote } from '../../src/lib/git-sync/origin-setup.js';
 import { createChildWorktree } from '../../src/lib/super/worktrees.js';
-import { childHolds, readSuperRecords, sweepEnded, type SweepGuards } from '../../src/lib/super/worktree-sweep.js';
+import { childHolds, holdForResume, readSuperRecords, sweepEnded, type SweepGuards } from '../../src/lib/super/worktree-sweep.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superIdOfMember, superRecordPath } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 
@@ -147,6 +147,24 @@ describe('sweepEnded', () => {
     expect(r?.removed).toEqual([]);
     expect(existsSync(a.path)).toBe(true);
     expect(r?.warnings.some((w) => /resumed/.test(w))).toBe(true);
+  });
+
+  it('review r2: a resume in flight (record still ended) holds its worktree: neither removed nor stripped', { timeout: 60_000 }, async () => {
+    const a = await mk('a'); commitIn(a.path, 'a.txt');
+    const c = await mk('c'); commitIn(c.path, 'c.txt');
+    mkdirSync(join(c.path, 'node_modules', 'x'), { recursive: true }); writeFileSync(join(c.path, 'node_modules', 'x', 'f'), 'x');
+    writeFileSync(join(c.path, 'wip.txt'), 'uncommitted\n');
+    writeRecord({ a: { worktree: a.path, branch: a.branch, repo: 'product', endedAt: 5 }, c: { worktree: c.path, branch: c.branch, repo: 'product', endedAt: 5 } });
+    holdForResume('a', true); holdForResume('c', true);
+    try {
+      const r = await sweep();
+      expect(r?.removed).toEqual([]);
+      expect(r?.stripped).toEqual([]);
+      expect(existsSync(a.path)).toBe(true);
+      expect(existsSync(join(c.path, 'node_modules'))).toBe(true);
+    } finally { holdForResume('a', false); holdForResume('c', false); }
+    const after = await sweep();
+    expect(after?.removed).toEqual([a.path]);
   });
 
   it('C8(iii) a member Super\'s ended child is cleaned and its own record updated', { timeout: 60_000 }, async () => {

@@ -461,6 +461,8 @@ export async function applySweep(plan: SweepPlan, guards: SweepGuards, o: {
       if (item.category === 'test-tmp') {
         for (const t of item.remove ?? []) await fsp.rm(t, { recursive: true, force: true });
       } else {
+        // A resume in flight holds its child's worktree (the janitor's rule, review r2).
+        if (item.child && resumingChildren.has(item.child)) throw new Error('its child is being resumed');
         const f = await inspect(item.path);
         const v = classify(f, guards, o.now ?? Date.now());
         const same = item.category === 'build-output' ? v.action === 'strip' : v.action === 'remove';
@@ -473,9 +475,13 @@ export async function applySweep(plan: SweepPlan, guards: SweepGuards, o: {
           }
         } else {
           if (!f.repo) throw new Error('no repository to remove it from');
-          // No --force: git itself refuses a tree with changes or untracked files.
-          const r = await git(f.repo, ['worktree', 'remove', item.path]);
-          if (r.code !== 0) throw new Error(`git worktree remove: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`);
+          // No --force: git itself refuses a tree with changes or untracked files. In `removing`
+          // meanwhile: a resume reads it as gone and re-attaches after it.
+          removing.add(item.path);
+          try {
+            const r = await git(f.repo, ['worktree', 'remove', item.path]);
+            if (r.code !== 0) throw new Error(`git worktree remove: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`);
+          } finally { removing.delete(item.path); }
         }
       }
       if (item.category === 'test-tmp') removed.push(...(item.remove ?? [])); else removed.push(item.path);
@@ -531,6 +537,23 @@ export interface JanitorResult {
 
 /** The janitor's last round in this process, for `super state` (D14's one line). */
 let lastRound: (JanitorResult & { at: number; trigger: string }) | null = null;
+
+/** Children a `super resume` is bringing back right now (review r2): from BEFORE the resume reads
+ *  the child's checkout until its record says it is no longer ended, the janitor never strips or
+ *  removes that child's worktree. A removal that already passed its recheck has its path in
+ *  `removing`, so the resume reads the worktree as gone and re-attaches after it. */
+const resumingChildren = new Map<string, number>();
+export function holdForResume(child: string, on: boolean): void {
+  const n = (resumingChildren.get(child) ?? 0) + (on ? 1 : -1);
+  if (n > 0) resumingChildren.set(child, n); else resumingChildren.delete(child);
+}
+
+/** The one rule every removal of a child's worktree writes (D15), whichever verb removes it: where
+ *  its work is, the branch the worktree was on. `branch` itself never changes. */
+export function noteWorkBranch(c: SuperChild, branchNow: string | null | undefined): void {
+  if (branchNow && SUPER_BRANCH_RE.test(branchNow)) { if (branchNow !== c.branch) c.lastBranch = branchNow; else delete c.lastBranch; delete c.movedTo; }
+  else if (branchNow && validBase(branchNow)) c.movedTo = branchNow;
+}
 export function lastJanitorRound(): typeof lastRound { return lastRound; }
 
 export function janitorLine(r: JanitorResult): string {
@@ -614,7 +637,7 @@ async function sweepEndedRound(o: { root: string; contextRoot: string; only?: st
       await withSuperState(key.contextRoot, key.superId, (st) => {
         const c = st.children[row.child];
         if (!c) return;
-        if (c.endedAt === undefined) { why = 'its child was resumed'; return; }
+        if (c.endedAt === undefined || resumingChildren.has(row.child)) { why = 'its child was resumed'; return; }
         if (!namesPath(c.worktree)) { why = 'its child names another worktree now'; return; }
         why = null;
         before?.(c);
@@ -648,10 +671,7 @@ async function sweepEndedRound(o: { root: string; contextRoot: string; only?: st
     try {
       // Before (D15), in the recheck's own lock: the record learns where the work is, so a merge or
       // resume racing the removal reaches the branch. `branch` itself never changes.
-      const why = await stillOurs((c) => {
-        if (f.branch && SUPER_BRANCH_RE.test(f.branch)) { if (f.branch !== c.branch) c.lastBranch = f.branch; else delete c.lastBranch; delete c.movedTo; }
-        else if (f.branch && validBase(f.branch)) c.movedTo = f.branch;
-      });
+      const why = await stillOurs((c) => noteWorkBranch(c, f.branch));
       if (why) { out.warnings.push(`${path} kept: ${why}`); continue; }
       // No --force: git itself refuses a tree with changes or untracked files.
       const r = await git(f.repo, ['worktree', 'remove', path]);

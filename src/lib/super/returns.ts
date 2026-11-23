@@ -394,8 +394,9 @@ async function judgeGroups(ctx: Ctx, raw: readonly RawGroup[], stopsForForeign: 
     const group: ReturnGroup = { name: g.name, branchExists: exists, tips: g.tips, commits, foreign, action: 'none', commands: [] };
     const awaiting = commits.filter((c) => c.state === 'awaiting').map((c) => c.sha);
     const inRescue = commits.some((c) => c.state === 'inRescue');
-    // Only an OPEN PR takes more commits; a merged one's later commits need a new PR.
-    const inOpenPr = commits.some((c) => c.state === 'inPr' && c.via?.kind === 'pr-open');
+    // Pushing the branch reaches a PR only when an OPEN PR has this branch as its head; a merged
+    // one's later commits, or a PR of another head holding a copy, need a new PR.
+    const inOpenPr = (ctx.prs ?? []).some((p) => p.state === 'open' && p.headRef === g.name);
     if (awaiting.length) {
       if (isDirect || !exists || foreign > 0) {
         group.action = 'rescue';
@@ -421,11 +422,11 @@ async function judgeGroups(ctx: Ctx, raw: readonly RawGroup[], stopsForForeign: 
 export const ACTION_MEANING: Record<ReturnGroup['action'], { en: string; tr: (g: ReturnGroup) => string }> = {
   none: { en: 'nothing to do', tr: () => 'Bir şey yapılmaz.' },
   push: {
-    en: 'an open PR into dev already holds part of it: push the branch, that PR takes the rest',
-    tr: () => 'Açık bir PR\'ı var: dal push edilir, kalan commit\'ler o PR\'a girer.',
+    en: 'an open PR into dev has this branch as its head: push the branch, that PR takes the new commits',
+    tr: () => 'Açık bir PR\'ı var: dal push edilir, yeni commit\'ler o PR\'a girer.',
   },
   'push-pr': {
-    en: 'no open PR into dev (none yet, or its PR merged before these commits): push the branch and open a draft PR',
+    en: 'no open PR into dev with this branch as its head (none yet, or its PR merged before these commits): push the branch and open a draft PR',
     tr: () => 'Açık PR\'ı yok: dal push edilir, dev\'e taslak PR açılır.',
   },
   rescue: {

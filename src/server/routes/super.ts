@@ -109,7 +109,7 @@ import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox, keepFirstPrompt } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
-import { applySweep, machineGuards, planSweep, publicPlan, removingWorktrees, sweepEnded } from '../../lib/super/worktree-sweep.js';
+import { applySweep, holdForResume, machineGuards, noteWorkBranch, planSweep, publicPlan, removingWorktrees, sweepEnded } from '../../lib/super/worktree-sweep.js';
 import { readMachineFacts } from './machine.js';
 import { homedir, tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
@@ -2963,7 +2963,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const result = await applySweep(plan, fresh, {
       onRemoved: async (item) => {
         if (!item.child || item.category === 'build-output') return;
-        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) delete x.worktree; });
+        // The branch the worktree was on goes into the record with the removal (D15, noteWorkBranch).
+        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) { noteWorkBranch(x, item.branch); delete x.worktree; } });
       },
     });
     forgetLeftovers();
@@ -2985,6 +2986,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const wt = co.worktree ?? (co.elsewhere?.kind === 'detached' ? co.elsewhere.where : null);
       if (!wt || !co.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
       if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${wt} is not a worktree of a linked repo`); return; }
+      // Before (D15): the record learns the branch the worktree is on, as the janitor's removal does.
+      if (co.liveBranch) await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x) noteWorkBranch(x, co.liveBranch); });
       await removeChildWorktree({ repoPath: co.repo.path, worktree: wt, branch: co.branch });
       // K5: the worktree goes from the record, never the branch.
       await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x && x.worktree === wt) delete x.worktree; });
@@ -3094,18 +3097,21 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Not possible (branch checked out elsewhere, gone): it starts without one and says so.
     let reattached: { worktree: string; branch: string; repo: string } | null = null;
     let worktreeNote: string | undefined;
+    // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
+    noteResuming(child, true);
+    // Held before its checkout is read, until the record says it runs: the janitor leaves it.
+    holdForResume(child, true);
+    try {
     if (ch.branch || ch.lastBranch) {
       const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
-      if (co.elsewhere) worktreeNote = `resumed without re-attaching super/*: ${co.elsewhere.message}`;
-      else if (!co.worktree && co.branch) {
+      // A detached worktree is still listed: the session reopens in it, nothing to say.
+      if (co.elsewhere?.kind === 'moved') worktreeNote = `resumed without re-attaching super/*: ${co.elsewhere.message}`;
+      else if (!co.elsewhere && !co.worktree && co.branch) {
         const r = await reattachChildWorktree({ projectRoot: dirname(root), child: ch, removing: removingWorktrees() });
         if ('why' in r) worktreeNote = `resumed without its worktree: ${r.why}`;
         else reattached = r;
       }
     }
-    // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
-    noteResuming(child, true);
-    try {
       const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
       if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
       // What the window ACTUALLY started it with: a parked tab comes back as it was parked, so
@@ -3142,6 +3148,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       });
     } finally {
       noteResuming(child, false);
+      holdForResume(child, false);
     }
   },
 

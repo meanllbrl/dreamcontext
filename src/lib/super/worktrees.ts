@@ -517,6 +517,8 @@ export interface ChildCheckout {
   branch: string | null;
   /** Only a worktree git lists right now, not being removed, with its HEAD on a branch. */
   worktree: string | null;
+  /** The branch that worktree is on, whatever its name (`super/*` or not). */
+  liveBranch?: string;
   /** Why `repo` is null. */
   why?: string;
   /** The child's work is NOT on `branch` (review r1, class merge-source-not-where-the-work-is):
@@ -565,11 +567,13 @@ export async function childCheckout(projectRoot: string, child: SuperChild, o: {
   }
   const branch = (live && SUPER_BRANCH_RE.test(live) ? live : null) ?? child.lastBranch ?? child.branch ?? null;
   // Moved past `branch`: only when that branch still exists and holds commits `branch` lacks.
-  if (repo && branch && !worktree && !elsewhere && child.movedTo && validBase(child.movedTo)
-    && Number((await git(repo.path, ['rev-list', '--count', `refs/heads/${child.movedTo}`, `^refs/heads/${branch}`, '--'])).stdout.trim()) > 0) {
-    elsewhere ={ kind: 'moved', where: child.movedTo, message: `its work moved to ${child.movedTo}, not a super/* branch; merge that branch by hand or resume the child there` };
+  // A super branch deleted by hand while movedTo still exists: the work is there too.
+  if (repo && branch && !worktree && !elsewhere && child.movedTo && validBase(child.movedTo) && await branchExists(repo.path, child.movedTo)
+    && (!(await branchExists(repo.path, branch))
+      || Number((await git(repo.path, ['rev-list', '--count', `refs/heads/${child.movedTo}`, `^refs/heads/${branch}`, '--'])).stdout.trim()) > 0)) {
+    elsewhere = { kind: 'moved', where: child.movedTo, message: `its work moved to ${child.movedTo}, not a super/* branch; merge that branch by hand` };
   }
-  return { repo, branch, worktree, ...(repo ? {} : { why: why ?? 'no linked repo found' }), ...(elsewhere ? { elsewhere } : {}) };
+  return { repo, branch, worktree, ...(live ? { liveBranch: live } : {}), ...(repo ? {} : { why: why ?? 'no linked repo found' }), ...(elsewhere ? { elsewhere } : {}) };
 }
 
 /** The path a child's worktree is made at (and re-attached at: its Claude session is keyed by it). */
