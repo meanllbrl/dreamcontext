@@ -81,6 +81,8 @@ export function TitleBar({
           aria-label={waiting > 0 ? `${t('shell.drawer.toggle')}, ${t('handsfree.chat.waitingBadge').replace('{n}', String(waiting))}` : t('shell.drawer.toggle')}
           title={t('shell.drawer.toggle')}
           data-testid="ns-drawer-toggle"
+          // Showing or hiding the sidebar never ends a move landing (lib/revealGate isMovePress).
+          data-sidebar-toggle="true"
           onClick={onToggleDrawer}
           onMouseEnter={() => onDrawerHover?.(true)}
           onMouseLeave={() => onDrawerHover?.(false)}

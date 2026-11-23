@@ -7008,7 +7008,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown, chatFacts, activeChatId, memberWaits]);
   useEffect(() => {
     emitInstance<DrawerSurfaceWithWaits>(bus, DRAWER_SURFACE_EVENT, {
-      superOn, superSelected: (superSelected || arriving === 'super') && !peekMember,
+      // Unread, the record says nothing yet: the side menu must not call the Super off.
+      ...(superKnown ? { superOn } : {}), superSelected: (superSelected || arriving === 'super') && !peekMember,
       // Before the roster is restored every window reads empty: the drawer must not believe it.
       ...(rosterKnown ? { windows: windowFacts, activeWindowId: chatWindows.activeId, chats: chatFacts } : {}),
       ...(rosterKnown && activeChatId ? { activeChatId } : {}),
@@ -7017,7 +7018,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bus, superOn, superSelected, windowFactsKey]);
+  }, [bus, superOn, superKnown, superSelected, windowFactsKey]);
 
   // The door History and links walk through (`resumePastSession`): the new shell's desktop only.
   openInSuperWindowRef.current = (past) => {

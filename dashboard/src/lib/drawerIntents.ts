@@ -109,7 +109,9 @@ export interface DrawerChatFact extends StackTab {
 }
 
 export interface DrawerSurfaceState {
-  superOn: boolean;
+  /** The Super Agent is handed over. Absent until the project's record is read: a project still
+   *  loading (a move landing in it) never reads as off. */
+  superOn?: boolean;
   superSelected: boolean;
   /** The project's chat windows, in order (W3). Absent from a surface that predates them. */
   windows?: DrawerWindowFact[];

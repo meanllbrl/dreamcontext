@@ -364,7 +364,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
               </span>
               </>)}
             </ProjectRowShell>
-            {row.expanded && <div className="ns-dr-children" data-testid="drawer-project-body">{row.children.map((c) => child(row, c))}</div>}
+            {/* Open but not on screen = the project a move is landing in (the accordion opens it at
+                once). A press on its rows is a move into it, never input that cancels the move:
+                cancelled, the project folds under the pointer and the click lands back in A. */}
+            {row.expanded && <div className="ns-dr-children" data-testid="drawer-project-body" data-move={row.active ? undefined : 'true'}>{row.children.map((c) => child(row, c))}</div>}
           </div>
   );
 

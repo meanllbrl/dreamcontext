@@ -210,12 +210,15 @@ export function isBareModifier(key: string): boolean {
 }
 
 /** A pointer press that is not input in the project on screen: a primary press on a move control
- *  (`data-move`: project rows, other projects' board rows, ← →, the project label), or on the
- *  sidebar's own frame (`data-sidebar-frame`: its resize handle, the hover peek's frame), or on a
- *  scroll container itself (its scrollbar). */
+ *  (`data-move`: project rows, other projects' board rows, ← →, the project label), on what shows
+ *  or hides the sidebar (`data-sidebar-toggle`: its title-bar button, the floating sidebar's scrim;
+ *  showing the sidebar is how the owner reaches the project landing, never a way out of the move),
+ *  or on the sidebar's own frame (`data-sidebar-frame`: its resize handle, the hover peek's frame),
+ *  or on a scroll container itself (its scrollbar). */
 export function isMovePress(target: EventTarget | null, button: number): boolean {
   const el = target as Element | null;
   if (!el || typeof el.closest !== 'function' || typeof el.matches !== 'function') return false;
   if (button === 0 && el.closest('[data-move]')) return true;
+  if (button === 0 && el.closest('[data-sidebar-toggle]')) return true;
   return el.matches('[data-sidebar-frame], [data-scroll-frame]');
 }
