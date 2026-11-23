@@ -1990,7 +1990,7 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
   }
   v = applyOwnerViewFields(v, patch);
   let view: SuperView = { mode: 'float' };
-  if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card, ...(v.by === 'owner' ? { by: 'owner' as const } : {}), ...(v.auto && !patch.view ? { auto: true as const } : {}) };
+  if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card, ...(v.by === 'owner' ? { by: 'owner' as const, ...(typeof v.ownerAt === 'number' ? { ownerAt: v.ownerAt } : {}) } : {}), ...(v.auto && !patch.view ? { auto: true as const } : {}) };
   else if (v.mode === 'present') view = resolvePresent(v, containers) ?? { mode: 'float' };
   return { ...state, containers, groups, view };
 }

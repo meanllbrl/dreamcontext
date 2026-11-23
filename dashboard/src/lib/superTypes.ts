@@ -1233,7 +1233,11 @@ function readView(v: unknown, containers: readonly SuperContainer[]): SuperView 
     if (typeof v.card !== 'string' || !ids.has(v.card)) return { mode: 'float' };
     if (v.auto === true) return { mode: 'half', card: v.card, auto: true };
     // The owner's mark: a new presentation of the agent's is told apart from his own (SuperSurface).
-    return v.by === 'owner' ? { mode: 'half', card: v.card, by: 'owner' } : { mode: 'half', card: v.card };
+    // `ownerAt` rides with it: a narrow window's fold is keyed by it (SuperSurface `foldKey`), so
+    // his press of the same card again (a question's read link) opens a sheet he had folded.
+    return v.by === 'owner'
+      ? { mode: 'half', card: v.card, by: 'owner', ...(typeof v.ownerAt === 'number' && Number.isFinite(v.ownerAt) ? { ownerAt: v.ownerAt } : {}) }
+      : { mode: 'half', card: v.card };
   }
   if (v.mode === 'present') {
     // The server resolved it already; the same resolver keeps an older push (no layout) and
