@@ -192,6 +192,9 @@ function remember(itemId: string, copy: Copy, item?: SuperQueueItem): void {
 // taken back (buttons bound again on the same messages) and nothing is sent; an item that closed
 // meanwhile has its copy closed. One live copy of a card, restart or not.
 
+/** Where the ask log lives (the wired hub's home): a copy that could not be saved says so there. */
+let logHome: string | null = null;
+
 /** Read back from disk after a start, not yet taken back: per project root, by item id. */
 const kept = new Map<string, Map<string, StoredCopy>>();
 function keptOf(root: string): Map<string, StoredCopy> {
@@ -214,7 +217,7 @@ function save(root: string | null | undefined): void {
   if (!root) return;
   const out: Record<string, StoredCopy> = Object.fromEntries(keptOf(root));
   for (const [id, c] of copies) if (c.ab.contextRoot === root && c.messages.some((m) => m.messageId > 0)) out[id] = stored(c);
-  writeCopies(root, out);
+  if (!writeCopies(root, out) && logHome) appendAskLog(logHome, `telegram copies NOT saved under ${root}: a restart may send open cards again`);
 }
 
 /** A rich ask's copy, as it is kept (the target reduced to the ids its answer uses). */
@@ -394,7 +397,7 @@ async function resurfaceBuried(hub: TelegramHub, ab: ActiveBinding, superSession
       continue;
     }
     const now = copies.get(id);
-    if (now && now !== c) now.again = true;
+    if (now && now !== c) { now.again = true; save(now.ab.contextRoot); }
     if (c.askId) rich?.close(c.askId);
     // One live copy at any time, and what it showed goes once (owner 2026-11-22: the same two
     // drawings and the stage PDF came again with every later turn). The resend below carries only
@@ -431,6 +434,7 @@ export function ownerTalkBinding(hub: Pick<TelegramHub, 'bindingOfSuper'>, vault
 }
 
 export function wireTelegramAsks(hub: TelegramHub): () => void {
+  logHome = hub.home;
   setOwnerQuestionSinks({
     // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: `at_mac`, nothing taken,
     // so the turn-away flush below sends it once he is away.
@@ -764,7 +768,7 @@ async function onChildAsking(hub: TelegramHub, entry: ChatEntry): Promise<void> 
     sentItems.add(item.id);
     // Its copy from before a restart: taken back, never sent a second time. Not taken back YET
     // (a passing failure): let go, so the next change or flush tries again; nothing is sent.
-    const kept = await adoptCopy(hub, ab, item).catch(() => null);
+    const kept = await adoptCopy(hub, ab, item).catch((err): SendOutcome => ({ ok: false, why: failure(err) }));
     if (kept && !('skipped' in kept) && !kept.ok) { sentItems.delete(claim); sentItems.delete(item.id); return; }
     if (kept) return;
     const job = s.children[entry.sessionId]?.brief ? `${escapeHtml(s.children[entry.sessionId].brief.slice(0, 60))} · ` : '';
