@@ -1,9 +1,7 @@
-import { readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import matter from 'gray-matter';
+import { dirname } from 'node:path';
 import { loadStatuses } from '../overrides.js';
 import { statusKind } from '../task-status.js';
-import { readVaultFileSafe } from '../vault-read.js';
+import { readTaskHeads as readTaskFileHeads } from '../task-heads.js';
 import { closeInboxRows, raiseInboxRow } from '../owner-inbox.js';
 import { getAgent } from './store.js';
 import { currentLogin, ownedBy } from './owner.js';
@@ -34,23 +32,16 @@ interface TaskHead {
   slug: string;
   id: string;
   name: string;
-  data: Record<string, unknown>;
+  data: Readonly<Record<string, unknown>>;
 }
 
+/** Every task's head, from the shared stamp-keyed memo (task-heads.ts): this scan runs on every
+ *  tick and every inbox read, and parsed every task's YAML each time. */
 function readTaskHeads(contextRoot: string): TaskHead[] {
-  let names: string[] = [];
-  try { names = readdirSync(join(contextRoot, 'state')).filter((n) => /^[a-z0-9][a-z0-9-]*\.md$/.test(n)); } catch { return []; }
   const out: TaskHead[] = [];
-  for (const name of names) {
-    const raw = readVaultFileSafe(contextRoot, join('state', name));
-    if (!raw) continue;
-    try {
-      const data = (matter(raw, {}).data ?? {}) as Record<string, unknown>;
-      const slug = name.slice(0, -3);
-      out.push({ slug, id: typeof data.id === 'string' && data.id.trim() ? data.id.trim() : slug, name: typeof data.name === 'string' ? data.name : slug, data });
-    } catch {
-      // an unparseable task assigns nobody
-    }
+  for (const { slug, data, broken } of readTaskFileHeads(contextRoot)) {
+    if (broken) continue; // an unparseable task assigns nobody
+    out.push({ slug, id: typeof data.id === 'string' && data.id.trim() ? data.id.trim() : slug, name: typeof data.name === 'string' ? data.name : slug, data });
   }
   return out;
 }
