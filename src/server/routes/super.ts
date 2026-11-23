@@ -4559,7 +4559,7 @@ async function askOwner(c: SuperCaller, b: Record<string, unknown>, res: ServerR
   if (openAsk && !sameOpen) {
     // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
     // close it once he has moved on, so a card he left open never blocks the next question.
-    refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\` and ask again`);
+    refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\``);
     return;
   }
   // A card read cold carries what it points at (owner 2026-11-08: "örnek yok ama örnekteki

@@ -106,7 +106,7 @@ describe('the upgrade handler (agent-chat.ts)', () => {
     // keyed by its session (origin owner), never a queue item.
     expect(src).toMatch(/const frame = Buffer\.from\(JSON\.stringify\(json\), 'utf-8'\);\s*mirrorFrames\.add\(frame\);/);
     expect(src).toMatch(/onWsMessage\(serverBuiltFrame\(json, 'phone-mirror'\)\);/);
-    expect(src).toContain('if (isSuper && wrote && !text.startsWith(\'/\')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords);');
+    expect(src).toContain('if (isSuper && wrote && !text.startsWith(\'/\')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords, text);');
   });
 });
 

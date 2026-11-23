@@ -78,7 +78,7 @@ describe('server texts continue (D3 rule 3)', () => {
  * entry names what that site writes and its class.
  */
 const SITES: Array<{ file: string; re: RegExp; count: number; writes: string }> = [
-  { file: 'src/server/routes/agent-chat.ts', re: /type: 'user'/g, count: 12, writes:
+  { file: 'src/server/routes/agent-chat.ts', re: /type: 'user'/g, count: 13, writes:
     'telegram injector (his words: ask) · crew server turn (sendServerTurn texts above: continuation) · owner receipt (card receipts: continuation) · '
     + 'undelivered card feedback (continuation) · spawn opening prompt (first: ask) · socket turn (his words: ask; a server-written one per its text) · '
     + 'handoff writeUserTurn (/clear: none; continue prompt: the new transcript\'s first: ask) · turn-end card feedback (continuation) · '

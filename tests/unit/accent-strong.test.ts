@@ -46,6 +46,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/super/ScorecardCard.css::.sc-bar': 'bar',
   'components/sleepy/super/ScorecardCard.css::.sc-bar.is-high': 'bar',
   'components/sleepy/super/SuperSurface.css::.super-present-tab-dot': 'shown presentation tab dot',
+  'components/sleepy/super/SuperSurface.css::.super-sheet-tab-dot': 'a narrow stage tab dot',
   'components/roadmap/Priority.css::.pv-map-dot.is-suggested': 'dot',
   'components/sleepy/chat/model-picker/model-picker.css::.mp-tool.is-on::after': 'rail marker',
   'components/sleepy/super/SuperAgenda.css::.super-agenda-row::after': 'rail marker (the filtered row, ajanda-filtre-sade)',
