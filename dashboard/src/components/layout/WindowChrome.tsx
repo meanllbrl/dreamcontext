@@ -56,11 +56,11 @@ import { softMotionOff } from '../../lib/softMotion';
 import { useInstanceHold } from './useInstanceHold';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, landsOnChats, mountedChats, moveAmong, NO_DEVICE_CHATS,
+  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
   sidebarMode, openProjects, type DeviceChats, type DrawerFacts, type SidebarMode,
 } from './newshell/drawerModel';
 import { useBoardsFanout } from './newshell/boardsFanout';
-import { readChatCount, useDrawerProjects } from '../../hooks/useDrawerProjects';
+import { useDrawerProjects } from '../../hooks/useDrawerProjects';
 import { ApiClient } from '../../api/client';
 import { setMemberEnabled } from '../aiteam/teamModel';
 import { requestManageMembers } from '../../lib/openAgents';
@@ -1774,34 +1774,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       .then((r) => { settleMove(id, vault, r); return r; });
   }, [recorder, queueDrawerIntent, settleMove, stampInput, gate]);
   queueDrawerIntentRef.current = trackedIntent;
-  /** A folded project's header in the sidebar (Chat and Whiteboards): that project, at the place
-   *  it was left (switchTo's carry), and only it open. On Chat with no chat open there it lands on
-   *  its Super Agent's stage, which starts no turn. */
-  const enterSeqRef = useRef(0);
-  const sidebarModeRef = useRef(sidebarModeNow);
-  sidebarModeRef.current = sidebarModeNow;
+  /** A folded project's header on the Whiteboards sidebar: that project, at the place it was left
+   *  (switchTo's carry), and only it open. Chat has no such press: its projects fold on their own. */
   const enterProject = useCallback((name: string) => {
     // Nothing is opened here: the open set follows the move (openProjects), so a refused one
     // leaves the sidebar as it was.
     if (!name || name === activeRef.current) return;
-    const seq = ++enterSeqRef.current;
-    const land = (chats: boolean) => {
-      if (chats) switchTo(name);
-      else void trackedIntent(name, { kind: 'super', quiet: true });
-    };
-    if (sidebarModeNow !== 'chat') { switchTo(name); return; }
-    const live = mountedChats(drawerFacts[name]);
-    if (live !== null) { land(live); return; }
-    // Not mounted here: ask the project itself on the press, never the sidebar's background
-    // reads. A failed read keeps the plain move; a newer press wins.
-    // The answer is dropped when anything moved meanwhile: a newer press, another way to another
-    // project (picker, ⌘1-9, a notification), or the owner leaving Chat.
-    const from = activeRef.current;
-    void readChatCount(name).then((tabs) => {
-      if (seq !== enterSeqRef.current || activeRef.current !== from || sidebarModeRef.current !== 'chat') return;
-      land(landsOnChats(tabs));
-    });
-  }, [sidebarModeNow, drawerFacts, trackedIntent, switchTo]);
+    switchTo(name);
+  }, [switchTo]);
   const reportShown = useCallback((vault: string, shown: ShownReport) => {
     if (vault !== activeRef.current) return;
     shownByVaultRef.current[vault] = shown;

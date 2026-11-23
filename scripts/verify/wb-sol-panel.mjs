@@ -111,6 +111,16 @@ const tab = async (page, t) => {
   await page.waitForTimeout(1500);
 };
 const header = (page, name) => page.locator(`[data-drawer-project="${name}"] > .ns-dr-proj .ns-dr-toggle`);
+/** Chat: a header only folds or unfolds its project (aria-expanded), never moves the window. */
+const expandedOf = (page, name) => header(page, name).getAttribute('aria-expanded');
+const ensureOpen = async (page, name) => { if ((await expandedOf(page, name)) !== 'true') { await header(page, name).click(); await page.waitForTimeout(500); } };
+/** A move that is not a header press: the top-left project picker (Chat's header no longer moves). */
+const moveVia = async (page, name, ms = 1800) => {
+  await page.getByTestId('ns-picker-btn').click();
+  await page.getByTestId(`ns-picker-${name}`).click();
+  await page.waitForFunction((v) => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === v, name, { timeout: 20_000 }).catch(() => {});
+  await page.waitForTimeout(ms);
+};
 /** What the column shows: each header's box against the scroll frame, and the open project. */
 const layout = (page) => page.evaluate(() => {
   const sc = document.querySelector('[data-testid="chat-drawer"] .ns-dr-scroll');
@@ -237,14 +247,24 @@ try {
     page.on('websocket', (ws) => ws.on('framesent', (f) => { const d = typeof f.payload === 'string' ? f.payload : ''; if (/"type"\s*:\s*"input"/.test(d)) posts.push(`ws input ${d.slice(0, 80)}`); }));
     l = await layout(page);
     measures.chat = l;
-    check('K1 Chat: only the project on screen is open', l.projects.orbit?.open && Object.entries(l.projects).every(([k, v]) => k === 'orbit' || !v.open), JSON.stringify(Object.fromEntries(Object.entries(l.projects).map(([k, v]) => [k, v.open]))));
-    await header(page, 'proj').click();
-    await page.waitForFunction(() => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === 'proj', null, { timeout: 20_000 }).catch(() => {});
-    await page.waitForTimeout(2000);
-    l = await layout(page);
-    const superSel = await page.locator('[data-drawer-project="proj"] [data-testid="drawer-super-row"].is-sel').count();
-    check('K6 Chat: a folded project with no chat enters on its Super Agent', (await activeVault(page)) === 'proj' && superSel === 1, JSON.stringify({ active: await activeVault(page), superSel }));
-    check('K6 Chat: only it is open', l.projects.proj.open && Object.entries(l.projects).every(([k, v]) => k === 'proj' || !v.open));
+    const chevs = await page.locator('[data-testid="chat-drawer"] [data-drawer-project] > .ns-dr-proj [data-testid="drawer-project-chevron"]').count();
+    const nProj = Object.keys(l.projects).length;
+    check('K1 Chat: every project row carries its fold arrow', nProj >= 4 && chevs === nProj, JSON.stringify({ chevs, nProj }));
+    const expNow = async () => Object.fromEntries(Object.entries((await layout(page)).projects).map(([k, v]) => [k, v.expanded === 'true']));
+    const was = await activeVault(page);
+    for (const n of ['orbit', 'northwind', 'proj']) await ensureOpen(page, n);
+    const three = await expNow();
+    check('K6 Chat: three projects are open at once', three.orbit && three.northwind && three.proj, JSON.stringify(three));
+    await header(page, 'northwind').click();
+    await page.waitForTimeout(500);
+    const afterFold = await expNow();
+    file = join(app.shots, 'sonra-5b-chat-biri-katli-light-1440.png');
+    await page.screenshot({ path: file }); keep(file, 'sonra-5b-chat-biri-katli-light-1440.png');
+    check('K6 Chat: folding one project leaves the others open', !afterFold.northwind && afterFold.orbit && afterFold.proj, JSON.stringify(afterFold));
+    await header(page, 'northwind').click();
+    await page.waitForTimeout(500);
+    check('K6 Chat: it unfolds again on its own', (await expNow()).northwind === true);
+    check('K6 Chat: a header press does not move the window', (await activeVault(page)) === was, JSON.stringify({ was, now: await activeVault(page) }));
     check('K6 no message was sent', posts.length === 0, posts.join(', '));
     file = join(app.shots, 'sonra-5-chat-light-1440.png');
     await page.screenshot({ path: file }); keep(file, 'sonra-5-chat-light-1440.png');
@@ -282,13 +302,16 @@ try {
     const far = listed[listed.length - 1];
     const mountedNow = await page.evaluate(() => Array.from(document.querySelectorAll('.project-instance')).map((e) => e.getAttribute('data-instance-vault')));
     check('K6b the pressed project is past the background reads and not mounted', listed.length > 9 && EXTRA.includes(far) && !mountedNow.includes(far), JSON.stringify({ far, n: listed.length, mountedNow }));
+    const was = await activeVault(page);
+    const before = await expandedOf(page, BIG);
     await header(page, far).click();
-    await page.waitForFunction((v) => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === v, far, { timeout: 20_000 }).catch(() => {});
-    await page.waitForTimeout(2000);
-    const farSuper = await page.locator(`[data-drawer-project="${far}"] [data-testid="drawer-super-row"].is-sel`).count();
-    // Only the project on screen: another mounted project's hidden pane may say it.
-    const emptyPane = await page.locator('.project-instance[data-active]').getByText(/No open chats/i).filter({ visible: true }).count();
-    check('K6b Chat: a project past the background reads, with no chat, enters on its Super Agent', (await activeVault(page)) === far && farSuper === 1 && emptyPane === 0, JSON.stringify({ active: await activeVault(page), farSuper, emptyPane }));
+    await page.waitForTimeout(800);
+    const openedFar = await expandedOf(page, far);
+    await header(page, far).click();
+    await page.waitForTimeout(500);
+    const foldedFar = await expandedOf(page, far);
+    check('K6b Chat: a project past the background reads folds and unfolds on its own press', openedFar === 'true' && foldedFar === 'false', JSON.stringify({ far, openedFar, foldedFar }));
+    check('K6b Chat: the press moved nothing and left the other project as it was', (await activeVault(page)) === was && (await expandedOf(page, BIG)) === before, JSON.stringify({ was, now: await activeVault(page), before, after: await expandedOf(page, BIG) }));
     check('K6b no message was sent', posts.length === 0, posts.join(', '));
     const f6 = join(app.shots, 'sonra-6-chat-uzak-proje-light-1440.png');
     await page.screenshot({ path: f6 }); keep(f6, 'sonra-6-chat-uzak-proje-light-1440.png');
@@ -455,34 +478,34 @@ try {
     await page.getByTestId('drawer-new-menu').getByRole('menuitem', { name: 'northwind', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === 'northwind', null, { timeout: 20_000 }).catch(() => {});
     await page.waitForTimeout(2500);
+    await ensureOpen(page, 'northwind');
     const made = await selOf(page, 'northwind');
     check('L2 setup: a chat window is open in northwind', !!made && !made.startsWith('drawer-super-row'), String(made));
     // Fold and unfold the active header: the open chat stays.
     await header(page, 'northwind').click();
     await page.waitForTimeout(500);
-    const folded = (await layout(page)).projects.northwind.open === false;
+    const folded = (await expandedOf(page, 'northwind')) === 'false';
     const stillVault = await activeVault(page);
     await header(page, 'northwind').click();
     await page.waitForTimeout(700);
     const again = await selOf(page, 'northwind');
     check('L2 Chat: folding the open header keeps the project and its open chat', folded && stillVault === 'northwind' && again === made, JSON.stringify({ folded, stillVault, made, again }));
-    // Leave and come back: lands on that chat, not the Super Agent (a mounted project).
-    await enter(page, 'orbit');
-    await enter(page, 'northwind');
+    // Leave (picker) and come back: lands on that chat, not the Super Agent (a mounted project).
+    await moveVia(page, 'orbit');
+    await moveVia(page, 'northwind');
+    await ensureOpen(page, 'northwind');
     const backTo = await selOf(page, 'northwind');
     check('L1 Chat: a project with a chat comes back on its last chat (mounted here)', backTo === made, JSON.stringify({ made, backTo }));
     let f = join(app.shots, 'sonra-8-chat-son-sohbet-light-1440.png');
     await page.screenshot({ path: f }); keep(f, 'sonra-8-chat-son-sohbet-light-1440.png');
     // K8c: New chat window's pick of a MOUNTED project goes through activate(), the same call a
     // notification's link lands with (landLink). Only that project is open after it.
-    await enter(page, 'orbit');
+    await moveVia(page, 'orbit');
     await page.getByTestId('drawer-new-window').click();
     await page.getByTestId('drawer-new-menu').getByRole('menuitem', { name: 'northwind', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.project-instance[data-active]')?.getAttribute('data-instance-vault') === 'northwind', null, { timeout: 20_000 }).catch(() => {});
     await page.waitForTimeout(1500);
-    const la = await layout(page);
-    const openNow = Object.entries(la.projects).filter(([, v]) => v.open).map(([k]) => k);
-    check('K8c a move through activate() (a notification link\'s landing call) opens only that project', (await activeVault(page)) === 'northwind' && openNow.join() === 'northwind', JSON.stringify({ active: await activeVault(page), openNow }));
+    check('K8c a move through activate() (a notification link\'s landing call) lands on that project', (await activeVault(page)) === 'northwind', String(await activeVault(page)));
     check('K6c no turn started in L2 (every POST listed)', !sends.some(turnLike), sends.join(', ') || 'none');
     console.log(`POSTs L2: ${sends.join(', ') || 'none'}`);
     await page.waitForTimeout(1500);
@@ -515,6 +538,9 @@ try {
     await page.waitForTimeout(1500);
     await tab(page, 'chat');
     await page.waitForTimeout(3000);
+    // Chat's open projects are the owner's own list, kept between windows: the marks show on FOLDED headers, so fold these.
+    for (const n of ['orbit', 'proj', 'northwind', 'lumen']) if ((await expandedOf(page, n)) === 'true') { await header(page, n).click(); await page.waitForTimeout(300); }
+    await page.waitForTimeout(1500);
     const marks = await page.evaluate(() => Object.fromEntries(['orbit', 'proj', 'northwind'].map((v) => {
       const h = document.querySelector(`[data-drawer-project="${v}"] > .ns-dr-proj`);
       return [v, { asking: !!h?.querySelector('[data-testid="mark-asking"]'), working: !!h?.querySelector('[data-testid="mark-working"]'), askRow: h?.getAttribute('data-ask-row') === 'true', label: h?.querySelector('.ns-dr-toggle')?.getAttribute('aria-label') ?? '' }];
@@ -537,15 +563,15 @@ try {
     await page.screenshot({ path: f }); keep(f, 'sonra-9-isaretler-chat-light-1440.png');
     const mountedNow = await page.evaluate(() => Array.from(document.querySelectorAll('.project-instance')).map((e) => e.getAttribute('data-instance-vault')));
     const sends = watchSends(page);
-    await enter(page, 'northwind', 2500);
+    await moveVia(page, 'northwind', 2500);
+    await ensureOpen(page, 'northwind');
     const landed = await selOf(page, 'northwind');
     check('L1 Chat: a project NOT mounted with a saved chat lands on that chat, not the Super Agent', !mountedNow.includes('northwind') && !!landed && !landed.startsWith('drawer-super-row'), JSON.stringify({ mountedNow, landed }));
     f = join(app.shots, 'sonra-10-chat-kayitli-sohbet-light-1440.png');
     await page.screenshot({ path: f }); keep(f, 'sonra-10-chat-kayitli-sohbet-light-1440.png');
-    // Super Agent pick on a project with no chat: every POST listed.
-    await enter(page, 'cedar', 2500);
-    const cedarSuper = await page.locator('[data-drawer-project="cedar"] [data-testid="drawer-super-row"].is-sel').count();
-    check('K6c Chat: cedar (no chat) opens on its Super Agent', cedarSuper === 1, String(cedarSuper));
+    // A move to a project with no chat (the picker): every POST listed.
+    await moveVia(page, 'cedar', 2500);
+    check('K6c Chat: the move to cedar (no chat) landed', (await activeVault(page)) === 'cedar', String(await activeVault(page)));
     check('K6c no turn started (every POST listed)', !sends.some(turnLike), sends.join(', ') || 'none');
     console.log(`POSTs L1b/K6c: ${sends.join(', ') || 'none'}`);
     // The same marks on Whiteboards' folded headers.

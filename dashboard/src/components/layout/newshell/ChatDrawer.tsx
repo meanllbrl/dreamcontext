@@ -336,7 +336,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 title={words ? `${row.name} (${words})` : undefined}
                 onClick={(e) => { if (justDragged.current) return; if (accordion) headerPress(row, e.currentTarget); else p.onToggleExpanded(row.name); }}
                 onKeyDown={(e) => headerKey(e, row, row.expanded)}>
-                {accordion && <Chevron open={row.expanded} />}
+                {(accordion || (!!sb && !p.device && mode === 'chat')) && <Chevron open={row.expanded} />}
                 <span className="ns-dr-pic">
                   {row.logo
                     ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />

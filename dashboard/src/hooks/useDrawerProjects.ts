@@ -55,15 +55,6 @@ export function readFoldedMarks(vault: string): Promise<{ marks: SuperMarks; eki
   }, () => null);
 }
 
-/** A sidebar header press on Chat (wb-sol-panel D2): the project's saved chat count, read on
- *  demand from its summary alone. Null when the read fails, has no count, or takes longer than
- *  `ms` (the press then keeps the plain move, so a slow project never makes the click look dead). */
-export function readChatCount(vault: string, ms = 1200): Promise<number | null> {
-  const read = new ApiClient(vault).get<{ tabs?: unknown }>('/agent/sessions?summary=1')
-    .then((s) => (typeof s?.tabs === 'number' ? s.tabs : null), () => null);
-  return Promise.race([read, new Promise<null>((done) => { setTimeout(() => done(null), ms); })]);
-}
-
 export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   const api = new ApiClient(vault);
   const [summary, agents, automations, feed] = await Promise.all([
