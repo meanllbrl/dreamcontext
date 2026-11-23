@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
+import { useMemo, useState, useCallback, useEffect, startTransition, type CSSProperties } from 'react';
 import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useTask, useTaskList, useUpdateTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
@@ -32,6 +32,8 @@ import './Board.css';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
 const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
+/** Cards per column in the board's first frame: more than a tall window shows before scrolling. */
+const FIRST_CARDS = 16;
 
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
@@ -72,6 +74,19 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [colCollapsed, setColCollapsed] = useState<Record<string, boolean>>({});
   // Which parents have their subtask list open — kept for this board session only.
   const [subtasksOpen, setSubtasksOpen] = useState<Record<string, boolean>>({});
+  // The board's first frame draws the cards a column shows before it scrolls; the rest follow in
+  // the next, interruptible render. Building ~600 cards (~9,700 elements) in one go was the block a
+  // switch to Tasks waited on. Counts, columns and every card are the same once it lands, a frame
+  // later; it happens once per mount, so a refetch or a filter change draws the full board at once.
+  const [allCards, setAllCards] = useState(false);
+  const hasTasks = tasks.length > 0;
+  useEffect(() => {
+    if (allCards || !hasTasks) return;
+    let timer = 0;
+    // After the first frame is on screen, then as a transition, so a click or a key still wins.
+    const raf = requestAnimationFrame(() => { timer = window.setTimeout(() => startTransition(() => setAllCards(true)), 0); });
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer); };
+  }, [allCards, hasTasks]);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
@@ -346,6 +361,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
                 key={colKey}
                 col={data}
                 cardProps={s.cardProps}
+                sm={sm}
+                cardLimit={allCards ? undefined : FIRST_CARDS}
                 dragId={dragId}
                 draggable={draggable}
                 isDropTarget={!!dragId && dragOverKey === data.key}

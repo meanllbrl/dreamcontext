@@ -19,6 +19,14 @@
    8GB MacBook Air). A card is "in hand" from the press that starts its drag. */
 .bd-card[draggable='true']:active { will-change: transform; }
 
+/* A card out of its column's view is not laid out or painted until it scrolls near. The board
+   draws every task (a real brain: ~600 cards, ~9,700 elements), and laying them ALL out was the
+   ~75 ms block a switch to Tasks spent before its first frame. Every card stays in the DOM, so
+   drag, find-in-page, counts and filters are unchanged; `auto` remembers a card's real height
+   once it has been drawn, so the scrollbar settles. Nothing inside a card reaches past its edge
+   (the paint containment this brings would clip it). */
+.bd-card { content-visibility: auto; contain-intrinsic-size: auto 240px auto 112px; }
+
 /* Drag & drop — column drop target + landing silhouette */
 .bd-col-droptarget {
   border-color: var(--color-accent) !important;
