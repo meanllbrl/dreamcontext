@@ -370,7 +370,12 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
   if (suite) {
     if (ctx.redOpen) return 'dreamcontext builder test --failed';
     // A leading `cd <dir> &&` is where the suite runs: kept. A build in the chain runs first, alone.
-    const cd = /^\s*(cd\s+\S+)\s*&&/.exec(command)?.[1];
+    const cd = /^\s*(cd\s+[^\s'"$`;&|()]+)\s*&&/.exec(command)?.[1];
+    // Any other cd (mid-chain, before `;`, quoted folder) cannot be kept in the suite form: dropping it
+    // would run the suite in the wrong folder, so the form quotes the whole command instead.
+    if (segments.filter((seg) => /^\(*\s*cd(?:\s|$)/.test(seg)).length > (cd ? 1 : 0)) {
+      return `dreamcontext builder heavy -- ${shellQuote(command)}`;
+    }
     const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
     const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
     const first = build ? `dreamcontext builder heavy -- ${shellQuote(`${cd ? `${cd} && ` : ''}${build}`)}, then ` : '';

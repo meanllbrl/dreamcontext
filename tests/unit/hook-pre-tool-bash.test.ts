@@ -93,6 +93,15 @@ describe('the heavy-step gate', () => {
         expect(l).toContain(`Your command was: ${cmd} [end of your command].`);
       }
     });
+    it('a cd the suite form cannot keep (mid-chain, before ;, quoted folder) makes the form quote the whole command', () => {
+      for (const cmd of ['echo x >> f && cd pkg && npm test', 'cd pkg; npm test', 'cd "my dir" && echo x >> f && npm test']) {
+        const s = heavySuggestion(cmd);
+        expect(s.startsWith('dreamcontext builder heavy -- ')).toBe(true);
+        expect(s).not.toContain('--detach');
+        expect(s.replace(/'\\''/g, "'")).toContain(cmd);
+      }
+      expect(heavySuggestion('cd pkg && npm test')).toContain("--detach -- 'cd pkg && npm test'");
+    });
     it('names the part of the reported kind', () => {
       expect(lead('npx tsc --noEmit && npm run build')).toContain('`npm run build` (build)');
     });
