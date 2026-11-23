@@ -187,6 +187,11 @@ export type Verdict =
 
 const days = (ms: number) => `${Math.floor(ms / DAY)}d`;
 
+/** A running process works in `path` (an open file under it, or a command line naming it). */
+function usedBy(path: string, inUse: readonly string[], commands: readonly string[]): boolean {
+  return inUse.some((p) => under(p, path)) || commands.some((c) => c.includes(path + sep) || c.includes(path + ' ') || c.endsWith(path));
+}
+
 /** One folder's verdict. Pure: every fact it weighs is in its arguments. */
 export function classify(f: WorktreeFacts, g: SweepGuards, now: number): Verdict {
   if (f.shape === 'not-a-worktree') return { action: 'keep', reason: 'not-a-worktree', why: 'no .git here: not a worktree git knows, report only' };
@@ -194,7 +199,7 @@ export function classify(f: WorktreeFacts, g: SweepGuards, now: number): Verdict
   if (f.shape === 'broken') return { action: 'keep', reason: 'unreadable', why: 'its git admin dir is gone (`git worktree prune` territory), report only' };
   if (g.unsure) return { action: 'keep', reason: 'unreadable', why: g.unsure };
   if (g.inUse === null) return { action: 'keep', reason: 'in-use', why: 'could not list running processes, so nothing is removed' };
-  if (g.inUse.some((p) => under(p, f.path)) || g.commands.some((c) => c.includes(f.path + sep) || c.includes(f.path + ' ') || c.endsWith(f.path))) {
+  if (usedBy(f.path, g.inUse, g.commands)) {
     return { action: 'keep', reason: 'in-use', why: 'a running process works in it' };
   }
   const cli = g.cliTargets.find((t) => under(t, f.path));
@@ -510,8 +515,10 @@ export function renderPlan(plan: SweepPlan): string {
 const removing = new Set<string>();
 export function removingWorktrees(): ReadonlySet<string> { return removing; }
 
-let sweeping = false;
-const retryOnly = new Set<string>();
+/** Vaults (context roots) with a round running, and the `only` paths each skipped meanwhile: one
+ *  vault's round never makes another vault's hourly round skip. */
+const sweeping = new Set<string>();
+const retryOnly = new Map<string, Set<string>>();
 
 export interface JanitorResult {
   removed: string[];
@@ -537,6 +544,10 @@ export interface SweepEndedDeps {
   /** Tests inject the facts and the guards; the server reads the machine. */
   inspect?: (p: string) => Promise<WorktreeFacts>;
   guards?: () => Promise<{ guards: SweepGuards; warnings: string[]; root: string }>;
+  /** The process listing for ONE path, read again right before acting. Tests inject it; with
+   *  injected `guards` and no `uses`, the round's own listing is reused (tests never read the
+   *  machine). */
+  uses?: (path: string) => Promise<{ inUse: readonly string[] | null; commands: readonly string[] }>;
   now?: number;
   trigger?: string;
 }
@@ -550,12 +561,15 @@ export interface SweepEndedDeps {
  * while one runs is skipped and its `only` path retried once after the round.
  */
 export async function sweepEnded(o: { root: string; contextRoot: string; only?: string } & SweepEndedDeps): Promise<JanitorResult | null> {
-  if (sweeping) { if (o.only) retryOnly.add(o.only); return null; }
-  sweeping = true;
+  if (sweeping.has(o.contextRoot)) {
+    if (o.only) { const q = retryOnly.get(o.contextRoot) ?? new Set<string>(); q.add(o.only); retryOnly.set(o.contextRoot, q); }
+    return null;
+  }
+  sweeping.add(o.contextRoot);
   try {
     const result = await sweepEndedRound(o);
-    const again = [...retryOnly];
-    retryOnly.clear();
+    const again = [...(retryOnly.get(o.contextRoot) ?? [])];
+    retryOnly.delete(o.contextRoot);
     for (const only of again) {
       const r = await sweepEndedRound({ ...o, only }).catch(() => null);
       if (r) { result.removed.push(...r.removed); result.stripped.push(...r.stripped); result.failed.push(...r.failed); result.bytesFreed += r.bytesFreed; }
@@ -567,7 +581,7 @@ export async function sweepEnded(o: { root: string; contextRoot: string; only?: 
     console.warn(`[super] worktree janitor failed: ${(err as Error)?.message ?? err}`);
     return null;
   } finally {
-    sweeping = false;
+    sweeping.delete(o.contextRoot);
   }
 }
 
@@ -587,8 +601,34 @@ async function sweepEndedRound(o: { root: string; contextRoot: string; only?: st
     if (v.action === 'remove' && v.category !== 'child-worktree') continue;
     const bytes = (await diskUsage(v.action === 'strip' ? f.heavy : [path], 600_000));
     const size = [...bytes.values()].reduce((n, b) => n + b, 0);
+    const key = { contextRoot: o.contextRoot, superId: row.superId };
+    const namesPath = (w: string | undefined) => !!w && (w === path || w === o.only || join(root, basename(w)) === path);
+    /**
+     * Re-checked right before acting (review r1, class janitor-acts-on-stale-snapshot): the round's
+     * guards are minutes old by now (inspect + diskUsage per path). Under the record's lock the
+     * child must still be ended and still name this path (`before` runs in that same lock); then
+     * the process listing for this path alone. A reason means: leave it this round.
+     */
+    const stillOurs = async (before?: (c: SuperChild) => void): Promise<string | null> => {
+      let why: string | null = 'its child left the record';
+      await withSuperState(key.contextRoot, key.superId, (st) => {
+        const c = st.children[row.child];
+        if (!c) return;
+        if (c.endedAt === undefined) { why = 'its child was resumed'; return; }
+        if (!namesPath(c.worktree)) { why = 'its child names another worktree now'; return; }
+        why = null;
+        before?.(c);
+      }, { home });
+      if (why) return why;
+      const u = o.uses ? await o.uses(path) : o.guards ? guards : await runningUses(path, await fsp.realpath(path).catch(() => path));
+      if (u.inUse === null) return 'could not list running processes';
+      if (usedBy(path, u.inUse, u.commands)) return 'a running process works in it';
+      return null;
+    };
     if (v.action === 'strip') {
       try {
+        const why = await stillOurs();
+        if (why) { out.warnings.push(`${path} kept: ${why}`); continue; }
         for (const h of f.heavy) {
           const st = await fsp.lstat(h).catch(() => null);
           if (!st || !st.isDirectory() || st.isSymbolicLink() || !h.startsWith(path + sep)) continue;
@@ -599,24 +639,25 @@ async function sweepEndedRound(o: { root: string; contextRoot: string; only?: st
       continue;
     }
     if (!f.repo) { out.failed.push({ path, message: 'no repository to remove it from' }); continue; }
-    // Before (D15): the record learns where the work is, so a merge or resume racing the removal
-    // reaches the branch. `branch` itself never changes.
-    const key = { contextRoot: o.contextRoot, superId: row.superId };
     const writeChild = (fn: (c: SuperChild) => void) => withSuperState(key.contextRoot, key.superId, (s) => {
       const c = s.children[row.child];
       if (c) fn(c);
     }, { home });
+    // In `removing` first: from here a resume goes through re-attach, which waits for this removal.
     removing.add(path);
     try {
-      await writeChild((c) => {
-        if (f.branch && SUPER_BRANCH_RE.test(f.branch)) { if (f.branch !== c.branch) c.lastBranch = f.branch; else delete c.lastBranch; }
+      // Before (D15), in the recheck's own lock: the record learns where the work is, so a merge or
+      // resume racing the removal reaches the branch. `branch` itself never changes.
+      const why = await stillOurs((c) => {
+        if (f.branch && SUPER_BRANCH_RE.test(f.branch)) { if (f.branch !== c.branch) c.lastBranch = f.branch; else delete c.lastBranch; delete c.movedTo; }
         else if (f.branch && validBase(f.branch)) c.movedTo = f.branch;
       });
+      if (why) { out.warnings.push(`${path} kept: ${why}`); continue; }
       // No --force: git itself refuses a tree with changes or untracked files.
       const r = await git(f.repo, ['worktree', 'remove', path]);
       if (r.code !== 0) throw new Error(`git worktree remove: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`);
       // After: only the worktree goes from the record.
-      await writeChild((c) => { if (c.worktree && (c.worktree === path || c.worktree === o.only || join(root, basename(c.worktree)) === path)) delete c.worktree; });
+      await writeChild((c) => { if (namesPath(c.worktree)) delete c.worktree; });
       out.removed.push(path); out.bytesFreed += size;
     } catch (err) {
       out.failed.push({ path, message: (err as Error).message });
@@ -643,7 +684,8 @@ async function releasePass(contextRoot: string, home: string): Promise<string[]>
     for (const c of Object.values(s.children)) {
       if (c.endedAt === undefined || !c.branch) continue;
       const co = await childCheckout(projectRoot, c, { removing, home });
-      if (!co.repo || co.worktree) continue;
+      // A listed worktree (on a branch or detached) is still where the work is: never released.
+      if (!co.repo || co.worktree || co.elsewhere?.kind === 'detached') continue;
       if (!(await isReadableRepo(co.repo.path))) continue;
       const staleHint = c.worktree ?? null;
       if (staleHint) {
@@ -651,7 +693,8 @@ async function releasePass(contextRoot: string, home: string): Promise<string[]>
         if (!listed || listed.has(staleHint) || removing.has(staleHint)) continue;
       }
       let release = true;
-      for (const b of [...new Set([c.lastBranch, c.branch].filter((x): x is string => !!x))]) {
+      // Every branch the identity names, movedTo too: the work there must be home (or gone) as well.
+      for (const b of [...new Set([c.movedTo, c.lastBranch, c.branch].filter((x): x is string => !!x))]) {
         const exists = await git(co.repo.path, ['show-ref', '--verify', '--quiet', `refs/heads/${b}`]);
         if (exists.code === 1) continue; // gone from a readable repo
         if (exists.code !== 0) { release = false; break; }

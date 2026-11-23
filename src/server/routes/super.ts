@@ -2907,6 +2907,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
         if (!co.branch) { refuse(res, 409, 'no_branch', `${id} has no worktree branch`); return; }
         if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${id}: ${co.why ?? 'no linked repo holds its branch'}`); return; }
+        // Its work is not on the branch the record names: never merge that branch in its place.
+        if (co.elsewhere) { refuse(res, 409, co.elsewhere.kind === 'detached' ? 'detached' : 'work_elsewhere', `child ${id}: ${co.elsewhere.message}`, { child: id, where: co.elsewhere.where }); return; }
         if (repo && co.repo.path !== repo.path) { refuse(res, 409, 'mixed_repos', 'every child merged together must work in the same repo'); return; }
         repo = co.repo;
         members.push(co.worktree
@@ -2935,7 +2937,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (!co.branch) continue;
       // A dal-yalnız child: its branch only, merged and resumed from it (D15).
       const st = co.repo && co.worktree ? await worktreeStatus(co.repo.path, co.worktree, co.branch) : { listed: false, dirty: null, merged: null };
-      rows.push({ child: sid, worktree: co.worktree, branch: co.branch, repo: co.repo?.name ?? null, ...st, ...(co.why ? { why: co.why } : {}) });
+      rows.push({ child: sid, worktree: co.worktree, branch: co.branch, repo: co.repo?.name ?? null, ...st, ...(co.why ? { why: co.why } : {}), ...(co.elsewhere ? { elsewhere: co.elsewhere.message } : {}) });
     }
     ok(res, { worktrees: rows });
   },
@@ -2978,12 +2980,15 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const ch = c.state.children[child];
     try {
       const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
-      if (!co.worktree || !co.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
-      if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${co.worktree} is not a worktree of a linked repo`); return; }
-      await removeChildWorktree({ repoPath: co.repo.path, worktree: co.worktree, branch: co.branch });
+      // A listed worktree on a detached HEAD is still its worktree: removeChildWorktree's own rule
+      // (D13) decides whether its commits are kept elsewhere.
+      const wt = co.worktree ?? (co.elsewhere?.kind === 'detached' ? co.elsewhere.where : null);
+      if (!wt || !co.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
+      if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${wt} is not a worktree of a linked repo`); return; }
+      await removeChildWorktree({ repoPath: co.repo.path, worktree: wt, branch: co.branch });
       // K5: the worktree goes from the record, never the branch.
-      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x && x.worktree === co.worktree) delete x.worktree; });
-      ok(res, { child, removed: co.worktree, branchKept: co.branch });
+      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x && x.worktree === wt) delete x.worktree; });
+      ok(res, { child, removed: wt, branchKept: co.branch });
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
       throw err;
@@ -3091,7 +3096,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     let worktreeNote: string | undefined;
     if (ch.branch || ch.lastBranch) {
       const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
-      if (!co.worktree && co.branch) {
+      if (co.elsewhere) worktreeNote = `resumed without re-attaching super/*: ${co.elsewhere.message}`;
+      else if (!co.worktree && co.branch) {
         const r = await reattachChildWorktree({ projectRoot: dirname(root), child: ch, removing: removingWorktrees() });
         if ('why' in r) worktreeNote = `resumed without its worktree: ${r.why}`;
         else reattached = r;
@@ -3959,7 +3965,7 @@ async function returnsAsk(c: SuperCaller, b: Record<string, unknown>, res: Serve
       description: `Bu dallar kurulu sürümde var ama dev'de yok; bir sonraki dev kesimi onları düşürür. Numaralı liste rapor kartında.`,
       multiSelect: false,
       options: [
-        { label: 'Hepsine aç', description: `Bir alt ajan ${n} dalı push edip her biri için dev'e ayrı taslak PR açar.` },
+        { label: 'Hepsine aç', description: `Bir alt ajan ${n} dalı push eder; açık PR'ı olmayan her biri için dev'e taslak PR açar.` },
         { label: 'Seçeyim', description: 'Notuna numaraları yaz (ör. 1, 3); yalnız onlara PR açılır.' },
         { label: 'Şimdi değil', description: 'Hiçbir şey yapılmaz; aynı liste yeniden sorulmaz.' },
       ],

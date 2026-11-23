@@ -43,7 +43,9 @@ const guardsFrom = (o: { inUse?: string[] | null } = {}) => async () => {
   const guards: SweepGuards = { inUse: o.inUse === undefined ? [] : o.inUse, commands: [], cliTargets: [], held, ended };
   return { guards, warnings: [], root: join(home, '.claude-worktrees') };
 };
-const sweep = (o: { only?: string; inUse?: string[] | null } = {}) => sweepEnded({ root: join(home, '.claude-worktrees'), contextRoot: ctx, home, guards: guardsFrom(o), ...(o.only ? { only: o.only } : {}) });
+const sweep = (o: { only?: string; inUse?: string[] | null; uses?: (p: string) => Promise<{ inUse: readonly string[] | null; commands: readonly string[] }> } = {}) => sweepEnded({
+  root: join(home, '.claude-worktrees'), contextRoot: ctx, home, guards: guardsFrom(o), ...(o.only ? { only: o.only } : {}), ...(o.uses ? { uses: o.uses } : {}),
+});
 
 beforeEach(() => {
   Object.assign(process.env, {
@@ -116,6 +118,35 @@ describe('sweepEnded', () => {
     expect(second).toBeNull();
     const r = await first;
     expect(r?.removed.sort()).toEqual([a.path, b.path].sort());
+  });
+
+  it('review r1: a process that opened the worktree after the round read its guards keeps it (listing re-read per path)', { timeout: 60_000 }, async () => {
+    const a = await mk('a'); commitIn(a.path, 'a.txt');
+    const b = await mk('b'); commitIn(b.path, 'b.txt');
+    writeRecord({ a: { worktree: a.path, branch: a.branch, repo: 'product', endedAt: 5 }, b: { worktree: b.path, branch: b.branch, repo: 'product', endedAt: 5 } });
+    // The round's guards say nothing runs; the per-path listing finds a dev server in b.
+    const r = await sweep({ uses: async (p) => ({ inUse: p === b.path ? [join(b.path, 'server.log')] : [], commands: [] }) });
+    expect(r?.removed).toEqual([a.path]);
+    expect(existsSync(b.path)).toBe(true);
+    expect(r?.warnings.some((w) => w.includes(b.path) && /running process/.test(w))).toBe(true);
+    const s = await readSuperState(ctx, { home });
+    expect(s.children.b.worktree).toBe(b.path);
+    // A listing that fails keeps it too.
+    const none = await sweep({ uses: async () => ({ inUse: null, commands: [] }) });
+    expect(none?.removed).toEqual([]);
+  });
+
+  it('review r1: a child resumed after the round read its guards is left alone (record re-read under the lock)', { timeout: 60_000 }, async () => {
+    const a = await mk('a'); commitIn(a.path, 'a.txt');
+    writeRecord({ a: { worktree: a.path, branch: a.branch, repo: 'product', endedAt: 5 } });
+    const stale = guardsFrom();
+    const snapshot = await stale();
+    // Resumed after the snapshot was taken.
+    writeRecord({ a: { worktree: a.path, branch: a.branch, repo: 'product' } });
+    const r = await sweepEnded({ root: join(home, '.claude-worktrees'), contextRoot: ctx, home, guards: async () => snapshot });
+    expect(r?.removed).toEqual([]);
+    expect(existsSync(a.path)).toBe(true);
+    expect(r?.warnings.some((w) => /resumed/.test(w))).toBe(true);
   });
 
   it('C8(iii) a member Super\'s ended child is cleaned and its own record updated', { timeout: 60_000 }, async () => {

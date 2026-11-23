@@ -519,6 +519,11 @@ export interface ChildCheckout {
   worktree: string | null;
   /** Why `repo` is null. */
   why?: string;
+  /** The child's work is NOT on `branch` (review r1, class merge-source-not-where-the-work-is):
+   *  its listed worktree is on a detached HEAD, or the sweep saw it moved to a non-`super/*`
+   *  branch. Merge and resume refuse to act on `branch` then and name this place; the release
+   *  pass keeps the child. */
+  elsewhere?: { kind: 'detached' | 'moved'; where: string; message: string };
 }
 
 /**
@@ -547,17 +552,24 @@ export async function childCheckout(projectRoot: string, child: SuperChild, o: {
   }
   let worktree: string | null = null;
   let live: string | null = null;
+  let elsewhere: ChildCheckout['elsewhere'];
   if (repo && child.worktree && !o.removing?.has(child.worktree)) {
     try {
       const listed = await listedWorktreesFor([repo.path], [child.worktree]);
       if (listed.has(child.worktree) && acceptableWorktree(child.worktree, { home: o.home, listedWorktrees: listed })) {
         live = await currentBranch(child.worktree);
         if (live) worktree = child.worktree;
+        else elsewhere = { kind: 'detached', where: child.worktree, message: `its worktree ${child.worktree} is on a detached HEAD; it must switch to a branch first` };
       }
     } catch { /* not listed */ }
   }
   const branch = (live && SUPER_BRANCH_RE.test(live) ? live : null) ?? child.lastBranch ?? child.branch ?? null;
-  return { repo, branch, worktree, ...(repo ? {} : { why: why ?? 'no linked repo found' }) };
+  // Moved past `branch`: only when that branch still exists and holds commits `branch` lacks.
+  if (repo && branch && !worktree && !elsewhere && child.movedTo && validBase(child.movedTo)
+    && Number((await git(repo.path, ['rev-list', '--count', `refs/heads/${child.movedTo}`, `^refs/heads/${branch}`, '--'])).stdout.trim()) > 0) {
+    elsewhere ={ kind: 'moved', where: child.movedTo, message: `its work moved to ${child.movedTo}, not a super/* branch; merge that branch by hand or resume the child there` };
+  }
+  return { repo, branch, worktree, ...(repo ? {} : { why: why ?? 'no linked repo found' }), ...(elsewhere ? { elsewhere } : {}) };
 }
 
 /** The path a child's worktree is made at (and re-attached at: its Claude session is keyed by it). */
@@ -577,6 +589,7 @@ export async function reattachChildWorktree(o: {
   const co = await childCheckout(o.projectRoot, o.child, { removing: o.removing, home: o.home });
   if (co.worktree && co.branch) return { worktree: co.worktree, branch: co.branch, repo: co.repo!.name };
   if (!co.repo) return { why: co.why ?? 'no linked repo found' };
+  if (co.elsewhere) return { why: co.elsewhere.message };
   const branch = co.branch;
   if (!branch || !SUPER_BRANCH_RE.test(branch)) return { why: 'the child has no super/* branch' };
   if (!(await branchExists(co.repo.path, branch))) return { why: `${branch} does not exist in ${co.repo.name}` };

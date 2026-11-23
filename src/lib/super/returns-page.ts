@@ -2,19 +2,20 @@
  * The owner's report page of a cut's returns (kesim-geri-donus K8): one numbered row per branch
  * not back in dev, its commits' subjects and what "Hepsine aç" does with it. Turkish, the owner's
  * language; self-contained HTML (no script), opened as a web card beside the ask.
+ *
+ * Drawn ONLY with the app's kit tokens (review r1, class report-page-bypasses-theme-tokens): the
+ * card injects them and swaps them live with the theme, so no literal colour, font or own
+ * dark-mode rule here. A `var()` fallback is the light theme's value, used only when the file is
+ * opened outside the app. The branch number is a neutral chip in the body text colour (readable in
+ * both themes); spacing on the 4px grid.
  */
-import type { ReturnGroup, ReturnsReport } from './returns.js';
+import { ACTION_MEANING, type ReturnGroup, type ReturnsReport } from './returns.js';
 
 const esc = (t: string): string => t.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string));
 
 /** What happens to a group when the owner says yes. */
 export function actionLine(g: ReturnGroup): string {
-  switch (g.action) {
-    case 'push': return 'Dal push edilir, dev\'e taslak PR açılır.';
-    case 'push-pr': return 'PR\'ı birleşmiş; sonraki commit\'ler için yeni bir taslak PR açılır.';
-    case 'rescue': return `Commit'ler kendi dalına (${g.rescueBranch ?? 'yeni dal'}) taşınır, o dal için taslak PR açılır.`;
-    default: return 'Bir şey yapılmaz.';
-  }
+  return (ACTION_MEANING[g.action] ?? ACTION_MEANING.none).tr(g);
 }
 
 export function renderReturnsPage(topic: string, r: ReturnsReport, at = new Date()): string {
@@ -22,7 +23,7 @@ export function renderReturnsPage(topic: string, r: ReturnsReport, at = new Date
     const commits = g.commits.filter((c) => c.state === 'awaiting');
     const list = commits.map((c) => `<li><code>${esc(c.sha.slice(0, 9))}</code> ${esc(c.subject)}</li>`).join('');
     return `<section class="g"><h2><span class="n">${i + 1}</span> ${esc(g.name)}</h2>`
-      + `<p class="a">${esc(actionLine(g))}</p><ul>${list}</ul></section>`;
+      + `<p class="a">${esc(actionLine(g))}</p>${list ? `<ul>${list}</ul>` : ''}</section>`;
   }).join('\n');
   const inPr = r.inPr.length
     ? `<h3>Zaten PR'da (${r.inPr.length})</h3><ul>${r.inPr.map((g) => `<li>${esc(g.name)}</li>`).join('')}</ul>` : '';
@@ -31,17 +32,18 @@ export function renderReturnsPage(topic: string, r: ReturnsReport, at = new Date
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kesim ${esc(topic)} → dev'e dönüş</title>
 <style>
-:root{color-scheme:light dark;--fg:#1d1b26;--mut:#6b6880;--bg:#fff;--card:#f6f5fa;--acc:#6d4ae0}
-@media (prefers-color-scheme:dark){:root{--fg:#eeecf6;--mut:#a5a2b8;--bg:#15131c;--card:#211e2b;--acc:#a58bff}}
-body{margin:0;padding:24px 16px;font:15px/1.5 -apple-system,system-ui,sans-serif;color:var(--fg);background:var(--bg)}
-main{max-width:760px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}p.m{color:var(--mut);margin:0 0 20px}
-.g{background:var(--card);border-radius:12px;padding:12px 16px;margin:0 0 12px}
-.g h2{font-size:16px;margin:0 0 4px;display:flex;gap:8px;align-items:center;overflow-wrap:anywhere}
-.n{flex:none;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:12px;background:var(--acc);color:#fff;font-size:13px}
-.a{margin:0 0 6px;color:var(--mut)}ul{margin:0;padding-left:20px}li{overflow-wrap:anywhere}code{font-size:13px}h3{font-size:15px;margin:20px 0 6px}
+body{margin:0;padding:var(--space-6,24px) var(--space-4,16px);font:15px/1.5 var(--font-family,system-ui,sans-serif);color:var(--color-text,#292d34);background:var(--color-bg,#ffffff)}
+main{max-width:760px;margin:0 auto}h1{font-size:20px;margin:0 0 var(--space-1,4px)}
+p.m{color:var(--color-text-secondary,#646464);margin:0 0 var(--space-1,4px)}p.ask{margin:0 0 var(--space-6,24px);font-weight:600}
+.g{background:var(--color-bg-tertiary,#e9ebf0);border-radius:var(--radius-lg,12px);padding:var(--space-3,12px) var(--space-4,16px);margin:0 0 var(--space-3,12px)}
+.g h2{font-size:16px;margin:0 0 var(--space-1,4px);display:flex;gap:var(--space-2,8px);align-items:center;overflow-wrap:anywhere}
+.n{flex:none;display:inline-grid;place-items:center;min-width:24px;height:24px;padding:0 var(--space-1,4px);box-sizing:border-box;border-radius:12px;background:var(--color-bg,#ffffff);color:var(--color-text,#292d34);border:1px solid var(--color-border,#e8e8e8);font-size:14px;font-weight:700}
+.a{margin:0 0 var(--space-2,8px);color:var(--color-text-secondary,#646464)}ul{margin:0;padding-left:var(--space-6,24px)}li{overflow-wrap:anywhere}
+code{font:13px var(--font-mono,ui-monospace,monospace)}h3{font-size:15px;margin:var(--space-6,24px) 0 var(--space-2,8px)}
 </style></head><body><main>
 <h1>Kesim ${esc(topic)} → dev'e dönüş</h1>
-<p class="m">${r.awaiting.length} dal dev'e dönmedi. dev: ${dev}. Seçmek için numaraları yaz (ör. 1, 3). ${esc(at.toISOString().slice(0, 16).replace('T', ' '))}</p>
+<p class="m">${r.awaiting.length} dal dev'e dönmedi · dev: ${dev} · ${esc(at.toISOString().slice(0, 16).replace('T', ' '))} UTC</p>
+<p class="ask">Seçmek için numaraları yaz (ör. 1, 3).</p>
 ${rows}
 ${inPr}
 </main></body></html>

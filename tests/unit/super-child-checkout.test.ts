@@ -105,6 +105,26 @@ describe('childCheckout', () => {
     await removeChildWorktree({ repoPath: repo, worktree: w.path, branch: 'super/mv', home });
     const co = await childCheckout(project, child({ branch: 'super/mv', repo: 'product', movedTo: 'fix/x' }), { home });
     expect(co.branch).toBe('super/mv');
+    // fix/x holds nothing super/mv lacks: the branch is where the work is.
+    expect(co.elsewhere).toBeUndefined();
+  });
+
+  it('review r1: work not on the recorded branch (detached worktree, moved ahead) is named, never merged or re-attached as super/<slug>', async () => {
+    const w = await createChildWorktree({ projectRoot: project, repo: 'product', slug: 'dt', home });
+    commitIn(w.path, 'd.txt');
+    g(w.path, 'checkout', '-q', '--detach');
+    commitIn(w.path, 'd2.txt');
+    const det = await childCheckout(project, child({ worktree: w.path, branch: w.branch, repo: 'product' }), { home });
+    expect(det.worktree).toBeNull();
+    expect(det.elsewhere).toMatchObject({ kind: 'detached', where: w.path });
+    expect(await reattachChildWorktree({ projectRoot: project, child: child({ worktree: w.path, branch: w.branch, repo: 'product' }), home })).toMatchObject({ why: expect.stringMatching(/detached/) });
+    // Moved to fix/y with a commit of its own, worktree gone: named, re-attach refused.
+    g(w.path, 'checkout', '-q', '-b', 'fix/y');
+    g(w.path, 'checkout', '-q', 'super/dt');
+    g(repo, 'worktree', 'remove', w.path);
+    const mv = await childCheckout(project, child({ branch: 'super/dt', repo: 'product', movedTo: 'fix/y' }), { home });
+    expect(mv.elsewhere).toMatchObject({ kind: 'moved', where: 'fix/y' });
+    expect(await reattachChildWorktree({ projectRoot: project, child: child({ branch: 'super/dt', repo: 'product', movedTo: 'fix/y' }), home })).toMatchObject({ why: expect.stringMatching(/fix\/y/) });
   });
 
   it('C8(v) resume re-attaches at the original path, checked out; a branch checked out elsewhere is said and nothing made', async () => {

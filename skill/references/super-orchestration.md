@@ -63,7 +63,7 @@ children that finish fast. Verbs are in
    with git diff --stat. A fix goes on its own branch, merged into the cut; only a cut-fit commit
    (`Cut-fit: <why>` trailer) is written on the cut. The merge reply's `returns` block lists the work
    not back in dev: non-empty, run `super returns ask --topic <topic>` (ONE card, never asked twice;
-   "Hepsine aç" = an `--outward` child pushes and opens one draft PR per branch). A reverted commit
+   "Hepsine aç" = an `--outward` child pushes and opens a draft PR per PR-less branch). A reverted commit
    still reads as home. Install only with `npm run install:cut` (it refuses a drop). Never merge into
    the default branch, never push but per §2.
 

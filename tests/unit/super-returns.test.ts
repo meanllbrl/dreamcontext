@@ -5,10 +5,11 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { droppedFrom, groupsOf, markFit, pendingReturns, renderReturns, type GhRunner, type ReturnsReport } from '../../src/lib/super/returns.js';
+import { ACTION_MEANING, droppedFrom, groupsOf, markFit, pendingReturns, renderReturns, type GhRunner, type ReturnGroup, type ReturnsReport } from '../../src/lib/super/returns.js';
+import { actionLine, renderReturnsPage } from '../../src/lib/super/returns-page.js';
 
 let base: string;
 let repo: string;
@@ -140,6 +141,68 @@ describe('C2 PR destinations without branch names', () => {
     const c = r.awaiting.find((x) => x.name === 'super/c')!;
     expect(c.commits.find((x) => x.sha === cHead)).toMatchObject({ state: 'inPr' });
     expect(c.action).toBe('push');
+    // The owner's page says what the code does: PR-less = a new draft PR, open PR = push only.
+    expect(actionLine(d)).toMatch(/PR'ı yok/);
+    expect(actionLine(c)).toMatch(/Açık bir PR'ı var/);
+    expect(renderReturns(r)).toContain(ACTION_MEANING.push.en);
+  });
+
+  it('a group with commits only in a MERGED (not home) PR plus new ones needs a new PR (push-pr), never push', { timeout: 60_000 }, async () => {
+    const e1 = branch('super/e', ['e1.txt']);
+    // Merged on GitHub, but its merge commit is not in the fetched dev (dev went another way).
+    prs = [{ number: 8, state: 'closed', merged: true, head: e1, headRef: 'super/e', mergeOid: 'e'.repeat(40) }];
+    commit('e2.txt');
+    g(repo, 'checkout', '-q', '-b', 'super/cut', 'dev');
+    g(repo, 'merge', '-q', '--no-ff', '-m', "Merge branch 'super/e'", 'super/e');
+    const r = await run('super/cut');
+    const e = r.awaiting.find((x) => x.name === 'super/e')!;
+    expect(e.commits.find((c) => c.sha === e1)).toMatchObject({ state: 'inPr', via: { kind: 'pr-merged' } });
+    expect(e.action).toBe('push-pr');
+  });
+});
+
+describe('review r1: one meaning per action', () => {
+  it('the CLI reference states each action exactly as ACTION_MEANING; the page reads the same table', () => {
+    const doc = readFileSync(join(__dirname, '..', '..', 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    for (const a of ['push', 'push-pr', 'rescue'] as const) expect(doc).toContain(ACTION_MEANING[a].en);
+    expect(doc).not.toContain('super/rescue-*');
+    const g0: ReturnGroup = { name: 'super/x', branchExists: true, tips: [], commits: [], foreign: 0, action: 'rescue', rescueBranch: 'super/x-iade', commands: [] };
+    expect(actionLine(g0)).toContain('super/x-iade');
+  });
+
+  it('the page draws only with kit tokens: no literal colour outside a var() fallback, no own dark rule; numbers readable', () => {
+    const r: ReturnsReport = {
+      key: 'k', from: { ref: 'super/cut', sha: 'a'.repeat(40) }, dev: { ref: 'origin/dev', sha: 'b'.repeat(40), stale: false }, localDevBehind: null,
+      awaiting: [{ name: 'super/x', branchExists: true, tips: [], commits: [], foreign: 0, action: 'push-pr', commands: [] }],
+      inPr: [], inRescue: [], fit: [], drops: { asked: [], rows: [], errors: [] }, notes: [],
+    };
+    const html = renderReturnsPage('cut', r, new Date('2026-11-23T10:00:00Z'));
+    const css = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+    expect(css).not.toMatch(/prefers-color-scheme|color-scheme/);
+    const noVars = css.replace(/var\([^()]*\)/g, '');
+    expect(noVars).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
+    expect(css).toMatch(/\.n\{[^}]*color:var\(--color-text/);
+    // An empty group draws no empty list; the time names its zone; the instruction stands alone.
+    expect(html).not.toContain('<ul></ul>');
+    expect(html).toContain('10:00 UTC');
+    expect(html).toMatch(/<p class="ask">Seçmek için numaraları yaz/);
+  });
+});
+
+describe('C2b home decided once per destination', () => {
+  it('one merge-base per merged PR, never one per commit', { timeout: 60_000 }, async () => {
+    const tips: string[] = [];
+    for (let i = 0; i < 3; i++) tips.push(branch(`super/p${i}`, [`p${i}a.txt`, `p${i}b.txt`, `p${i}c.txt`]));
+    prs = tips.map((t, i) => ({ number: 20 + i, state: 'closed' as const, merged: true, head: t, headRef: `super/p${i}`, mergeOid: 'c'.repeat(40) }));
+    g(repo, 'checkout', '-q', '-b', 'super/cut', 'dev');
+    for (let i = 0; i < 3; i++) g(repo, 'merge', '-q', '--no-ff', '-m', `Merge branch 'super/p${i}'`, `super/p${i}`);
+    const trace = join(base, 'trace.log');
+    process.env.GIT_TRACE = trace;
+    try { await run('super/cut', { fetch: false }); } finally { delete process.env.GIT_TRACE; }
+    const calls = readFileSync(trace, 'utf-8').split('\n').filter((l) => /merge-base --is-ancestor/.test(l) && /built-in/.test(l));
+    // 3 merged PRs, 9 commits: 3 calls (one per PR), not 27.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThanOrEqual(3);
   });
 
   it('gh failing: PR destinations dropped with a note, never "no PR"; an unreadable head is named', { timeout: 60_000 }, async () => {

@@ -312,13 +312,26 @@ function reportKey(groups: readonly ReturnGroup[]): string {
 interface Ctx {
   repo: string; remote: string | null; topic: string; dev: Destination | null; prs: PrRow[] | null; unreadable: PrRow[];
   index: Awaited<ReturnType<typeof buildIndex>>; rescueDests: Destination[];
+  /** The destinations that are home (dev itself, a merged PR whose merge commit dev holds),
+   *  decided ONCE per destination before any commit is judged (review r1, class
+   *  returns-unbounded-git-fanout): the answer never depends on the commit. */
+  home: ReadonlySet<Destination>;
+}
+
+/** Which destinations are home: one git call per merged PR, never one per commit. */
+async function homeDestinations(repo: string, dev: Destination | null, dests: readonly Destination[]): Promise<Set<Destination>> {
+  const out = new Set<Destination>();
+  for (const d of dests) {
+    if (d.kind === 'dev') out.add(d);
+    else if (d.kind === 'pr-merged' && d.mergeOid && dev && (await isAncestor(repo, d.mergeOid, dev.sha))) out.add(d);
+  }
+  return out;
 }
 
 async function stateOf(ctx: Ctx, sha: string): Promise<{ state: ReturnState; via?: ReturnCommit['via'] }> {
   if (ctx.index.info(sha)?.fit) return { state: 'fit' };
   for (const d of ctx.index.destinations) {
-    const home = d.kind === 'dev' || (d.kind === 'pr-merged' && d.mergeOid && ctx.dev && (await isAncestor(ctx.repo, d.mergeOid, ctx.dev.sha)));
-    if (!home) continue;
+    if (!ctx.home.has(d)) continue;
     const how = await ctx.index.has(sha, d);
     if (how) return { state: 'represented', via: { kind: d.kind, how, ...(d.pr ? { pr: d.pr } : {}) } };
   }
@@ -381,12 +394,13 @@ async function judgeGroups(ctx: Ctx, raw: readonly RawGroup[], stopsForForeign: 
     const group: ReturnGroup = { name: g.name, branchExists: exists, tips: g.tips, commits, foreign, action: 'none', commands: [] };
     const awaiting = commits.filter((c) => c.state === 'awaiting').map((c) => c.sha);
     const inRescue = commits.some((c) => c.state === 'inRescue');
-    const inPr = commits.some((c) => c.state === 'inPr');
+    // Only an OPEN PR takes more commits; a merged one's later commits need a new PR.
+    const inOpenPr = commits.some((c) => c.state === 'inPr' && c.via?.kind === 'pr-open');
     if (awaiting.length) {
       if (isDirect || !exists || foreign > 0) {
         group.action = 'rescue';
         group.rescueBranch = rescueName(ctx, isDirect ? `super/${ctx.topic}` : g.name);
-      } else group.action = inPr ? 'push' : 'push-pr';
+      } else group.action = inOpenPr ? 'push' : 'push-pr';
     } else if (inRescue) {
       group.action = 'push-pr';
     }
@@ -399,6 +413,26 @@ async function judgeGroups(ctx: Ctx, raw: readonly RawGroup[], stopsForForeign: 
   }
   return out;
 }
+
+/**
+ * What each action means: the ONE source the owner's page (Turkish), `renderReturns` and the CLI
+ * reference (English, drift-tested) read (review r1, class returns-action-described-wrong).
+ */
+export const ACTION_MEANING: Record<ReturnGroup['action'], { en: string; tr: (g: ReturnGroup) => string }> = {
+  none: { en: 'nothing to do', tr: () => 'Bir şey yapılmaz.' },
+  push: {
+    en: 'an open PR into dev already holds part of it: push the branch, that PR takes the rest',
+    tr: () => 'Açık bir PR\'ı var: dal push edilir, kalan commit\'ler o PR\'a girer.',
+  },
+  'push-pr': {
+    en: 'no open PR into dev (none yet, or its PR merged before these commits): push the branch and open a draft PR',
+    tr: () => 'Açık PR\'ı yok: dal push edilir, dev\'e taslak PR açılır.',
+  },
+  rescue: {
+    en: 'the branch is gone, or carries work of other branches: its commits are cherry-picked onto super/<x>-iade off remote dev (dated super/<x>-iade-YYMMDD when that one\'s PR merged), pushed, and a draft PR opened',
+    tr: (g) => `Dal yok ya da başka dalların işini taşıyor: commit'ler dev'den açılan ${g.rescueBranch ?? 'yeni bir iade dalına'} taşınır, o dal için taslak PR açılır.`,
+  },
+};
 
 /** D11: `super/<x>-iade`; one whose PR is merged gets a dated sibling. */
 function rescueName(ctx: Ctx, of: string): string {
@@ -474,7 +508,7 @@ export async function pendingReturns(repo: string, fromRef: string, o: { install
   if (dev) {
     const stops = [dev.sha];
     const index = await buildIndex(repo, fromSha, [...dests, ...rescueDests], stops);
-    const ctx: Ctx = { repo, remote, topic, dev: dests[0], prs, unreadable, index, rescueDests };
+    const ctx: Ctx = { repo, remote, topic, dev: dests[0], prs, unreadable, index, rescueDests, home: await homeDestinations(repo, dests[0], dests) };
     // The index lists rescue destinations separately: `stateOf` walks its own list for them.
     (index.destinations as Destination[]).splice(0, index.destinations.length, ...dests);
     const groups = await judgeGroups(ctx, await groupsOf(repo, fromSha, stops), stops);
@@ -581,6 +615,7 @@ export function renderReturns(r: ReturnsReport): string {
     out.push('', `${title}: ${gs.length}`);
     gs.forEach((g, i) => {
       out.push(`  ${i + 1}. ${g.name}  action=${g.action}${g.rescueBranch ? ` rescue=${g.rescueBranch}` : ''}${g.foreign ? ` foreign=${g.foreign}` : ''}${g.branchExists ? '' : ' (no local branch)'}`);
+      if (g.action !== 'none') out.push(`       (${ACTION_MEANING[g.action].en})`);
       for (const c of g.commits) out.push(`       ${c.sha.slice(0, 9)} ${c.state.padEnd(11)} ${c.subject}${c.via ? `  [${c.via.kind}${c.via.pr ? ` #${c.via.pr}` : ''} by ${c.via.how}]` : ''}${c.note ? `  (${c.note})` : ''}`);
       for (const cmd of g.commands) out.push(`       $ ${cmd}`);
     });
