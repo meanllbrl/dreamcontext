@@ -243,6 +243,17 @@ export interface HubDeps {
 }
 
 export type BindingKey = string; // `${scope}/${target}`
+
+/** Why an edit of the bot's own message failed. `gone`: Telegram says the message is not there or
+ *  can no longer be edited, the only case a copy may be replaced. Anything else (a flood limit, a
+ *  timeout, a 5xx) passes: try again later, never send a second copy. */
+export type EditFailure = { gone: true } | { gone: false; why: string; retryAfterS?: number };
+export function editFailureOf(err: unknown): EditFailure {
+  const why = String((err as Error)?.message ?? err ?? 'unknown').replace(/\s+/g, ' ').slice(0, 200);
+  if (/message to edit not found|message can'?t be edited|MESSAGE_ID_INVALID|message not found/i.test(why)) return { gone: true };
+  const retry = (err as { retryAfter?: unknown })?.retryAfter;
+  return { gone: false, why, ...(typeof retry === 'number' && retry > 0 ? { retryAfterS: retry } : {}) };
+}
 export const keyOf = (scope: TelegramScope, target: TelegramTarget): BindingKey => `${scope}/${target}`;
 
 export interface ActiveBinding {
@@ -2354,11 +2365,18 @@ export class TelegramHub implements TelegramHubApi {
    *  records it had die, a FRESH one is bound to it (hub-edited, so the tap check accepts the
    *  edit). False when Telegram refuses the edit; the old buttons then stay as they were. */
   async editButtons(ab: ActiveBinding, messageId: number, html: string, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<boolean> {
+    return (await this.rebindButtons(ab, messageId, html, labels, rec, data)) === true;
+  }
+
+  /** {@link editButtons}, saying WHY a refused edit failed (a card's copy taken back after a
+   *  restart, asks.ts: only a message that is gone may be replaced; a passing failure retries). */
+  async rebindButtons(ab: ActiveBinding, messageId: number, html: string, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<true | EditFailure> {
     const id = randomBytes(8).toString('hex');
     let idx = 0;
     const keyboard = labels.map((row) => row.map((label) => ({ text: label, callback_data: `a:${id}:${idx++}` })));
-    const edited = await ab.transport.editMessageText(ab.binding.chatId, messageId, html, { reply_markup: { inline_keyboard: keyboard } }).catch(() => null);
-    if (edited === null) return false;
+    let failed = null as EditFailure | null;
+    const edited = await ab.transport.editMessageText(ab.binding.chatId, messageId, html, { reply_markup: { inline_keyboard: keyboard } }).catch((err) => { failed = editFailureOf(err); return null; });
+    if (edited === null) return failed ?? { gone: false, why: 'refused' };
     const plain = html.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
     const text = typeof (edited as Obj | undefined)?.text === 'string' ? String((edited as Obj).text) : plain;
     for (const b of [...this.buttons.values()]) if (b.key === ab.key && b.messageId === messageId) this.buttons.delete(b.id);
@@ -2372,8 +2390,16 @@ export class TelegramHub implements TelegramHubApi {
   /** The question on this message was answered elsewhere: its text says so and its buttons go
    *  (an edit with no reply_markup removes the keyboard; every record bound to it dies). */
   async closeAnswered(ab: ActiveBinding, messageId: number, html: string): Promise<boolean> {
+    return (await this.closeEdit(ab, messageId, html)) === true;
+  }
+
+  /** {@link closeAnswered}, saying why it failed. A message already showing exactly this text
+   *  counts as closed. */
+  async closeEdit(ab: ActiveBinding, messageId: number, html: string): Promise<true | EditFailure> {
     for (const b of [...this.buttons.values()]) if (b.key === ab.key && b.messageId === messageId) this.buttons.delete(b.id);
-    return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => true, () => false);
+    return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => true as const, (err) => {
+      return /message is not modified/i.test(String((err as Error)?.message ?? '')) ? true as const : editFailureOf(err);
+    });
   }
 
   /** A message of the hub's gone from the chat (an old copy of a card sent again below), its

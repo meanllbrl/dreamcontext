@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
@@ -32,6 +33,8 @@ const CHILD = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(80, 7)]);
 let vault: string; let home: string; let project: string; let root: string; let tg: FakeTelegram; let hub: TelegramHub; let unwire: Array<() => void>;
 let away = true;
+/** Hands-free streaming to this chat: an ask's --show cards go with it (rich-asks.ts N3). */
+let streams = false;
 /** The Mac window's renderer: on (a PNG) or off (no window). */
 let windowDraws = true;
 /** The headless renderer (page-shot.ts), faked: what it returns. */
@@ -80,9 +83,9 @@ beforeEach(async () => {
   mkdirSync(join(home, '.dreamcontext'), { recursive: true });
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: vault, path: project }] }));
   reg._resetChatRegistry(); resetWindowControl(); _resetTelegramAsks(); _resetOwnerQuestions();
-  away = true; windowDraws = true; shot = null;
+  away = true; streams = false; windowDraws = true; shot = null;
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => away } });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => streams, isOn: () => away } });
   unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, { settleMs: 5, shoot: async () => shot })];
   await hub.start();
   const start = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: 'super', token: TOKEN, projectName: vault, contextRoot: root });
@@ -472,6 +475,116 @@ describe('a card buried under a later turn comes back to the bottom (owner 2026-
     expect(tg.sent('deleteMessage').some((c) => c.params.message_id === old.result!.message_id)).toBe(false);
   });
 
+  it("owner 2026-11-22: a card with its --show stage card and two drawings, buried by two later turns: the stage card and the drawings reach the chat once", async () => {
+    streams = true;
+    const h = superChat();
+    // A git project (the outbound classifier reads git's ignore rules); the stage card the ask shows.
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    writeFileSync(join(project, 'sol-panel.png'), PNG);
+    const containers = [{ id: 'c1', kind: 'image', ref: 'sol-panel.png', title: 'Sol panel maketi', place: 'stage', createdAt: 1 }];
+    const ask = { title: 'Sol panel → hangi davranış', questions: [{ question: 'Sol panelde hangisi yapılsın?', header: 'Sol panel', multiSelect: false,
+      options: [{ label: 'Tek açık proje', preview: '<div class="dc-card">A</div>' }, { label: 'Birden çok proje açık', preview: '<div class="dc-card">B</div>' }] },
+      // A second question keeps every copy on the rich path (one question with bare labels is a simple card).
+      { question: 'Chat de aynı mı olsun?', header: 'Chat', multiSelect: false, options: [{ label: 'Evet' }, { label: 'Hayır' }] }] };
+    await writeState({ queue: [{ id: 'ask-sp', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Sol panelde hangisi yapılsın?', ask }], containers, askShows: [{ item: 'ask-sp', cards: ['c1'], opened: [], via: 'show' }] });
+    await afterWrite();
+    const media = () => tg.calls.filter((c) => c.method === 'sendPhoto' || c.method === 'sendDocument' || c.method === 'sendMediaGroup');
+    const cards = () => withButton('Birden çok proje açık').filter((c) => c.result);
+    await vi.waitFor(() => expect(cards()).toHaveLength(1), { timeout: 5000 });
+    // First copy: the stage card and both drawings went (the owner must see them once).
+    const first = media().length;
+    expect(first).toBe(3);
+    for (let n = 1; n <= 2; n++) {
+      await quiet();
+      await telegramTurn(h, `durum ${n}?`, `Durum ${n}: sınav sürüyor.`);
+      await vi.waitFor(() => expect(cards()).toHaveLength(n + 1), { timeout: 3000 });
+      await quiet();
+    }
+    // Two Super turns later: not one picture or document more.
+    expect(media()).toHaveLength(first);
+  });
+
+  it('buried again and again, the card has ONE live copy: drawings and body go once, an earlier resend leaves the chat (owner 2026-11-19)', async () => {
+    const h = superChat();
+    // The owner's card: one question, two options, each with its drawing, and a long body.
+    const ask = { title: 'İlk açılış → Ekran 2 (klasör aç)', questions: [{ question: 'Ekran 2 hangisi olsun?', header: 'Ekran 2', description: 'Uzun gövde: neden bu ekran, ne değişir.', multiSelect: false,
+      options: [{ label: 'Klasör aç büyük', description: 'Bugünkü öneri.', preview: '<div class="dc-card">A</div>' }, { label: 'Son klasörler listesi', description: 'Daha az tık.', preview: '<div class="dc-card">B</div>' }] }] };
+    await writeState({ queue: [{ id: 'ask-e2', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Ekran 2 hangisi olsun?', ask }] });
+    await afterWrite();
+    const pictures = () => tg.calls.filter((c) => c.method === 'sendPhoto' || c.method === 'sendDocument' || c.method === 'sendMediaGroup');
+    const cards = () => withButton('Son klasörler listesi').filter((c) => c.result);
+    await vi.waitFor(() => expect(cards()).toHaveLength(1), { timeout: 5000 });
+    expect(pictures()).toHaveLength(2);
+    const first = cards()[0].result!.message_id;
+    for (let n = 1; n <= 3; n++) {
+      await quiet();
+      await telegramTurn(h, `durum ${n}?`, `Durum ${n}: bir soru kartı açık.`);
+      await vi.waitFor(() => expect(cards()).toHaveLength(n + 1), { timeout: 3000 });
+      await quiet();
+    }
+    // The drawings went once, with the first copy; the body (description, option notes) too.
+    expect(pictures()).toHaveLength(2);
+    const body = tg.sent('sendMessage').filter((c) => String(c.params.text).includes('Uzun gövde'));
+    expect(body).toHaveLength(1);
+    // Each copy sent again is short: the question and its buttons.
+    const again = cards().slice(1);
+    for (const c of again) {
+      expect(String(c.params.text)).toContain('Ekran 2 hangisi olsun?');
+      expect(String(c.params.text)).not.toContain('Bugünkü öneri');
+    }
+    // The first copy lost its buttons once and points down; every earlier resend left the chat.
+    const firstEdits = tg.sent('editMessageText').filter((c) => c.params.message_id === first);
+    expect(firstEdits).toHaveLength(1);
+    expect(String(firstEdits[0].params.text)).toMatch(/aşağıda yeniden soruldu/i);
+    expect(tg.sent('deleteMessage').map((c) => c.params.message_id)).toEqual(again.slice(0, -1).map((c) => c.result!.message_id));
+    // One copy answers: the newest. A tap on it is his answer.
+    const card = again[again.length - 1];
+    const kb = (card.params.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard.flat();
+    tg.push(TOKEN, { callback_query: { id: 'cbe', data: kb[1].callback_data, from: { id: OWNER }, message: { message_id: card.result!.message_id, chat: { id: OWNER, type: 'private' }, text: String(card.params.text).replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&') } } });
+    await vi.waitFor(() => expect(injected.some((t) => t.includes('"Ekran 2 hangisi olsun?"="Son klasörler listesi"'))).toBe(true), { timeout: 3000 });
+  });
+
+  it("a child's question the Super carried, buried twice: its drawing goes once, the resend is short, the earlier resend leaves", async () => {
+    const h = superChat();
+    childAsks();
+    await writeState({ queue: [{ ...childItem(), superAsked: true }] });
+    await afterWrite();
+    const pictures = () => tg.calls.filter((c) => c.method === 'sendPhoto' || c.method === 'sendDocument' || c.method === 'sendMediaGroup');
+    const cards = () => withButton('Gönder').filter((c) => c.result);
+    await vi.waitFor(() => expect(cards()).toHaveLength(1), { timeout: 5000 });
+    expect(pictures()).toHaveLength(1);
+    for (let n = 1; n <= 2; n++) {
+      await quiet();
+      await telegramTurn(h, `durum ${n}?`, `Durum ${n}: çocuğun sorusu açık.`);
+      await vi.waitFor(() => expect(cards()).toHaveLength(n + 1), { timeout: 3000 });
+      await quiet();
+    }
+    expect(pictures()).toHaveLength(1);
+    expect(tg.sent('sendMessage').filter((c) => String(c.params.text).includes('Taslak, son hali değil.'))).toHaveLength(1);
+    // The first resend (both its question messages) left the chat; the newest stays.
+    const deleted = tg.sent('deleteMessage').map((c) => c.params.message_id);
+    expect(deleted).toContain(cards()[1].result!.message_id);
+    expect(deleted).not.toContain(cards()[2].result!.message_id);
+  });
+
+  it('a resend Telegram will not delete becomes the one line, never a second live card', async () => {
+    const h = superChat();
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(live()).toHaveLength(1));
+    tg.failing.set('deleteMessage', 400);
+    for (let n = 1; n <= 2; n++) {
+      await quiet();
+      await telegramTurn(h, `durum ${n}?`, `Durum ${n}.`);
+      await vi.waitFor(() => expect(live()).toHaveLength(n + 1), { timeout: 3000 });
+      await quiet();
+    }
+    const middle = live()[1].result!.message_id;
+    const edit = tg.sent('editMessageText').find((c) => c.params.message_id === middle);
+    expect(String(edit?.params.text).replace(/<[^>]+>/g, '')).toBe('↓ Aşağıda yeniden soruldu.');
+    expect(edit?.params.reply_markup).toBeUndefined();
+  });
+
   it('the turn that asked it is not a later turn: its own line under the card sends nothing again', async () => {
     const h = superChat();
     await writeState({});
@@ -483,5 +596,123 @@ describe('a card buried under a later turn comes back to the bottom (owner 2026-
     await quiet(); await quiet();
     expect(live()).toHaveLength(1);
     expect(tg.sent('editMessageText')).toHaveLength(0);
+  });
+});
+describe('a server restart sends no open card again: its copy is kept on disk and taken back (owner 2026-11-19)', () => {
+  /** The server process ends and starts again: every in-memory map is gone, the disk stays. */
+  async function restart(): Promise<void> {
+    for (const u of unwire) u();
+    await hub.stop();
+    _resetTelegramAsks(); _resetOwnerQuestions();
+    // A new process has a new pid: the old one's token lock is stale, as after a real restart.
+    rmSync(join(home, '.dreamcontext', 'telegram', 'locks'), { recursive: true, force: true });
+    hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => away } });
+    unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, { settleMs: 5, shoot: async () => shot })];
+    await hub.start();
+    await vi.waitFor(() => expect(hub.active.size).toBe(1), { timeout: 5000 });
+    tg.calls.length = 0;
+  }
+  const kb = (c: { params: Record<string, unknown> }) => (c.params.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard.flat();
+  const plainOf = (html: unknown) => String(html).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+
+  it('an open card is not sent again: its buttons are bound again on the same message, and a tap on it answers', async () => {
+    const injected: string[] = [];
+    reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { injected.push(t); return { ok: true }; }, interrupt: () => {} });
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1));
+    const first = withButton('Yeşil')[0].result!.message_id;
+    expect(existsSync(join(root, 'state', '.super', 'telegram-copies.json'))).toBe(true);
+    await restart();
+    await afterWrite();
+    hub.flushAway();
+    hub.flushAway();
+    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === first && c.params.reply_markup)).toBe(true), { timeout: 3000 });
+    await quiet();
+    expect(tg.texts().filter((t) => t.includes('Hangi renk?'))).toHaveLength(0);
+    const edit = tg.sent('editMessageText').find((c) => c.params.message_id === first)!;
+    tg.push(TOKEN, { callback_query: { id: 'cbr', data: kb(edit)[1].callback_data, from: { id: OWNER }, message: { message_id: first, chat: { id: OWNER, type: 'private' }, text: plainOf(edit.params.text), edit_date: 2 } } });
+    await vi.waitFor(() => expect(injected.some((t) => t.includes('"Hangi renk?"="Yeşil"'))).toBe(true), { timeout: 3000 });
+    expect(readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8')).toMatch(/ask-1 ask kept after a restart/);
+  });
+
+  it("the owner's card with drawings: after a restart neither its pictures nor its body go again", async () => {
+    const ask = { title: 'İlk açılış → Ekran 2 (klasör aç)', questions: [{ question: 'Ekran 2 hangisi olsun?', description: 'Uzun gövde.', multiSelect: false,
+      options: [{ label: 'Klasör aç büyük', preview: '<div class="dc-card">A</div>' }, { label: 'Son klasörler listesi', preview: '<div class="dc-card">B</div>' }] }] };
+    await writeState({ queue: [{ id: 'ask-e2', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Ekran 2 hangisi olsun?', ask }] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Gönder').filter((c) => c.result)).toHaveLength(1), { timeout: 5000 });
+    const msg = withButton('Gönder')[0].result!.message_id;
+    await restart();
+    await afterWrite();
+    hub.flushAway();
+    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === msg && JSON.stringify(c.params.reply_markup ?? {}).includes('Gönder'))).toBe(true), { timeout: 3000 });
+    await quiet();
+    expect(tg.calls.filter((c) => c.method === 'sendPhoto' || c.method === 'sendDocument' || c.method === 'sendMediaGroup')).toHaveLength(0);
+    expect(tg.texts().filter((t) => t.includes('Ekran 2 hangisi olsun?'))).toHaveLength(0);
+  });
+
+  it('a passing failure (flood limit) while taking it back sends nothing; the next pass takes it back', async () => {
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1));
+    const first = withButton('Yeşil')[0].result!.message_id;
+    await restart();
+    tg.failing.set('editMessageText', 429);
+    await afterWrite();
+    hub.flushAway();
+    await vi.waitFor(() => expect(readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8')).toMatch(/ask-1 ask kept copy not taken back yet/), { timeout: 3000 });
+    await quiet();
+    expect(tg.texts()).toHaveLength(0);
+    expect(readFileSync(join(root, 'state', '.super', 'telegram-copies.json'), 'utf8')).toContain('"ask-1"');
+    tg.failing.delete('editMessageText');
+    hub.flushAway();
+    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === first && c.params.reply_markup && !tg.failing.has('editMessageText'))).toBe(true), { timeout: 3000 });
+    await vi.waitFor(() => expect(readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8')).toMatch(/ask-1 ask kept after a restart/), { timeout: 3000 });
+    expect(tg.texts().filter((t) => t.includes('Hangi renk?'))).toHaveLength(0);
+  });
+
+  it('a copy Telegram no longer has (he deleted it) is replaced: the card goes once as new', async () => {
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1));
+    await restart();
+    tg.failing.set('editMessageText', 400);
+    tg.failText.set('editMessageText', 'Bad Request: message to edit not found');
+    await afterWrite();
+    hub.flushAway();
+    await vi.waitFor(() => expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1), { timeout: 3000 });
+    await quiet(); await quiet();
+    expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1);
+    expect(readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8')).toMatch(/ask-1 ask kept copy is gone from the chat: sent as new/);
+  });
+
+  it("a child's permission still asked is taken back, never sent again", async () => {
+    const child = reg.registerChat({ sessionId: CHILD, conversationId: null, vault, mode: 'basic' });
+    await writeState({ queue: [{ id: 'perm-1', kind: 'permission', sessionId: CHILD, requestId: 'req-9', state: 'pending', createdAt: 1 }] });
+    child.observe({ type: 'control_request', request_id: 'req-9', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'npm publish' } } });
+    await vi.waitFor(() => expect(withButton('İzin ver (bir kez)').filter((c) => c.result)).toHaveLength(1), { timeout: 3000 });
+    const first = withButton('İzin ver (bir kez)')[0].result!.message_id;
+    await restart();
+    hub.flushAway();
+    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === first && JSON.stringify(c.params.reply_markup ?? {}).includes('İzin ver'))).toBe(true), { timeout: 3000 });
+    await quiet();
+    expect(tg.texts()).toHaveLength(0);
+    expect(tg.sent('editMessageText').some((c) => String(c.params.text).includes('Bu kart kapandı'))).toBe(false);
+  });
+
+  it('a card answered while the server was down says it closed, loses its buttons, and nothing is sent', async () => {
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1));
+    const first = withButton('Yeşil')[0].result!.message_id;
+    await restart();
+    await writeState({ queue: [] });
+    hub.flushAway();
+    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === first && String(c.params.text).includes('Bu kart kapandı'))).toBe(true), { timeout: 3000 });
+    expect(tg.sent('editMessageText').find((c) => c.params.message_id === first)?.params.reply_markup).toBeUndefined();
+    expect(tg.texts()).toHaveLength(0);
+    await vi.waitFor(() => expect(existsSync(join(root, 'state', '.super', 'telegram-copies.json'))).toBe(false));
   });
 });

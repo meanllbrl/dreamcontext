@@ -20,6 +20,8 @@ export class FakeTelegram {
   failing = new Map<string, number>();
   /** Methods that fail exactly once more each (method → error_code), then work. */
   failOnce = new Map<string, number>();
+  /** The description a `failing` method answers with (Telegram's own words), else 'failed'. */
+  failText = new Map<string, string>();
   /** The description a `failOnce` error carries (method → Telegram's words), default "failed once". */
   failOnceWhy = new Map<string, string>();
   /** File ids whose download is slow (ms). */
@@ -74,7 +76,7 @@ export class FakeTelegram {
     const bot = this.bots.get(token);
     if (!bot) return res(401, { ok: false, error_code: 401, description: 'Unauthorized' });
     const fail = this.failing.get(method);
-    if (fail) return res(fail, { ok: false, error_code: fail, description: 'failed' });
+    if (fail) return res(fail, { ok: false, error_code: fail, description: this.failText.get(method) ?? 'failed' });
     const once = this.failOnce.get(method);
     if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: this.failOnceWhy.get(method) ?? 'failed once' }); }
     switch (method) {
