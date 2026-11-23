@@ -117,3 +117,14 @@ describe('readFrontmatterText reads the head only', () => {
     expect(readTaskHead(ctx, 'rule.md')?.data).toEqual({ name: 'R' });
   });
 });
+
+describe('a scan never reads through a symlinked task folder', () => {
+  it('state/ as a symlink to a folder outside the brain reads nothing', () => {
+    const outside = join(root, 'elsewhere');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'stolen.md'), '---\nagent: thief\n---\n');
+    rmSync(join(ctx, 'state'), { recursive: true });
+    symlinkSync(outside, join(ctx, 'state'));
+    expect(readTaskHeads(ctx)).toEqual([]);
+  });
+});

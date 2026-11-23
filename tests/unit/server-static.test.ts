@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { serveStatic, cacheControlFor } from '../../src/server/static.js';
-import { resetRetainedAssetsForTests } from '../../src/server/retained-assets.js';
+import { resetRetainedAssetsForTests, retainedSettledForTests } from '../../src/server/retained-assets.js';
 
 let staticDir: string;
 
@@ -200,8 +200,8 @@ describe('serveStatic — chunks of a build a tab is still running', () => {
 
   it('still serves a lazy chunk the rebuild removed, once its index.html was handed out', async () => {
     expect(get('/', 'text/html').status).toBe(200);
-    // The snapshot runs right after the answer (the next turn of the loop).
-    await new Promise((r) => setImmediate(r));
+    // The snapshot's links are made off the thread, right after the answer.
+    await retainedSettledForTests();
 
     // The rebuild: remove-then-copy, new hashes.
     rmSync(join(dir, 'assets'), { recursive: true, force: true });

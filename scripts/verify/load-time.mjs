@@ -230,7 +230,7 @@ async function main() {
     const coldLong = await p.evaluate(() => Math.round(window.__long));
     const got = p.getByRole('button', { name: 'Got it' });
     if (await got.isVisible().catch(() => false)) await got.click();
-    report.cold.push({ round, serverUp, serverCpu: coldCpu, pageLong: coldLong, rail, chat, quiet: Math.round(quietAt), requests: reqs.length, kb: reqs.reduce((s, r) => s + r.kb, 0), top: top(reqs, 0, chat ?? quietAt, 20) });
+    report.cold.push({ round, serverUp, serverCpu: coldCpu, pageLong: coldLong, rail, chat, quiet: Math.round(quietAt), requests: reqs.length, kb: reqs.reduce((s, r) => s + r.kb, 0), top: top(reqs, 0, chat ?? quietAt, 20), waterfall: reqs.map((r) => [Math.round(r.start), r.ms, r.kb, r.path]) });
     if (flag('shots') && round === ROUNDS - 1) await p.screenshot({ path: join(OUT, `${TAG}-cold-${WIDTH}.png`) });
     if (flag('cold-only')) {
       await ctx.close();

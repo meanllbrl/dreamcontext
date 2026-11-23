@@ -1,4 +1,4 @@
-import { closeSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 import { safeVaultPath } from './vault-read.js';
@@ -63,6 +63,17 @@ export function readFrontmatterText(abs: string): string {
   }
 }
 
+/** `state/` is a real folder reached without a symlink and resolving inside the brain. */
+function stateFolderSafe(contextRoot: string): boolean {
+  try {
+    if (!lstatSync(join(contextRoot, 'state')).isDirectory()) return false;
+    const real = realpathSync(contextRoot);
+    return realpathSync(join(contextRoot, 'state')) === join(real, 'state');
+  } catch {
+    return false;
+  }
+}
+
 function stampOf(abs: string): string | null {
   try {
     const st = lstatSync(abs);
@@ -73,8 +84,10 @@ function stampOf(abs: string): string | null {
   }
 }
 
-/** One task file's head, by its stamp. Null: missing, a symlink, not a file, outside the brain. */
-export function readTaskHead(contextRoot: string, fileName: string): TaskHead | null {
+/** One task file's head, by its stamp. Null: missing, a symlink, not a file, outside the brain.
+ *  `stateChecked`: the caller proved `state/` itself is a real folder inside the brain (a scan
+ *  does it once), so a file in it that `lstat` calls a regular file is safe to read. */
+export function readTaskHead(contextRoot: string, fileName: string, stateChecked = false): TaskHead | null {
   const abs = join(contextRoot, 'state', fileName);
   const stamp = stampOf(abs);
   if (stamp === null) {
@@ -83,7 +96,7 @@ export function readTaskHead(contextRoot: string, fileName: string): TaskHead | 
   }
   const hit = memo.get(abs);
   if (hit && hit.stamp === stamp) return hit.head;
-  const safe = safeVaultPath(contextRoot, join('state', fileName));
+  const safe = stateChecked ? abs : safeVaultPath(contextRoot, join('state', fileName));
   let raw: string | null = null;
   try {
     raw = safe ? readFrontmatterText(safe) : null;
@@ -122,9 +135,12 @@ export function readTaskHeads(contextRoot: string): TaskHead[] {
   } catch {
     return [];
   }
+  // The folder is proved once (a real folder, reached without a symlink, inside the brain): then
+  // each file needs only its own lstat, not a realpath walk of its own (most of a first scan).
+  const stateChecked = stateFolderSafe(contextRoot);
   const out: TaskHead[] = [];
   for (const name of names) {
-    const head = readTaskHead(contextRoot, name);
+    const head = readTaskHead(contextRoot, name, stateChecked);
     if (head) out.push(head);
   }
   return out;
