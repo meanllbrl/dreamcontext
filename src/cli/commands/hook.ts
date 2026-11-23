@@ -1,7 +1,7 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
 import { readIndexStop } from '../../lib/embeddings/index-stop.js';
 import { logHandoff } from '../../lib/usage-records.js';
-import { browserAny, ciWaitAny, ciWatchIn, directHeavy, heavySuggestion } from '../../lib/run-budget.js';
+import { browserAny, ciWaitAny, ciWatchIn, directHeavy, heavyRefusalLead, heavySuggestion } from '../../lib/run-budget.js';
 import { suiteRedOpen } from '../../lib/suite-record.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
@@ -3593,7 +3593,7 @@ export function registerHookCommand(program: Command): void {
             hookEventName: 'PreToolUse',
             permissionDecision: 'deny',
             permissionDecisionReason: [
-              `Not run: this is a heavy step (${kind}), and those go through the lock and the repeat limit.`,
+              heavyRefusalLead(command, kind ?? 'check', suggested),
               `Run it as: ${suggested}`,
               'A check that already passed on the same code prints its receipt instead of running (--fresh runs it anyway).',
               kind === 'suite'

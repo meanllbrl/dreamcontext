@@ -431,6 +431,11 @@ export function browserAny(command: string, cwd?: string): boolean {
 /** POSIX single quotes, the only form that keeps text inert when pasted back into a shell. */
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
+/** Any command that changes the working folder, in any position or spelling. */
+const CHDIR = /(?:^|[^\w./-])(?:cd|chdir|pushd|popd)(?![\w./-])/;
+/** Quotes and backslashes removed first: `c''d`, `c\d`, `"c"d` are all `cd` to the shell. */
+const changesFolder = (text: string): boolean => CHDIR.test(text) || CHDIR.test(text.replace(/['"\\]/g, ''));
+
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
  * hides the check's exit code, so that run could never keep a receipt (lib/check-receipt.ts):
@@ -442,9 +447,14 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
   const segments = shellSegments(command);
   const suite = segments.find((seg) => stepOfSegment(seg, {})?.kind === 'suite' && !stepOfSegment(seg, {})?.partial);
   if (suite) {
+    // The leading `cd <bare dir> &&` is where the suite runs: kept. ANY other folder change (mid-chain, `;`,
+    // quoted or computed folder, `{ cd }`, pushd/popd, `builtin cd`) cannot be kept in the suite form, and a
+    // red record belongs to the session folder: dropping it would run the suite in the wrong folder, so the
+    // form quotes the whole command instead. Over-matching (a `cd` word inside an argument) is safe: the whole form.
+    const cd = /^\s*(cd\s+[^\s'"$`;&|(){}\\]+)\s*&&/.exec(command)?.[1];
+    const rest = cd ? command.replace(/^\s*cd\s+[^\s'"$`;&|(){}\\]+\s*&&/, '') : command;
+    if (changesFolder(rest) || (ctx.redOpen && cd)) return `dreamcontext builder heavy -- ${shellQuote(command)}`;
     if (ctx.redOpen) return 'dreamcontext builder test --failed';
-    // A leading `cd <dir> &&` is where the suite runs: kept. A build in the chain runs first, alone.
-    const cd = /^\s*(cd\s+\S+)\s*&&/.exec(command)?.[1];
     const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
     const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
     const first = build ? `dreamcontext builder heavy -- ${shellQuote(`${cd ? `${cd} && ` : ''}${build}`)}, then ` : '';
@@ -455,6 +465,35 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
     return `dreamcontext builder heavy --tail ${tailed[2]} -- ${shellQuote(tailed[1].replace(/\s+2>&1$/, ''))}`;
   }
   return `dreamcontext builder heavy -- ${shellQuote(command)}`;
+}
+
+/**
+ * The first lines of a heavy-step refusal. The hook refuses the WHOLE command, never a part of
+ * it: a compound `append to file && npm test` writes nothing, and an agent that only reads
+ * "heavy step refused" can believe the first half ran (Eco benchmark pilot). So it says plainly
+ * that nothing ran, names the heavy part, and, when the command had other parts, says they did
+ * not run either and must be run on their own first (the suite form runs the suite alone).
+ */
+export function heavyRefusalLead(command: string, kind: HeavyKind, suggestion: string): string {
+  const segments = shellSegments(command);
+  const named = segments.find((seg) => stepOfSegment(seg, {})?.kind === kind) ?? segments.find((seg) => stepOfSegment(seg, {}) !== null) ?? command.trim();
+  const clip = (t: string, n = 80): string => (t.length > n ? `${t.slice(0, n - 3)}...` : t);
+  const lines = [
+    segments.length > 1
+      ? 'NOT RUN: NO part of this command ran: the whole command was refused, so nothing it writes or changes exists yet.'
+      : 'NOT RUN: nothing ran: the whole command was refused.',
+    `The heavy part is \`${clip(named)}\` (${kind}); heavy steps go through the lock and the repeat limit.`,
+  ];
+  if (segments.length > 1 || /\n/.test(command)) {
+    // Never classify the other parts (before or after, `&&` or `||`, a heredoc body, a `tee`):
+    // each guess was wrong for some real command. Either the form quotes the whole command, or
+    // the agent gets its own command back and re-issues what the form does not run.
+    const whole = suggestion.replace(/'\\''/g, "'").includes(command.trim());
+    lines.push(whole
+      ? 'The heavy form below runs the whole command, every part, so run it once and do not repeat any part yourself.'
+      : `Read the heavy form below: whatever it shows (a leading cd, a --tail, a build before a suite, the suite itself) it runs for you, so never repeat that. Anything in your command that it does NOT show did not run and never will unless you run it yourself, keeping the same order and conditions (&&, ||, ;). A cd the form shows applies only inside the form: a part you re-issue must run in that same folder yourself, e.g. (cd <dir> && <part>). Your command was: ${clip(command.trim(), 400)} [end of your command].`);
+  }
+  return lines.join(' ');
 }
 
 /** This repo's package.json scripts; none when it cannot be read. */
