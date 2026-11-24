@@ -271,6 +271,38 @@ function ClaudeVersionRow({ caps }: { caps: Capabilities }) {
   );
 }
 
+/**
+ * Full Disk Access, the macOS grant that stops "would like to access data from other apps".
+ * macOS does not keep the Allow of that dialog for the app's children (src/lib/full-disk-access.ts);
+ * this grant is kept, across updates and restarts. The app only reads it and opens the pane.
+ */
+function FullDiskAccessRow({ caps }: { caps: Capabilities }) {
+  const { t } = useI18n();
+  const api = useApi();
+  const [failed, setFailed] = useState(false);
+  const [opening, setOpening] = useState(false);
+  if (caps.fullDiskAccess === undefined || caps.fullDiskAccess === null) return null;
+  const on = caps.fullDiskAccess;
+  const open = async () => {
+    setFailed(false);
+    setOpening(true);
+    try { await api.post('/agent/open-full-disk-access', {}); } catch { setFailed(true); } finally { setOpening(false); }
+  };
+
+  return (
+    <div className="sysdep-row">
+      <span className={`sysdep-dot${on ? ' sysdep-dot--ok' : ' sysdep-dot--warn'}`} aria-hidden="true" />
+      <span className="sysdep-name">{t('system.fda.title')}</span>
+      <span className={`sysdep-status${on ? ' sysdep-status--ok' : ' sysdep-status--missing'}`}>
+        {on ? t('system.fda.on') : t('system.fda.off')}
+      </span>
+      {!on && <button className="btn btn--primary btn--sm" onClick={open} disabled={opening}>{t('system.fda.open')}</button>}
+      {!on && <p className="sysdep-note">{t('system.fda.desc')}</p>}
+      {!on && failed && <p className="sysdep-error">{t('system.fda.openFailed')}</p>}
+    </div>
+  );
+}
+
 /** Which features need this dependency (desktop-only ones only count on desktop). */
 function featuresNeeding(dep: DepKey, caps: Capabilities): FeatureMeta[] {
   return FEATURES.filter((f) => f.deps.includes(dep) && (!f.desktopOnly || caps.desktop));
@@ -352,6 +384,7 @@ export function SystemDependencies() {
     <div className="sysdep">
       {npmNeeded && <p className="sysdep-npm-warn">{t('system.dep.npmMissing')}</p>}
       <ClaudeAccountRow caps={caps} />
+      <FullDiskAccessRow caps={caps} />
       {depKeys.map((d) => (
         <div key={d} className="sysdep-item">
           <DepRow dep={DEPS[d]} caps={caps} />
