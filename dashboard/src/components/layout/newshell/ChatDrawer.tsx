@@ -337,7 +337,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 title={words ? `${row.name} (${words})` : undefined}
                 onClick={(e) => { if (justDragged.current) return; if (accordion) headerPress(row, e.currentTarget); else p.onToggleExpanded(row.name); }}
                 onKeyDown={(e) => headerKey(e, row, row.expanded)}>
-                {accordion && <Chevron open={row.expanded} />}
+                {(accordion || (!!sb && !p.device && mode === 'chat')) && <Chevron open={row.expanded} />}
                 <span className="ns-dr-pic">
                   {row.logo
                     ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
@@ -376,9 +376,9 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const sb = p.sidebar;
   const mode: SidebarMode = sb?.mode ?? 'chat';
   const navMode = !!sb && mode !== 'chat';
-  /** Chat and Whiteboards on the desktop sidebar: one project open (wb-sol-panel). A folded
+  /** Whiteboards on the desktop sidebar: one project open (wb-sol-panel; Chat keeps its own, owner 2026-11-24). A folded
    *  header enters its project; the open project's header only folds and unfolds. */
-  const accordion = !!sb && !p.device && !!p.onEnterProject && (mode === 'chat' || mode === 'boards');
+  const accordion = !!sb && !p.device && !!p.onEnterProject && mode === 'boards';
   /** A header press under the accordion: the project on screen folds or unfolds, any other is entered. */
   const headerPress = (row: DrawerProjectRow, el: Element) => {
     if (row.active) {
