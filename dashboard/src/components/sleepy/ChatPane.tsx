@@ -3404,7 +3404,11 @@ export function ChatPane({
                 onOpenFile={handleOpenFile}
               />
             )}
-            {isEmpty && !bare && <EmptyState hero={emptyHero} onChip={readOnly ? undefined : (text) => { session.send(text); }} />}
+            {/* A new chat whose first message waits for the socket (the Chat page's landing hands
+                it over as a held row, hidden until it goes): "Starting", never "say something". */}
+            {isEmpty && !bare && (conv.queued.some((q) => q.resubmit)
+              ? <WorkingIndicator label={session.tool === 'codex' ? 'Starting Codex…' : session.tool === 'antigravity' ? 'Starting Antigravity…' : 'Starting Claude…'} />
+              : <EmptyState hero={emptyHero} onChip={readOnly ? undefined : (text) => { session.send(text); }} />)}
             {/* An agenda row with nothing linked to it (D5): said, with the way back. */}
             {thread?.empty && threadSid && <SuperThreadEmpty onBack={() => clearThreadFilter(threadSid, 'user')} />}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does

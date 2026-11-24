@@ -34,6 +34,8 @@ export interface EmptyHero {
   chips?: readonly string[];
   /** Replaces the ">_" mark. */
   mark?: ReactNode;
+  /** Quiet secondary ways in, under the chips (the Chat page's landing: terminal, past chats). */
+  more?: ReactNode;
 }
 
 export function EmptyState({ hero, onChip }: { hero?: EmptyHero; onChip?: (text: string) => void } = {}) {
@@ -51,6 +53,7 @@ export function EmptyState({ hero, onChip }: { hero?: EmptyHero; onChip?: (text:
           ))}
         </div>
       )}
+      {hero?.more && <div className="chat-banner-more">{hero.more}</div>}
     </div>
   );
 }

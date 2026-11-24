@@ -2256,3 +2256,7 @@
   padding: 1px 5px;
 }
 .agent-model-row.on .agent-model-row-tag { margin-left: 8px; }
+
+/* The Chat page's landing (ChatLanding): its process-less pane fills the surface like a tab's. */
+.agent-chat-landing { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: 100%; }
+.agent-chat-landing > .agent-pane-chat { flex: 1 1 auto; min-height: 0; }

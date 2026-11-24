@@ -336,6 +336,21 @@
 .chat-banner-chip:hover { border-color: var(--color-border-hover); }
 .chat-banner-chip:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .chat-banner-chip:disabled { opacity: 0.6; cursor: default; }
+/* The Chat page's landing: the old screen's other ways in, one quiet row under the chips. */
+.chat-banner-more { display: flex; flex-direction: column; align-items: center; gap: var(--space-3, 12px); margin-top: var(--space-6, 24px); }
+.chat-banner-more-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1, 4px); }
+.chat-banner-more-btn {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+}
+.chat-banner-more-btn:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+.chat-banner-more-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 /* The first-read offer in the hero's sub-line (C17): the line, the Start reading pill, and one
    short reason line under them when a start was refused. */
 .chat-banner-first-read {
