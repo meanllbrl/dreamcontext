@@ -367,6 +367,15 @@ const SERVER_LINE_RE = /If you start a dev server, pin its url \(a `dream-view` 
  * p50 5 s, p90 35 s, and some hit the hook's 120 s cutoff with nothing delivered.
  */
 const MACHINE_BLOCK_RE = /<task-notification>[\s\S]*?(?:<\/task-notification>|$)|<voice-take\b[^>\n]{0,300}>|<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)|(?:Another Claude session sent a message:\s*)?<agent-message\b[\s\S]*?(?:<\/agent-message>|$)|That "other Claude session" is an agent[^\n]*/g;
+/**
+ * The labels Telegram's inbound text gives the message he replied to or quoted (telegram/inbound.ts
+ * `inboundTurnText`, MIRRORED there, drift test in prompt-hook-diet.test.ts). That text is the
+ * Super's own earlier message, as JSON-quoted data: searching on it sent recall after the reply's
+ * subject instead of his words (a two-word "yes, go" searched on ~500 chars of the Super's report).
+ * A forwarded message and a caption stay: those are what he brings.
+ */
+export const TELEGRAM_QUOTED_LABELS = ['Yanıtlanan mesaj', 'Alıntı', 'Başka sohbetten yanıt'] as const;
+const TELEGRAM_QUOTED_RE = new RegExp(`(^|\\n)(?:${TELEGRAM_QUOTED_LABELS.join('|')}): "(?:[^"\\\\\\n]|\\\\.)*"`, 'g');
 /** The dock's page header (`[On page tasks view="…"]`): where he stood, not what he asked. */
 const PAGE_HEADER_RE = /\[On page [^\]\n]*\]/g;
 /** An absolute or home path: a file name the turn carries, not a word he searched for. */
@@ -382,7 +391,7 @@ const ABS_PATH_RE = /(^|[\s(`'"[])~?\/(?:[^\s/`'")\]]+\/)*[^\s`'")\]]*/g;
 export function promptOwnerText(prompt: string): string | null {
   const words = ownerWords(prompt);
   if (words === null) return null;
-  const text = words.replace(MACHINE_BLOCK_RE, ' ').replace(SERVER_LINE_RE, '').replace(PAGE_HEADER_RE, ' ').trim();
+  const text = words.replace(MACHINE_BLOCK_RE, ' ').replace(SERVER_LINE_RE, '').replace(PAGE_HEADER_RE, ' ').replace(TELEGRAM_QUOTED_RE, '$1').trim();
   return text.length > 0 ? text : null;
 }
 

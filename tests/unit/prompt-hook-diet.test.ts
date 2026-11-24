@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RELAUNCH_FIRST_LEAD, RELAUNCH_PREFIX, promptOwnerText, recallQuery } from '../../src/lib/agents/team-roster.js';
+import { RELAUNCH_FIRST_LEAD, RELAUNCH_PREFIX, TELEGRAM_QUOTED_LABELS, promptOwnerText, recallQuery } from '../../src/lib/agents/team-roster.js';
 import { FIRST_PROMPT_LEAD, REASK_TEXT, RESUME_TEXT } from '../../src/lib/super/outbox.js';
+import { inboundTurnText } from '../../src/lib/telegram/inbound.js';
+import { readFileSync } from 'node:fs';
 import { firstInSession, resetSessionOnce } from '../../src/lib/hook-delivery.js';
 import {
   CONTEXT_GATE_REMINDER, PATTERN_BANNER_REMINDER, SUBAGENT_DISPATCH_REMINDER, hitSize, peerNamed, renderRecallBlock,
@@ -68,6 +70,28 @@ describe('recallQuery: the owner words, nothing a machine wrote (MM-1)', () => {
     expect(recallQuery('/Users/me/projects/app/src/index.ts')).toBeNull();
     expect(recallQuery('ok')).toBeNull();
     expect(recallQuery('[On page tasks]')).toBeNull();
+  });
+
+  it('a Telegram reply searches on his words, not the Super message it replies to', () => {
+    const superMsg = 'Kestrel build is ready. Should the Lumen voiceover be generated now? About 400 credits.\nSay go or wait.';
+    const turn = inboundTurnText({ text: 'go, with music', reply_to_message: { text: superMsg } });
+    expect(turn).toContain('Yanıtlanan mesaj: "');
+    expect(recallQuery(turn)).toBe('go, with music');
+    const quoted = inboundTurnText({ text: 'fix this line please', quote: { text: 'Lumen voiceover is 400 credits' } });
+    expect(recallQuery(quoted)).toBe('fix this line please');
+    // The header form the hub adds in front keeps working.
+    const withHeader = `[Reply to message ref=abc123 from=super]\nquote: "Kestrel build is ready."\n\n${turn}`;
+    expect(recallQuery(withHeader)).toBe('go, with music');
+  });
+
+  it('a forwarded Telegram message is what he brings: it stays searchable', () => {
+    const fwd = inboundTurnText({ text: 'Lumen invoice for March is overdue', forward_origin: { type: 'user', sender_user_name: 'Mira' } });
+    expect(recallQuery(fwd)).toContain('Lumen invoice for March is overdue');
+  });
+
+  it('the quoted-data labels mirror telegram/inbound.ts', () => {
+    const src = readFileSync(new URL('../../src/lib/telegram/inbound.ts', import.meta.url), 'utf8');
+    for (const label of TELEGRAM_QUOTED_LABELS) expect(src).toContain(`quotedData('${label}'`);
   });
 
   it('a plain owner prompt passes through, whitespace folded', () => {
