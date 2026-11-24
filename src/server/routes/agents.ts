@@ -922,14 +922,14 @@ export async function handleAgentsAmendmentRevert(
 
 /** GET /api/agents/:slug/photo — through `resolveMemberPhoto` (a global agent's from its home), or 404. */
 export async function handleAgentsPhotoGet(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
   try {
     const agent = isSafeAutomationSlug(params.slug) ? getAgent(contextRoot, params.slug) : null;
-    sendPhotoFile(res, agent ? resolveMemberPhoto(contextRoot, agent.slug, agent.photo) : null);
+    sendPhotoFile(res, agent ? resolveMemberPhoto(contextRoot, agent.slug, agent.photo) : null, req);
   } catch {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
   }

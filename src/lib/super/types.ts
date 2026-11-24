@@ -824,6 +824,9 @@ export interface SuperChild {
   mode?: string;
   model?: string;
   effort?: string;
+  /** Eco Plus lowered its model at spawn (plan eco-plus K3, Measurement): the quality study
+   *  splits children on this, not on the setting. */
+  lowered?: boolean;
   /** The MCP servers it was started with (`delegate --mcp`, plan r5 D14): a delegated child
    *  runs lean, with only these; Resume keeps the same set. */
   mcp?: string[];

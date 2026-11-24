@@ -6,6 +6,8 @@ import { RequestError } from '../api/client';
 import { phoneAllows } from '../lib/phoneSurface';
 import { pollMs } from '../lib/windowActivity';
 import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
+import { bumpPhotoEpoch } from '../components/agents/photoEpoch';
+import { shrinkPhoto } from '../lib/shrinkPhoto';
 
 /**
  * Automations — the dashboard's read + "run now" + approve surface over
@@ -705,8 +707,9 @@ export function useUploadAgentPhoto() {
   const api = useApi();
   return useMutation({
     mutationFn: ({ slug, bytes }: { slug: string; bytes: Blob }) =>
-      api.postBytes<{ automation: AutomationSummary }>(`/automations/${slug}/photo`, bytes).then((r) => r.automation),
+      shrinkPhoto(bytes).then((small) => api.postBytes<{ automation: AutomationSummary }>(`/automations/${slug}/photo`, small)).then((r) => r.automation),
     onSuccess: (_data, { slug }) => {
+      bumpPhotoEpoch();
       queryClient.invalidateQueries({ queryKey: ['automations'] });
       queryClient.invalidateQueries({ queryKey: ['automations', slug] });
       // The photo lands on the agent the automation runs as.

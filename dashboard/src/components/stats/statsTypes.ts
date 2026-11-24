@@ -24,6 +24,10 @@ export interface ProjectRow {
   estSaved: { tokens: number; cost: number }; estNet: { tokens: number; cost: number };
 }
 export interface EcoRow { project: string; title: string; at: number; kind: 'eco' | 'fresh'; before: number; after: number | null; turns: number; estSaved: number; estSavedCost: number }
+export interface EcoPlusRow {
+  on: boolean; since: number | null; days: number; before: number | null; during: number | null;
+  short: boolean; estShifted: number | null; estSavedCost: number | null;
+}
 export interface ToolWindow { id: string; kind: string; label: string; usedPercent: number; resetsAt: number | null; durationMins: number | null; estSleepPercent: number | null }
 export interface ToolAccount { id: string; label: string; plan: string; fetchedAt: number | null; windows: ToolWindow[]; signedIn: boolean }
 export interface ToolLimits { id: 'claude' | 'codex'; name: string; accounts: ToolAccount[] }
@@ -45,6 +49,8 @@ export interface StatsWire {
     sleep: { tokens: number; cost: number; runs: SleepRun[]; vaults: SpendRow[]; specialists: SleepSpecialist[]; configured: Record<string, { model?: string; effort?: string }>; firstRecord: string | null };
     estWeekShare: number | null;
     eco: { rows: EcoRow[]; estSaved: number; estSavedCost: number; turns: number; avgBefore: number; avgAfter: number };
+    /** Optional: a server from before Eco Plus sends none. */
+    ecoPlus?: EcoPlusRow | null;
     memory: { first: number; carried: number; starts: number; messages: number; inputShare: number };
     answer: LimitAnswer;
     projects: ProjectRow[];

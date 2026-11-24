@@ -1,0 +1,3 @@
+Plan, do not build: in June a second pantry site opens on Birch Street. Stock will live per site, volunteers move stock between sites, a household's parcel comes from its home site, and the weekly report is per site.
+
+Write the plan into a dreamcontext task: `dreamcontext tasks create` it, then insert the acceptance criteria (each one testable) and a wave map (which files change in which wave, what each wave proves) with `dreamcontext tasks insert`. Use what the project's brain already knows about storage, the parcel rules and the people involved. Then have the plan checked once by the `goal-plan-reviewer` sub-agent and fix what it finds. Do not write any code.
