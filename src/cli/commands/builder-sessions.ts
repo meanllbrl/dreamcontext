@@ -1,3 +1,4 @@
+import { ecoPlusInEffect } from '../../lib/context-watch.js';
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +9,8 @@ import {
   BASE_ID,
   BASE_TOKEN_CAP,
   BUILDER_DEFAULT_EFFORT,
-  BUILDER_DEFAULT_MODEL,
+  builderLineageModel,
+  builderRunModel,
   BUILDER_EFFORTS,
   BuilderInputError,
   NEEDS_ATTENTION,
@@ -443,6 +445,7 @@ export async function builderBase(
     await withRegistry(root, slug, (reg) => {
       const b = reg.base!;
       const offset = fileSize(log);
+      b.model = builderRunModel(b.model, deps.env);
       const argv = builderArgv(delta, { kind: 'resume', sessionId: b.sid }, { model: b.model, effort: b.effort });
       b.pid = deps.launch(argv, { cwd: root, env: builderEnv(deps.env, b.cfg), logFile: log });
       Object.assign(b, { state: 'updating', round: b.round + 1, logOffset: offset, startedAt: new Date(deps.now()).toISOString() });
@@ -468,10 +471,11 @@ export async function builderBase(
   const cfg = rawConfigDir(deps.env);
   await withRegistry(root, slug, (reg) => {
     const offset = fileSize(log);
-    const argv = builderArgv(`${BASE_FRAMING(slug)}\n\n${prompt}`, { kind: 'new', sessionId: sid }, { model: BUILDER_DEFAULT_MODEL, effort });
+    const model = builderLineageModel(ecoPlusInEffect(undefined, deps.env));
+    const argv = builderArgv(`${BASE_FRAMING(slug)}\n\n${prompt}`, { kind: 'new', sessionId: sid }, { model, effort });
     const pid = deps.launch(argv, { cwd: root, env: builderEnv(deps.env, cfg), logFile: log });
     reg.base = {
-      sid, pid, cfg, model: BUILDER_DEFAULT_MODEL, effort, round: 1, logOffset: offset,
+      sid, pid, cfg, model, effort, round: 1, logOffset: offset,
       startedAt: new Date(deps.now()).toISOString(), state: 'minting', absorbedWave: 0, tokens: null,
     };
   });
@@ -526,12 +530,12 @@ export async function builderLane(deps: SessionDeps, slug: string, lane: string,
       if (!b || b.state !== 'ready') throw new BuilderInputError(`no ready base for ${slug} (${b ? b.state : 'none'}): builder base ${slug} --prompt-file <f>`);
       if (sessionAlive(b.pid, b.sid, psText)) throw new BuilderInputError('the base is still running; builder wait first');
       mode = { kind: 'fork', from: b.sid, sessionId: deps.uuid() };
-      identity = { model: b.model, effort: b.effort };
+      identity = { model: builderRunModel(b.model, deps.env), effort: b.effort };
       cfg = b.cfg; // the base's account: its transcript and its cache live there
       parent = b.sid;
     } else {
       mode = { kind: 'new', sessionId: deps.uuid() };
-      identity = { model: BUILDER_DEFAULT_MODEL, effort };
+      identity = { model: builderLineageModel(ecoPlusInEffect(undefined, deps.env)), effort };
       cfg = rawConfigDir(deps.env);
     }
     const offset = fileSize(log);
@@ -600,6 +604,7 @@ export async function builderResume(
       throw new BuilderInputError(`${lane} was already resumed ${l.round - 1} times; a lane that does not converge goes to the owner (--force to override)`);
     }
     const offset = fileSize(log);
+    l.model = builderRunModel(l.model, deps.env);
     const argv = builderArgv(message, { kind: 'resume', sessionId: l.sid }, { model: l.model, effort: l.effort });
     l.pid = deps.launch(argv, { cwd: root, env: builderEnv(deps.env, l.cfg), logFile: log });
     Object.assign(l, { round: l.round + 1, logOffset: offset, startedAt: new Date(deps.now()).toISOString() });

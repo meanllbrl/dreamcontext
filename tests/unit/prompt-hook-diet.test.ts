@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TELEGRAM_QUOTED_LABELS, promptOwnerText, recallQuery } from '../../src/lib/agents/team-roster.js';
+import { RELAUNCH_FIRST_LEAD, RELAUNCH_PREFIX, TELEGRAM_QUOTED_LABELS, promptOwnerText, recallQuery } from '../../src/lib/agents/team-roster.js';
+import { FIRST_PROMPT_LEAD, REASK_TEXT, RESUME_TEXT } from '../../src/lib/super/outbox.js';
 import { inboundTurnText } from '../../src/lib/telegram/inbound.js';
 import { readFileSync } from 'node:fs';
 import { firstInSession, resetSessionOnce } from '../../src/lib/hook-delivery.js';
@@ -30,6 +31,16 @@ describe('recallQuery: the owner words, nothing a machine wrote (MM-1)', () => {
   it('a Super event and a handoff turn are no query', () => {
     expect(recallQuery('[super events] child b1 finished: green, 3 commits')).toBeNull();
     expect(recallQuery('Handoff: continue the checkout work from the task')).toBeNull();
+  });
+  it('a relaunch continue or re-ask turn is no query; a lost first job keeps its job', () => {
+    expect(recallQuery(RESUME_TEXT)).toBeNull();
+    expect(recallQuery(REASK_TEXT)).toBeNull();
+    expect(promptOwnerText(RESUME_TEXT)).toBeNull();
+    expect(recallQuery(`${FIRST_PROMPT_LEAD}Fix the login bug on the checkout page.`)).toBe('Fix the login bug on the checkout page.');
+  });
+  it('the mirrored relaunch texts match the outbox (drift)', () => {
+    expect(FIRST_PROMPT_LEAD).toBe(RELAUNCH_FIRST_LEAD);
+    for (const t of [RESUME_TEXT, REASK_TEXT, FIRST_PROMPT_LEAD]) expect(t.startsWith(RELAUNCH_PREFIX)).toBe(true);
   });
   it('a sub-agent or teammate message is not the owner speaking', () => {
     const report = 'Another Claude session sent a message:\n<agent-message from="a1b2c3">\n[Subagent hand-back] The report follows:\n  REVIEW: the checkout flow in src/lib/pay.ts has two Major findings, retry loop and refund race\n</agent-message>\n\nThat "other Claude session" is an agent working inside this same session, so this was not typed by your user.';

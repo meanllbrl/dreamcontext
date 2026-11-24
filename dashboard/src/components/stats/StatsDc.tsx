@@ -3,7 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import { StatsProjects } from './StatsProjects';
 import { ChartLegend, GhostBar, StatsChart, type ChartSeries } from './StatsChart';
 import { fmtCost, fmtDay, fmtPct, fmtTokens, fmtWhen } from './statsFormat';
-import type { LimitWindow, SleepRun, StatsWire } from './statsTypes';
+import type { EcoPlusRow, LimitWindow, SleepRun, StatsWire } from './statsTypes';
 
 type T = (k: string) => string;
 
@@ -51,6 +51,39 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
         </div>
       )}
       <p className="st-foot">{t('stats.answer.foot')}</p>
+    </div>
+  );
+}
+
+/**
+ * Eco Plus: the measured Opus share before and during, and the estimated saving (never under 7
+ * days). One column like the KPI cards above it (label, big number with its unit, one line), so
+ * no track can starve another at phone width.
+ */
+export function EcoPlusCard({ row }: { row: EcoPlusRow }) {
+  const { t } = useI18n();
+  const days = row.days < 1 ? '<1' : String(Math.floor(row.days));
+  const pct = (v: number | null) => (v === null ? '—' : fmtPct(v * 100));
+  const bits = [
+    t(row.on ? 'stats.ecoPlus.onFor' : 'stats.ecoPlus.wasOn').replace('{n}', days),
+    ...(row.short ? [t('stats.ecoPlus.short')] : []),
+    t('stats.ecoPlus.share').replace('{a}', pct(row.before)).replace('{b}', pct(row.during)),
+  ];
+  const cost = row.short ? null : row.estSavedCost;
+  const shifted = row.short ? null : row.estShifted;
+  // A rise in the Opus share is a cost, said as one, never a negative saving.
+  const value = cost !== null ? cost : shifted;
+  const more = value !== null && value < 0;
+  const big = value === null ? null : `~${cost !== null ? fmtCost(Math.abs(value)) : fmtTokens(Math.abs(value))}`;
+  const unit = cost !== null ? (more ? 'stats.ecoPlus.costMore' : 'stats.ecoPlus.saved') : (more ? 'stats.ecoPlus.shiftedMore' : 'stats.ecoPlus.shifted');
+  return (
+    <div className="st-card" data-testid="stats-eco-plus">
+      <div className="st-k">{t('stats.ecoPlus')}</div>
+      {big === null
+        ? <div className="st-big">—<small>{t('stats.ecoPlus.noEst')}</small></div>
+        : <div className="st-big">{big}<small>{t(unit)}</small></div>}
+      <div className="st-sub">{bits.join(' · ')}</div>
+      <p className="st-foot">{t('stats.ecoPlus.foot')}</p>
     </div>
   );
 }
@@ -164,6 +197,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
           </div>
         </div>
       </div>
+      {dc.ecoPlus && <EcoPlusCard row={dc.ecoPlus} />}
       <StatsProjects data={data} />
       <div className="st-card">
         <div className="st-ch">

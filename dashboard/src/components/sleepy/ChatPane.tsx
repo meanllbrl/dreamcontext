@@ -3,6 +3,8 @@ import { useEmbed } from '../embed/embedMode';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
+import { readAgentSettings, onAgentSettings } from '../../lib/agentSettings';
+import { shownContextHandoff } from '../../lib/chatProtocol';
 import { useIsMobile, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
@@ -802,6 +804,9 @@ export function ChatPane({
   }, [session]);
   const { vault, bus: projectBus } = useVaultId();
   const api = useApi();
+  // This Mac's Eco mode, live: a pane nobody toggled shows it (shownContextHandoff).
+  const [machineEco, setMachineEco] = useState(() => readAgentSettings().ecoMode);
+  useEffect(() => onAgentSettings((cfg) => setMachineEco(cfg.ecoMode)), []);
 
   const conv = session.getModel();
   // The one step that draws the live browser: the last browser call in the transcript
@@ -3592,7 +3597,7 @@ export function ChatPane({
           activeAccountId={runningAccountId}
           // An agent's chat follows the default account: no row there could switch it.
           onAccountChange={agentBound ? undefined : onAccountChange}
-          contextHandoff={conv.contextHandoff}
+          contextHandoff={shownContextHandoff(conv.contextHandoff, machineEco)}
           onContextHandoffChange={session.setContextHandoff}
           busy={session.busy}
           connected={session.status === 'open' || (remoteDesktop && session.takenOver)}

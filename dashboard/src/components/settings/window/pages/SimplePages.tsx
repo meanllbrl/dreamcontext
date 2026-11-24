@@ -157,7 +157,7 @@ export function ChatPage({ chip, go }: PageProps) {
         <SettingRow
           id="cmodel"
           title={t('shell.sw.model')}
-          hint={t('shell.sw.model.same')}
+          hint={cfg?.ecoPlus ? t('shell.settings.eco.plus.chat') : t('shell.sw.model.same')}
           keywords="model effort opus sonnet haiku codex default tool"
           control={chip?.('chat') ?? <ModelsLink go={go} />}
         />
@@ -208,6 +208,7 @@ function ModelsLink({ go }: { go?: (page: SwPageId) => void }) {
 
 export function SuperPage({ chip, go }: PageProps) {
   const { t } = useI18n();
+  const { cfg } = useAgentCfg();
   const [sounds, setSounds] = useState(superSoundsEnabled);
   return (
     <>
@@ -216,7 +217,7 @@ export function SuperPage({ chip, go }: PageProps) {
         <SettingRow
           id="smodel"
           title={t('shell.sw.model')}
-          hint={t('shell.sw.model.same')}
+          hint={cfg?.ecoPlus ? t('shell.settings.eco.plus.super') : t('shell.sw.model.same')}
           keywords="super model effort opus"
           control={chip?.('super') ?? <ModelsLink go={go} />}
         />

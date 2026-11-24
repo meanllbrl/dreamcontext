@@ -826,6 +826,10 @@ export interface AutomationCache {
   pausedAt?: string;
   /** A Super automation only: when it came back on. No fire before it is owed or missed. */
   liveFrom?: string;
+  /** A limited Super schedule only (`once_on` / `max_runs`, super/schedule-limit.ts): fires so far. */
+  runsDone?: number;
+  /** A limited Super schedule only: when its last fire retired it (switched off as done). */
+  retiredAt?: string;
 }
 
 // ─── Answer channels + steers ───────────────────────────────────────────────

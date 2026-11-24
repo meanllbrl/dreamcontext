@@ -475,7 +475,7 @@ function ThreadBar({
     >
       {replies > 0 && (
         <span className="agent-thread-bar-faces" aria-hidden="true">
-          <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={20} version={message.runId} />
+          <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={20} />
         </span>
       )}
       {replies > 0 ? (
@@ -612,7 +612,7 @@ export function AgentMessage({
             aria-label={t('agents.preview.open').replace('{name}', face.title)}
           >
             <span className="agent-reply-preview-head">
-              <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={20} version={message.runId} />
+              <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={20} />
               <span className="agent-reply-preview-name">{face.title}</span>
               {statusWord}
               {metaLine}
@@ -682,7 +682,6 @@ export function AgentMessage({
           hasPhoto={message.hasPhoto}
           of={face.of}
           size={32}
-          version={message.runId}
         />
       </div>
 

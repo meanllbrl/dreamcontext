@@ -1022,8 +1022,19 @@ names your worktree and branch, so `cd` there first. The Super reads one line on
 about you: that you handed off, and at what size.
 
 At the other end you will see a `>> HANDOFF:` banner above the snapshot naming the task —
-read that task file first. Desktop chats: every new chat pane, in every project, starts from
-ONE setting for the whole Mac, **Settings → Chat → Eco mode, ON by default**; the composer's
-ECO lamp in the usage popover switches one pane only and changes no default. Terminal and CLI
-sessions follow the vault: `dreamcontext config context-handoff on [--nudge-at N] [--hard-at N]
-[--remind-every N]` (off there unless set). The vault always owns the **thresholds**.
+read that task file first. Eco mode is ONE setting for the whole Mac, **Settings → Chat → Eco
+mode, ON by default**, read live by every session in every project (chat panes, open ones too,
+the terminal, CLI sessions, Super children, members, Codex and Antigravity). The composer's ECO
+lamp, once clicked, switches that one pane only and changes no default. The same row is a
+three-way **Tasarruf modu: Kapalı · Eco · Eco Plus** (`agent-ui.json` `ecoMode` + `ecoPlus`).
+**Eco Plus** keeps Eco's nudge and runs most work on Sonnet: the Super (main and member), new
+chats from a saved default, children with no `--model`, members, automations, auto-sleep,
+builders and every Opus sub-agent run `sonnet`; `reviewer`, `review-security`,
+`goal-plan-reviewer` and security, money, migration or contract jobs stay Opus. A composer pick,
+an explicit `--model` and a resumed session's model are kept. The lowering lives in the spawn
+argv and the Agent hook only, never in a settings file, manifest or agent definition.
+`dreamcontext eco status` prints `off|eco|plus`; `dreamcontext eco model builder` the builder
+model. Each lowering is logged to `~/.dreamcontext/eco-plus-lowered.jsonl`; Stats → dreamcontext
+shows the Opus share before and during Eco Plus and an estimated saving. From a shell:
+`dreamcontext config context-handoff on|off [--nudge-at N] [--hard-at N] [--remind-every N]`
+sets the same machine switch; the vault always owns the **thresholds**.
