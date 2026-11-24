@@ -23,6 +23,7 @@ import { openMemberMirrors, openOwnerQuestions, sendToSuper, trimOwnerAnswers } 
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
+import { ChatLanding, type ChatLandingPick } from './ChatLanding';
 import { TeamJobConversation } from './super/TeamJobConversation';
 import type { TeamCard } from './super/TeamTile';
 import {
@@ -2038,7 +2039,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return home ? showWindow(home) : null;
   }, [showWindow]);
 
-  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '') => {
+  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '', pick?: ChatLandingPick) => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
     // A new CHAT starts in Basic — there is deliberately no remembered mode default (the mode
@@ -2057,8 +2058,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const s = launch
       ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
       : codexId
-        ? spawn(bypass, codexId, false, 'chat', '', onAntigravity ? '' : defaults.codexDefaultModel, true, '', false, onAntigravity ? '' : defaults.codexDefaultEffort)
-        : spawn(bypass, undefined, false, kind);
+        // A landing pick's mode carries over; its model and effort are Claude's, so Codex keeps its own.
+        ? spawn(bypass, codexId, false, 'chat', '', onAntigravity ? '' : defaults.codexDefaultModel, true, '', false, onAntigravity ? '' : defaults.codexDefaultEffort, false, pick?.mode ?? DEFAULT_CHAT_MODE)
+        : pick && kind === 'chat'
+          // The Chat page's landing (ChatLanding): what the owner picked before the chat existed.
+          ? spawn(bypass, undefined, false, 'chat', '', pick.model, true, '', false, pick.effort, false, pick.mode, pick.accountId)
+          : spawn(bypass, undefined, false, kind);
     // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {
       id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
@@ -2069,10 +2074,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
   // a shell), or as the first pane.
-  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = ''): string => {
+  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '', pick?: ChatLandingPick): string => {
     if (!admitTab()) return '';
     freshenShownIfEmptyRef.current();
-    const s = spawnAndRegister(kind, launch, forceTool);
+    const s = spawnAndRegister(kind, launch, forceTool, pick);
     if (panes.length === 0) {
       const pid = nextPaneId();
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -7317,6 +7322,45 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       t('super.empty.chip.morning').replace('{name}', vault ?? ''),
     ],
   }), [t, vault, firstReadSub]);
+  // The Chat page with no chat open (ChatLanding): the Super welcome's mark, question and chips,
+  // with the old landing's other ways in as one quiet row under them.
+  const [termSetupOpen, setTermSetupOpen] = useState(false);
+  const openExternalRef = useRef(openExternal);
+  openExternalRef.current = openExternal;
+  const landingHero = useMemo<EmptyHero>(() => ({
+    title: superHero.title,
+    mark: superHero.mark,
+    chips: superHero.chips,
+    more: (
+      <>
+        <div className="chat-banner-more-row">
+          {caps?.embeddedTerminal ? (
+            <button type="button" className="chat-banner-more-btn" onClick={() => addSession('shell')}>{t('chat.landing.terminal')}</button>
+          ) : (
+            <button type="button" className="chat-banner-more-btn" aria-expanded={termSetupOpen} onClick={() => setTermSetupOpen((v) => !v)}>{t('chat.landing.setupTerminal')}</button>
+          )}
+          {caps?.openTerminal && (
+            <button type="button" className="chat-banner-more-btn" onClick={() => { void openExternalRef.current(); }}>{t('chat.landing.external')}</button>
+          )}
+          <button type="button" className="chat-banner-more-btn" onClick={openPastChats}>{t('chat.landing.past')}</button>
+        </div>
+        {!caps?.embeddedTerminal && termSetupOpen && <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />}
+      </>
+    ),
+  }), [superHero, caps?.embeddedTerminal, caps?.openTerminal, termSetupOpen, t, addSession, openPastChats, refreshCaps]);
+  const startLandingChat = useCallback((message: string, pick: ChatLandingPick): boolean => {
+    const sid = addSession('chat', undefined, '', pick);
+    const cs = sid ? sessions.current.get(sid) : undefined;
+    if (!cs || cs.kind !== 'chat') return false;
+    const chat = cs as ChatSession;
+    // The pickers of a Claude chat read these; a chat on another default tool keeps its own.
+    if (!chat.tool) {
+      setSessionModel((prev) => ({ ...prev, [sid]: pick.model }));
+      setSessionEffort((prev) => ({ ...prev, [sid]: pick.effort }));
+    }
+    chat.enqueue(message, { resubmit: true });
+    return true;
+  }, [addSession]);
   /** Is this the MAIN project's Super stage on a computer (plan ilk-acilis D9)? Never a member
    *  stage, a member's mirror or the phone: those keep today's empty state. */
   const isMainSuperStage = (cs: ChatSession): boolean =>
@@ -7620,81 +7664,58 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   } else if (isMobile) {
     body = <div className="agent-term">{phoneEmpty}</div>;
   } else {
-    body = (
-      <Centered>
-        <BotMark />
-        <h2 style={titleStyle}>Chat — real Claude Code</h2>
-        <p style={subStyle}>
-          {chatMode ? (
-            <>
-              A full Claude Code session running right here, scoped to this project, rendered as a
-              <strong> native conversation</strong> — boards, media and diffs appear inline, and its
-              questions become buttons you click. Or a <strong>plain terminal</strong> in the same
-              window when you just need a shell.
-            </>
-          ) : (
-            <>
-              A full interactive Claude Code session running right here, scoped to this project —
-              or a <strong>plain terminal</strong> in the same window when you just need a shell.
-            </>
-          )}
-          {' '}Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
-          can put them <strong>side by side</strong> (⌘D) to watch several at once.
-        </p>
-        <BypassToggle bypass={bypass} setBypass={setBypass} />
-        {(() => {
-          // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
-          // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
-          // when the CLI is missing. Missing the renderer → show the in-app Setup panel.
-          // Chat needs only the claude CLI + the Settings → Agents screen preference — it can
-          // start on a node-pty-broken machine where neither of the above can.
-          // The Agent screen preference is a SWAP: exactly one Claude start button shows,
-          // matching the chosen surface (chatMode folds in the claudeCli requirement).
-          const agentReady = caps.embeddedTerminal && caps.claudeCli && !chatMode;
-          const terminalReady = caps.embeddedTerminal;
-          const chatReady = chatMode;
-          return (
-            <>
-              <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {agentReady && (
-                  <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
-                )}
-                {chatReady && (
-                  <button onClick={() => addSession('chat')} style={primaryBtn}>◆ Start chat</button>
-                )}
-                {terminalReady && (
-                  <button onClick={() => addSession('shell')} style={(agentReady || chatReady) ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
-                )}
-                {caps.openTerminal && (
-                  <button onClick={openExternal} style={secondaryBtn}>↗ Open in Terminal</button>
-                )}
-                {/* Past chats belongs HERE too, not only in the header: `started` is
-                    `sessionList.length > 0`, so a launch with no restored tabs shows this
-                    screen and the header's ◷ button does not exist yet — which is exactly
-                    the moment "reopen what I was working on" is the thing you want. Gated
-                    on the CLI alone: resuming spawns `claude --resume`, no node-pty. */}
-                {caps.claudeCli && (
-                  <button onClick={openPastChats} style={secondaryBtn}>◷ Past chats</button>
-                )}
-              </div>
-              {!terminalReady && (
-                <>
-                  {/* Coexistence: on a node-pty-broken machine with Chat ready, don't let the
-                      terminal's install panel read as "the whole surface is unavailable" —
-                      chat is already usable above; the terminal needs one more piece. */}
-                  {chatReady && (
-                    <p style={{ ...subStyle, marginTop: '18px', color: 'var(--color-text-tertiary)' }}>
-                      Chat is ready to use above. The embedded terminal needs one more piece:
-                    </p>
-                  )}
-                  <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />
-                </>
-              )}
-            </>
-          );
-        })()}
-      </Centered>
-    );
+    // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
+    // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
+    // when the CLI is missing. Chat needs only the claude CLI + the Settings → Agents screen
+    // preference — it can start on a node-pty-broken machine where neither of the above can.
+    // The Agent screen preference is a SWAP: exactly one Claude start shows, matching the
+    // chosen surface (chatMode folds in the claudeCli requirement).
+    const agentReady = caps.embeddedTerminal && caps.claudeCli && !chatMode;
+    const terminalReady = caps.embeddedTerminal;
+    if (chatMode) {
+      // The Super Agent's welcome over the real composer (owner 2026-11-24): the owner types and
+      // a chat starts. The terminal, past chats and Open in Terminal stay one quiet click away;
+      // the permission mode is the composer's own control.
+      body = (
+        <div className="agent-term">
+          <ChatLanding
+            hero={landingHero}
+            placeholder={t('super.empty.placeholder')}
+            actions={chatActions}
+            modelConfig={modelConfig}
+            permissionMode={chatPermissionMode}
+            canSignInInApp={canSignInInApp}
+            signInCommand={signInCommand}
+            onStart={startLandingChat}
+          />
+        </div>
+      );
+    } else {
+      body = (
+        <Centered>
+          {landingHero.mark}
+          <h2 style={titleStyle}>{landingHero.title}</h2>
+          <BypassToggle bypass={bypass} setBypass={setBypass} />
+          <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {agentReady && (
+              <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
+            )}
+            {terminalReady && (
+              <button onClick={() => addSession('shell')} style={agentReady ? secondaryBtn : primaryBtn}>&gt;_ {t('chat.landing.terminal')}</button>
+            )}
+            {caps.openTerminal && (
+              <button onClick={openExternal} style={secondaryBtn}>↗ {t('chat.landing.external')}</button>
+            )}
+            {/* Past chats belongs HERE too: with no tab open the header's ◷ button does not
+                exist yet. Gated on the CLI alone: resuming spawns `claude --resume`. */}
+            {caps.claudeCli && (
+              <button onClick={openPastChats} style={secondaryBtn}>◷ {t('chat.landing.past')}</button>
+            )}
+          </div>
+          {!terminalReady && <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />}
+        </Centered>
+      );
+    }
   }
 
   return (
