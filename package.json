@@ -1,6 +1,6 @@
 {
   "name": "dreamcontext",
-  "version": "0.41.24-beta.1",
+  "version": "0.41.24",
   "description": "Agents that see the big picture. The agentic OS for your projects.",
   "type": "module",
   "bin": {
