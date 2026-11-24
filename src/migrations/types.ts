@@ -44,6 +44,13 @@ export interface MigrationStepResult {
    * completed migration; a pinned vault is not.
    */
   failedCount?: number;
+  /**
+   * The id of the agentTask this step found work FOR (the task, never the
+   * version: two migrations share 0.23.0). The runner writes the sighting as
+   * its own ledger entry, step id `<step>#work`, and `dueAgentTasks` calls the
+   * task due only through such an entry. Absent = this pass found no agent work.
+   */
+  agentWorkFor?: string;
 }
 
 /**
@@ -72,8 +79,14 @@ export type MigrationStep = (root: string) => MigrationStepResult;
  * Returned when a migration has work requiring human judgment.
  */
 export interface MigrationAgentTask {
-  /** Stable identifier (kebab-case) */
+  /** Stable identifier (kebab-case), unique across the registry. */
   id: string;
+  /**
+   * One plain line naming the work, for the snapshot's `## Migration waiting`
+   * block, the Super's event line and the migration child's card. At most 80
+   * characters (registry test). A registry constant: never vault text.
+   */
+  title: string;
   /** Instruction text for the agent: start by checking the filesystem. */
   instruction: string;
   /**

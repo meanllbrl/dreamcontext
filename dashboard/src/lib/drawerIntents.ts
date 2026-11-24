@@ -7,6 +7,7 @@
  */
 import type { HomeRow } from '../components/sleepy/phoneHome';
 import type { StackTab } from '../components/sleepy/phoneStack';
+import type { Page } from '../components/layout/Sidebar';
 
 /** Window → surface, on the instance bus. Detail: {@link DrawerIntent}. */
 export const DRAWER_INTENT_EVENT = 'dc-drawer-intent';
@@ -17,8 +18,9 @@ export const DRAWER_SURFACE_EVENT = 'dc-drawer-surface';
 
 export type DrawerIntent =
   /** The Super Agent row: open the stage, handing over first (and starting a chat first when
-   *  the project has none, F2). */
-  | { kind: 'super' }
+   *  the project has none, F2). `quiet`: a sidebar header press landing on it (wb-sol-panel C6)
+   *  hands over without queueing the hand-over turn, so arriving starts nothing. */
+  | { kind: 'super'; quiet?: true }
   /** A new chat tab in this project's window on screen. */
   | { kind: 'new-tab' }
   /** "+" on a project row, ⌘N or New chat window's pick: a new named chat window (W3, D8). */
@@ -43,8 +45,10 @@ export type DrawerIntent =
   /** An AI Team member's stage (plan-r10 1, 1c): its Super, its ONE conversation, in this project.
    *  `task` (a task slug): the stage opens with that task's strip on top. */
   | { kind: 'member'; slug: string; title: string; task?: string }
-  /** Project Relations: a page of this project. */
-  | { kind: 'page'; page: 'relations'; id?: string };
+  /** A page of this project (Project Relations, and every page a window move lands: the project
+   *  rail, ← →, ⌘K across projects), with the item to open; `'chat'`: its chat surface, expanded
+   *  as it stands (navigation B, C5). */
+  | { kind: 'page'; page: Page | 'chat'; id?: string };
 
 /** A task slug a member intent may carry (the task-slug charset, no 64 cap: slugs reach ~100). */
 const TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,251}$/;
@@ -105,7 +109,9 @@ export interface DrawerChatFact extends StackTab {
 }
 
 export interface DrawerSurfaceState {
-  superOn: boolean;
+  /** The Super Agent is handed over. Absent until the project's record is read: a project still
+   *  loading (a move landing in it) never reads as off. */
+  superOn?: boolean;
   superSelected: boolean;
   /** The project's chat windows, in order (W3). Absent from a surface that predates them. */
   windows?: DrawerWindowFact[];

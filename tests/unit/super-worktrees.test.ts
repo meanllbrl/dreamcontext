@@ -252,17 +252,24 @@ describe('merge', () => {
 });
 
 describe('remove', () => {
-  it('refuses an unmerged worktree and a dirty one; a merged clean one goes, its branch kept', async () => {
+  // kesim-geri-donus D13 (changed on purpose): a clean worktree on its branch goes whether or not
+  // the branch is merged anywhere; the branch keeps the commits. A dirty one, and a detached HEAD
+  // whose commits no ref holds, stay.
+  it('a clean worktree on its branch goes, merged or not, its branch kept; dirty and detached-unique are refused', async () => {
     const a = await create('a');
     commitIn(a.path, 'a.txt', 'a\n');
-    expect(await refusedCode(removeChildWorktree({ repoPath: repo, worktree: a.path, branch: a.branch, home }))).toBe('unmerged');
-    await mergeChildren({ projectRoot: project, repo: 'product', topic: 'rel', home, children: [{ sessionId: 'ca', branch: a.branch, worktree: a.path }] });
     writeFileSync(join(a.path, 'wip.txt'), 'x');
     expect(await refusedCode(removeChildWorktree({ repoPath: repo, worktree: a.path, branch: a.branch, home }))).toBe('dirty');
     rmSync(join(a.path, 'wip.txt'));
     await removeChildWorktree({ repoPath: repo, worktree: a.path, branch: a.branch, home });
     expect(existsSync(a.path)).toBe(false);
     expect(g(repo, 'branch', '--list', 'super/a')).toContain('super/a');
+
+    const b = await create('b');
+    g(b.path, 'checkout', '-q', '--detach');
+    commitIn(b.path, 'b.txt', 'b\n');
+    expect(await refusedCode(removeChildWorktree({ repoPath: repo, worktree: b.path, branch: b.branch, home }))).toBe('unmerged');
+    expect(existsSync(b.path)).toBe(true);
   });
 
   it('refuses a path that is not a listed super worktree', async () => {
@@ -274,7 +281,10 @@ describe('the git invocation itself', () => {
   it('every command carries hooks, fsmonitor and signing off, through one argv-only execFile', () => {
     expect([...GIT_SAFE_ARGS]).toEqual(['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgSign=false']);
     const src = readFileSync(new URL('../../src/lib/super/worktrees.ts', import.meta.url), 'utf-8');
-    expect(src.match(/execFile\(/g)).toHaveLength(1);
+    // One git execFile; the only other one is the APFS node_modules clone (D11), argv-only too.
+    expect(src.match(/execFile\('git'/g)).toHaveLength(1);
+    expect(src.match(/execFile\(/g)).toHaveLength(2);
+    expect(src).toContain("execFile('cp', ['-c', '-R', src, dest]");
     expect(src).toContain("execFile('git', [...GIT_SAFE_ARGS, ...args]");
     expect(src).not.toMatch(/\bexec\(|execSync|shell:\s*true/);
   });
@@ -327,7 +337,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
     const frames: Array<Record<string, unknown>> = [];
     const first = wc.mintWindowToken({ send: (f) => { frames.push(f); return true; }, vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super' });
     const res = fakeRes();
-    const done = handleSuperVerb(fakeReq(first.token, { prompt: 'build it', worktree: 'product', slug: 'late' }), res, { verb: 'delegate' });
+    const done = handleSuperVerb(fakeReq(first.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'late' }), res, { verb: 'delegate' });
     await vi.waitFor(() => expect(frames.some((f) => f.subtype === 'super_command')).toBe(true), { timeout: 10_000 });
     const cmd = frames.find((f) => f.subtype === 'super_command') as { id: string };
     // The super process dies; the window answers on the respawned process's socket.
@@ -364,7 +374,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
     const res = fakeRes();
     const timeouts: number[] = [];
     (res as unknown as { setTimeout: (ms: number) => void }).setTimeout = (ms) => { timeouts.push(ms); };
-    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'orphan' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(sup.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'orphan' }), res, { verb: 'delegate' });
     expect(res.status).toBe(409);
     expect(res.json).toMatchObject({ error: 'delegate_unconfirmed', worktreeRemoved: path });
     expect(existsSync(path)).toBe(false);
@@ -388,7 +398,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
       vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
     });
     const res = fakeRes();
-    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'wrote' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(sup.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'wrote' }), res, { verb: 'delegate' });
     expect(res.json).toMatchObject({ error: 'delegate_unconfirmed', worktree: path, branch: 'super/wrote' });
     expect(existsSync(path)).toBe(true);
     expect(g(repo, 'branch', '--list', 'super/wrote')).toContain('super/wrote');
@@ -402,7 +412,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
       vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
     });
     const res = fakeRes();
-    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'threw' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(sup.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'threw' }), res, { verb: 'delegate' });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(existsSync(path)).toBe(false);
     expect(g(repo, 'branch', '--list', 'super/threw')).toBe('');
@@ -421,7 +431,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
       vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
     });
     const res = fakeRes();
-    await handleSuperVerb(fakeReq(dead.token, { prompt: 'build it', worktree: 'product', slug: 'never' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(dead.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'never' }), res, { verb: 'delegate' });
     expect(res.status).toBe(409);
     expect(res.json.error).toBe('no_window');
     expect(atSend).toEqual({ worktree: true, branch: expect.stringContaining('super/never') });

@@ -17,7 +17,7 @@ const GUARDED: Record<string, RegExp> = {
 };
 /** Their ids are tool threads, or the flag is another program's. */
 const NOT_A_CLAUDE_RESUME = new Set([
-  'src/cli/commands/tasks.ts', 'src/cli/commands/brain.ts', 'src/cli/commands/t3-chat.ts', 'src/lib/task-objection.ts',
+  'src/server/orphan-chats.ts', 'src/cli/commands/tasks.ts', 'src/cli/commands/brain.ts', 'src/cli/commands/t3-chat.ts', 'src/lib/task-objection.ts',
   'src/lib/t3-bridge/spawn.ts', 'src/lib/t3-bridge/headless-envelope.ts',
 ]);
 

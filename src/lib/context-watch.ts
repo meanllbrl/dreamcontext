@@ -31,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { TASK_SLUG_RE } from './task-slug.js';
 import { isSafeSessionId } from './transcript-locate.js';
-import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
+import { readSetupConfig, resolveChildHandoff, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
 import { childPlaceOf, superChildContext, superHandoffCommand, superHandoffContext, superNudgeLine, type SuperChildContext } from './super/handoff-task.js';
 import { SUPER_HANDOFF_TASK, superHandoffFileOf } from './super/handoff-file.js';
@@ -357,6 +357,9 @@ function k(tokens: number): string {
  * message that repeats twice as often reads as broken rather than as urgent, and the
  * severe band already gets an extra nudge at the crossing (see `shouldNudge`).
  */
+/** The first line of a taskless Super child's hand-back reply (D18): the Super reads it as "start a successor". */
+export const TASKLESS_HANDOFF_MARK = 'HANDOFF:';
+
 export function renderNudge(
   contextTokens: number,
   cfg: ResolvedContextHandoff,
@@ -394,6 +397,17 @@ export function renderNudge(
       : 'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.';
 
   const childLine = opts.child ? superChildNudgeLine(opts.child, jobRecord) : '';
+  // D18 (iyilesme-360): a taskless child at the hard band hands its job back NOW, in a reply the
+  // Super can hand to a fresh session (`super delegate --succeeds`); measured, "finish small work
+  // here" kept 26 of 34 such children going past 300k. The firm band keeps its text.
+  if (tone === 'severe' && jobRecord) {
+    return [
+      `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,
+      '',
+      `End this turn now with your whole state in your reply, its first line \`${TASKLESS_HANDOFF_MARK}\`: what is done with its evidence, the exact next step, the decisions made, the files in flight, and the path of the brief file you were given. The Super continues the job in a fresh session from that reply.`,
+      childLine,
+    ].filter((l) => l !== '').join('\n');
+  }
   const lines = tone === 'severe'
     ? [
       `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,
@@ -575,19 +589,39 @@ export function writeTabHandoff(
  * (`chosen`); a seeded tab file follows the machine live. The thresholds are not a per-pane
  * choice: nothing lets a human set them per pane (see {@link TabHandoffState}).
  */
-export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab: string | null | undefined, home: string = homedir()): ResolvedContextHandoff {
-  const vault = resolveContextHandoff(readSetupConfig(projectRoot)?.contextHandoff);
+export function resolveHandoffFor(
+  contextRoot: string,
+  projectRoot: string,
+  tab: string | null | undefined,
+  opts: { ctx?: number | null; child?: boolean; ids?: ReadonlyArray<string | null | undefined> } = {},
+  home: string = homedir(),
+): ResolvedContextHandoff {
+  const cfg = readSetupConfig(projectRoot)?.contextHandoff;
+  const vault = resolveContextHandoff(cfg);
+  // The switch: a pane's own CHOSEN answer, else this Mac's Eco mode.
+  let enabled = ecoModeDefault(home);
   if (tab) {
     const tabState = readTabHandoff(contextRoot, tab);
-    if (tabState?.chosen) return { ...vault, enabled: tabState.enabled };
+    if (tabState?.chosen) enabled = tabState.enabled;
   }
-  return { ...vault, enabled: ecoModeDefault(home) };
+  // A Super child's ladder (250k / 400k / 50k, `contextHandoff.child`): the spawn-time hint, or the
+  // super record naming the pane, and never the Super's own pane. A reading under both first rungs
+  // needs no record lookup: either ladder says "not yet".
+  const child = resolveChildHandoff(cfg);
+  const ctx = opts.ctx;
+  const below = typeof ctx === 'number' && Number.isFinite(ctx) && ctx < Math.min(vault.nudgeAt, child.nudgeAt);
+  let isChild = opts.child === true;
+  if (!isChild && !below) {
+    const ids = opts.ids ?? [tab];
+    if (ids.some((id) => !!id) && !superHandoffContext(contextRoot, ids) && superChildContext(contextRoot, ids)) isChild = true;
+  }
+  return isChild ? { ...child, enabled } : { ...vault, enabled };
 }
 
 /** A pane's switch as the client draws it: the resolved answer plus whether a person chose it
  *  for this pane (then a Settings change leaves it alone) or it follows this Mac's Eco mode. */
-export function paneHandoffState(contextRoot: string, projectRoot: string, tab: string): ResolvedContextHandoff & { chosen: boolean } {
-  const r = resolveHandoffFor(contextRoot, projectRoot, tab);
+export function paneHandoffState(contextRoot: string, projectRoot: string, tab: string, opts: { child?: boolean } = {}): ResolvedContextHandoff & { chosen: boolean } {
+  const r = resolveHandoffFor(contextRoot, projectRoot, tab, opts);
   return { ...r, chosen: readTabHandoff(contextRoot, tab)?.chosen === true };
 }
 
@@ -757,9 +791,10 @@ export function applyPaneHandoffToggle(
   projectRoot: string,
   tab: string,
   enabled: boolean,
+  opts: { child?: boolean } = {},
 ): ResolvedContextHandoff | null {
   const written = writeTabHandoff(contextRoot, tab, { enabled, chosen: true });
-  return written ? resolveHandoffFor(contextRoot, projectRoot, tab) : null;
+  return written ? resolveHandoffFor(contextRoot, projectRoot, tab, opts) : null;
 }
 
 // ─── The one entry point the hooks call ───────────────────────────────────────
@@ -786,8 +821,8 @@ export function maybeNudge(
   try {
     const projectRoot = dirname(contextRoot);
     const tab = typeof env.DREAMCONTEXT_TAB_SESSION === 'string' ? env.DREAMCONTEXT_TAB_SESSION : null;
-    const cfg = resolveHandoffFor(contextRoot, projectRoot, tab);
-    if (!cfg.enabled) return null;
+    // `enabled` first, with no record lookup (ctx 0 is under every rung): off = zero transcript reads.
+    if (!resolveHandoffFor(contextRoot, projectRoot, tab, { ctx: 0 }).enabled) return null;
 
     let ctx: number | null;
     if (typeof input.context_tokens === 'number' && Number.isFinite(input.context_tokens)) {
@@ -803,6 +838,8 @@ export function maybeNudge(
 
     const sessionId = typeof input.session_id === 'string' ? input.session_id : '';
     if (!sessionId) return null;
+    // The ladder for THIS pane: a Super child's once the reading is past the lower first rung.
+    const cfg = resolveHandoffFor(contextRoot, projectRoot, tab, { ctx, ids: [tab, sessionId] });
     const state = readNudgeState(contextRoot, sessionId);
     if (!shouldNudge(state, ctx, cfg)) return null;
 

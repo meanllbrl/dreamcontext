@@ -28,7 +28,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { STALE_MS, _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superKey, superRecordPath } from '../../src/lib/super/store.js';
-import { DONE_SETTLE_MS, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, STOPPED_SETTLE_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { DONE_SETTLE_MS, OWNER_LEASE_MS, READOPT_GRACE_MS, READOPT_RESUME_GRACE_MS, STALE_SWEEP_MS, STOPPED_SETTLE_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { GONE_DEBOUNCE_MS } from '../../src/lib/assistant/delegations.js';
 import { REASK_TEXT, RESUME_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
@@ -568,13 +568,17 @@ describe('a relaunch brings back no old news (field 2026-10-21)', { timeout: 30_
     makeVault(before);
     await relaunch();
     await advance(READOPT_GRACE_MS + GONE_DEBOUNCE_MS);
+    // The one cut off mid-job (asking: told to ask again) gets the longer grace: a slow tab restore is no
+    // gone, or the Super delegates the job a second time (AC14).
+    expect((await items('gone')).map((q) => q.sessionId)).not.toContain('ask1');
+    await advance(READOPT_RESUME_GRACE_MS - READOPT_GRACE_MS);
     // The two the window was to bring back did not come: that is news, once.
     expect((await items('gone')).map((q) => q.sessionId).sort()).toEqual(['ask1', 'gone1', 'live1', 'own1']);
     _resetSuperInbox();
     _resetChatRegistry();
     resetSuperIndex();
     await relaunch();
-    await advance(READOPT_GRACE_MS + GONE_DEBOUNCE_MS);
+    await advance(READOPT_RESUME_GRACE_MS + GONE_DEBOUNCE_MS);
     const gone = (await items('gone')).map((q) => q.sessionId).sort();
     expect(gone).toEqual(['ask1', 'gone1', 'live1', 'own1']);
   });

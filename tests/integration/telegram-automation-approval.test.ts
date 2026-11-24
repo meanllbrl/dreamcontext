@@ -66,7 +66,7 @@ beforeEach(async () => {
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: vault, path: project }] }));
   reg._resetChatRegistry(); resetWindowControl(); _resetTelegramAsks(); _resetOwnerQuestions();
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'northwind_super_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, openLink: () => {}, handsfree: { streamsTo: () => false, isOn: () => true } });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, openLink: () => {}, handsfree: { streamsTo: () => false, isOn: () => true } });
   unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, { settleMs: 5, commands: { windowWaitMs: 200, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))) } })];
   await hub.start();
   const start = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: 'super', token: TOKEN, projectName: vault, contextRoot: root });

@@ -16,7 +16,7 @@ export const SUPER_STATE_VERSION = 1 as const;
 export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda', 'member'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 /** A member stage's own cards (plan r4 K1, MIRROR of src/lib/super/types.ts): the owner's, pinned. */
-export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings', 'scorecard'] as const;
 export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
 
 /** The agenda card's one ref (one agenda per stage) and the size it opens at. */
@@ -74,6 +74,45 @@ export interface SuperContainer {
   forAt?: number;
   /** A picture's width/height, server-read from its file header (absent = unknown). */
   aspect?: number;
+}
+
+/** First-open defaults of a member's cards (MIRROR of src/lib/super/types.ts). */
+export const MEMBER_CARD_DEFAULTS: Readonly<Record<MemberCardRef, { size: ContainerSize; place: ContainerPlace }>> = {
+  routines: { size: 'large', place: 'float' },
+  instructions: { size: 'small', place: 'float' },
+  settings: { size: 'small', place: 'others' },
+  scorecard: { size: 'medium', place: 'float' },
+};
+
+/** Each member card's container id (MIRROR: `containerIdFor('member', ref)` on the server). */
+export const MEMBER_CARD_IDS: Readonly<Record<MemberCardRef, string>> = {
+  routines: 'member-82c37c372770',
+  instructions: 'member-31a808660056',
+  settings: 'member-3cc1d5a427a4',
+  scorecard: 'member-aa68f9a3b402',
+};
+
+/** Top-level floating items (MIRROR of the server's `floatCount`). */
+export function floatCount(state: { containers: readonly SuperContainer[]; groups: readonly SuperGroup[] }): number {
+  const grouped = new Set(state.groups.flatMap((g) => g.cards));
+  return state.containers.filter((c) => c.place === 'float' && !c.min && !grouped.has(c.id)).length
+    + state.groups.filter((g) => g.place === 'float').length;
+}
+
+/** The member cards a stage lacks, at their defaults (MIRROR of the server's `missingMemberCards`):
+ *  drawn by the window, never saved. Present cards are never touched. */
+export function missingMemberCards(state: { containers: readonly SuperContainer[]; groups?: readonly SuperGroup[] }): SuperContainer[] {
+  const out: SuperContainer[] = [];
+  const have = new Set(state.containers.filter((c) => c.kind === 'member').map((c) => c.ref));
+  let floating = floatCount({ containers: state.containers, groups: state.groups ?? [] });
+  for (const ref of MEMBER_CARD_REFS) {
+    if (have.has(ref)) continue;
+    const d = MEMBER_CARD_DEFAULTS[ref];
+    const place: ContainerPlace = d.place === 'float' && floating >= MAX_FLOAT ? 'others' : d.place;
+    if (place === 'float') floating++;
+    out.push({ id: MEMBER_CARD_IDS[ref], kind: 'member', ref, shape: 'square', ...(d.size !== 'small' ? { size: d.size } : {}), place });
+  }
+  return out;
 }
 
 export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }
@@ -352,6 +391,8 @@ export interface SuperChild {
   tool?: 'codex' | 'antigravity';
   /** `super end` closed it: no process, tab or card; `super resume` clears it. */
   endedAt?: number;
+  /** The project's first read (plan ilk-acilis C15; MIRROR of src/lib/super/types.ts). */
+  firstRead?: true;
   /** The agenda (server-written): when its job last finished, and what the owner saw. */
   finishedAt?: number;
   seenAt?: number;
@@ -379,8 +420,9 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  asking (never mirrored, never counted). `routine`: something a routine waits on the owner for,
  *  derived from disk (`routine` its slug, `fact` the fact, drawn by the routine's own title).
  *  An OWN item (`own`) is a question, permission or owner wait of the record's own session
- *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
+ *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). `progress`: the server's note that
+ *  the owner waits on jobs he has heard nothing about (super-sessiz-kalmaz), the Super's own. */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note', 'progress', 'migration'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -413,6 +455,8 @@ export interface SuperQueueItem {
   wait?: { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
   team?: string;
+  /** A team `done` that asks the owner to rate its run (MIRROR of src/lib/super/types.ts `SuperQueueItem.rateRun`). */
+  rateRun?: string;
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
    *  own card answers it (MIRROR of src/lib/super/types.ts `SuperQueueItem.direct`). */
   direct?: true;
@@ -659,6 +703,8 @@ export interface SuperTeamJob {
   light?: true;
   /** The owner asked for it through the super: its result goes to him. */
   awaited?: true;
+  /** Its `done` asked the owner to rate its run (MIRROR of src/lib/super/types.ts `SuperTeamJob.rateAsked`). */
+  rateAsked?: true;
   /** The last ending event already queued for the super. */
   told?: 'done' | 'stuck' | 'question';
   /** Which of its run's questions the `question` was. */
@@ -1253,7 +1299,11 @@ function readView(v: unknown, containers: readonly SuperContainer[]): SuperView 
     if (typeof v.card !== 'string' || !ids.has(v.card)) return { mode: 'float' };
     if (v.auto === true) return { mode: 'half', card: v.card, auto: true };
     // The owner's mark: a new presentation of the agent's is told apart from his own (SuperSurface).
-    return v.by === 'owner' ? { mode: 'half', card: v.card, by: 'owner' } : { mode: 'half', card: v.card };
+    // `ownerAt` rides with it: a narrow window's fold is keyed by it (SuperSurface `foldKey`), so
+    // his press of the same card again (a question's read link) opens a sheet he had folded.
+    return v.by === 'owner'
+      ? { mode: 'half', card: v.card, by: 'owner', ...(typeof v.ownerAt === 'number' && Number.isFinite(v.ownerAt) ? { ownerAt: v.ownerAt } : {}) }
+      : { mode: 'half', card: v.card };
   }
   if (v.mode === 'present') {
     // The server resolved it already; the same resolver keeps an older push (no layout) and

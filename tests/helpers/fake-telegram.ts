@@ -20,6 +20,10 @@ export class FakeTelegram {
   failing = new Map<string, number>();
   /** Methods that fail exactly once more each (method → error_code), then work. */
   failOnce = new Map<string, number>();
+  /** The description a `failing` method answers with (Telegram's own words), else 'failed'. */
+  failText = new Map<string, string>();
+  /** The description a `failOnce` error carries (method → Telegram's words), default "failed once". */
+  failOnceWhy = new Map<string, string>();
   /** File ids whose download is slow (ms). */
   slowFiles = new Map<string, number>();
   /** Methods that answer this many ms late (any method but getUpdates). */
@@ -28,6 +32,10 @@ export class FakeTelegram {
   slowSends = new Map<string, number>();
   /** sendMessage texts in the order they ANSWERED (what the phone shows), not the order sent. */
   delivered: string[] = [];
+  /** Tokens whose bot reads every group message (privacy mode off). Default: privacy mode on. */
+  readsAll = new Set<string>();
+  /** The bot's status per group chat id for getChatMember (default 'member'). */
+  memberStatus = new Map<number, string>();
 
   addBot(token: string, username: string): void {
     this.bots.set(token, { id: Number(token.split(':')[0]), username });
@@ -68,11 +76,12 @@ export class FakeTelegram {
     const bot = this.bots.get(token);
     if (!bot) return res(401, { ok: false, error_code: 401, description: 'Unauthorized' });
     const fail = this.failing.get(method);
-    if (fail) return res(fail, { ok: false, error_code: fail, description: 'failed' });
+    if (fail) return res(fail, { ok: false, error_code: fail, description: this.failText.get(method) ?? 'failed' });
     const once = this.failOnce.get(method);
-    if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: 'failed once' }); }
+    if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: this.failOnceWhy.get(method) ?? 'failed once' }); }
     switch (method) {
-      case 'getMe': return ok({ id: bot.id, is_bot: true, username: bot.username, first_name: bot.username });
+      case 'getMe': return ok({ id: bot.id, is_bot: true, username: bot.username, first_name: bot.username, can_read_all_group_messages: this.readsAll.has(token) });
+      case 'getChatMember': return ok({ status: this.memberStatus.get(Number(params.chat_id)) ?? 'member', user: { id: Number(params.user_id) } });
       case 'getWebhookInfo': return ok({ url: this.webhook });
       case 'getUpdates': {
         const offset = Number(params.offset ?? 0);

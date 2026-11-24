@@ -8,6 +8,9 @@ import { AGENT_SURFACE_EXPANDED_EVENT, agentSurfaceSettings, onAgentSettings, re
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 
+/** Whether Chat is offered here, as the last project of this window to learn it was told. */
+let lastDesktop = false;
+
 /**
  * What the project's navigation shows beside its rows: the AI Team's unread, whether the
  * learning layer is off, whether Chat is offered, the live-chat rollup and whether the chat
@@ -38,7 +41,11 @@ export function useNavBadges() {
   const { data: caps } = useAgentCapabilities();
   const [chatEnabled, setChatEnabled] = useState<boolean>(() => agentSurfaceSettings(readAgentSettings()).enabled);
   useEffect(() => onAgentSettings((cfg) => setChatEnabled(agentSurfaceSettings(cfg).enabled)), []);
-  const showChat = !!caps?.desktop && chatEnabled;
+  // A project opened for the first time has not heard its own answer yet. Until it does the
+  // rail keeps the window's last one (the same app, the same machine): dropping the Chat row for
+  // those few frames moved every row under it up a slot and back (owner, 2026-11-22).
+  if (caps) lastDesktop = !!caps.desktop;
+  const showChat = (caps ? !!caps.desktop : lastDesktop) && chatEnabled;
   // Live chats in THIS project, and whether one of them wants you. The surface publishes the
   // rollup on change only; it starts at zero sessions, so a rail mounted with it never misses
   // a count that mattered.

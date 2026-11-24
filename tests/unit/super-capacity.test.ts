@@ -136,7 +136,7 @@ describe('super delegate', () => {
   }
   async function delegate(body: Record<string, unknown>) {
     const r = res();
-    await handleSuperVerb(req(body), r, { verb: 'delegate' });
+    await handleSuperVerb(req({ model: 'sonnet', ...body }), r, { verb: 'delegate' });
     return r;
   }
 

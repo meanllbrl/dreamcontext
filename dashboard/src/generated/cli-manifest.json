@@ -78,9 +78,10 @@
     },
     {
       "path": "agents history",
-      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember)",
+      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember); `history show <w_id>` prints one past-work trace whole",
       "args": [
-        "<slug>"
+        "<slug>",
+        "[trace]"
       ],
       "valueFlags": [
         "--search",
@@ -99,6 +100,19 @@
       "args": []
     },
     {
+      "path": "agents rate",
+      "desc": "Rate one of a member's finished runs, 1-5 stars, with an optional note that becomes a lesson. --last: its newest finished run (with --quote: the newest one that ended before the quoted words were said). From an agent session it needs --quote with the owner's exact words, and one quote rates one run. After the Super asked him about a job (its event line said rate=ask run=<key>), --run <key> takes his answer from this conversation since that ask, so a one-word answer (\"Dört.\") is his words. --judged (agent session, with --quote and --run): the stars are your reading of his correction; on a run he rated himself his stars stay (kept_owner_stars). A note from an agent on a run that already has his note is kept beside it as a correction, never in its place.",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--run",
+        "--stars",
+        "--note",
+        "--quote"
+      ]
+    },
+    {
       "path": "agents remove",
       "desc": "Delete an agent (refused while an automation runs as it)",
       "args": [
@@ -107,10 +121,123 @@
     },
     {
       "path": "agents revert",
-      "desc": "Take a Super Agent amendment back (refused inside a Claude session or an agent run)",
+      "desc": "Take a Super Agent amendment back (inside a session: only the member itself, on his words with --quote)",
       "args": [
         "<slug>",
         "<id>"
+      ],
+      "valueFlags": [
+        "--quote"
+      ]
+    },
+    {
+      "path": "agents scorecard",
+      "desc": "A member's scorecard: ratings, the owner's lines, lessons, checks and goal",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard check",
+      "desc": "",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--run"
+      ]
+    },
+    {
+      "path": "agents scorecard criteria",
+      "desc": "The owner's lines of what good work looks like",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard criteria add",
+      "desc": "Add a line",
+      "args": [
+        "<member>",
+        "<text>"
+      ]
+    },
+    {
+      "path": "agents scorecard criteria remove",
+      "desc": "Remove a line",
+      "args": [
+        "<member>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard draft",
+      "desc": "",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--run",
+        "--slot"
+      ]
+    },
+    {
+      "path": "agents scorecard fresh",
+      "desc": "Move an unreadable scorecard file aside and start fresh",
+      "args": [
+        "<member>"
+      ]
+    },
+    {
+      "path": "agents scorecard goal",
+      "desc": "The member's optional goal: one Lab insight",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard goal clear",
+      "desc": "Remove the goal",
+      "args": [
+        "<member>"
+      ]
+    },
+    {
+      "path": "agents scorecard goal set",
+      "desc": "Link a Lab insight as the goal",
+      "args": [
+        "<member>",
+        "<insight>"
+      ],
+      "valueFlags": [
+        "--target",
+        "--baseline"
+      ]
+    },
+    {
+      "path": "agents scorecard lesson",
+      "desc": "The lessons his notes became",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard lesson undo",
+      "desc": "Take a lesson out of every later run and chat",
+      "args": [
+        "<member>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard lesson use",
+      "desc": "Use a lesson that waits for a look",
+      "args": [
+        "<member>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard show",
+      "desc": "Print the scorecard",
+      "args": [
+        "<member>"
       ]
     },
     {
@@ -1128,7 +1255,7 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's 78 = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files",
+      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's steps (every repo together, the fast line counted in: at most 2 at once, fewer when its cores or memory are short, 1 at serious or critical heat, critical memory pressure or a load past the cores), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's 78 = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files",
       "args": [
         "[command...]"
       ],
@@ -1367,6 +1494,24 @@
         "--type",
         "--scope",
         "--grep"
+      ]
+    },
+    {
+      "path": "ci",
+      "desc": "Continuous integration from an agent session, without holding it past the shell tool's ceiling",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "ci wait",
+      "desc": "Wait for a CI run to finish, polling gh run view (never gh run watch): exit 0 = green, 1 = red (failed jobs and the failed log, as data), 4 = still running after the slice (run the same command again), 2 = bad input or no gh. In an agent session a call stops at 540s, before the 600 s tool ceiling. Never reruns a run",
+      "args": [
+        "[run-id]"
+      ],
+      "valueFlags": [
+        "--branch",
+        "--sha",
+        "--slice"
       ]
     },
     {
@@ -2605,7 +2750,7 @@
     },
     {
       "path": "learn",
-      "desc": "Store a rule he stated (his preference, this project's rule, or a member's lesson) and print the line to repeat to him",
+      "desc": "Store a rule he stated (his preference, this project's rule, or how one AI Team member works) and print the line to repeat to him",
       "args": [
         "[text]"
       ],
@@ -2648,7 +2793,8 @@
         "--at",
         "--when",
         "--doc",
-        "--scope"
+        "--scope",
+        "--member"
       ]
     },
     {
@@ -2676,7 +2822,10 @@
     {
       "path": "learn list",
       "desc": "The rules he taught: his preferences and this project's rules, with who wrote each",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--member"
+      ]
     },
     {
       "path": "learn show",
@@ -3296,7 +3445,7 @@
     },
     {
       "path": "migrations pending",
-      "desc": "Print pending agent task instructions for any unfinished migrations",
+      "desc": "Print the agent migration tasks that have work waiting, with their instructions",
       "args": []
     },
     {
@@ -3326,6 +3475,25 @@
         "--link",
         "--sound"
       ]
+    },
+    {
+      "path": "ops",
+      "desc": "The project's working-facts card: staging and preview URLs, basic-auth variable NAMES, the screenshot script (data only, never a command)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "ops set",
+      "desc": "Write one field of the card; each is checked (no secrets, no login in a URL, a tracked script)",
+      "args": [
+        "<key>",
+        "<value...>"
+      ]
+    },
+    {
+      "path": "ops show",
+      "desc": "Print the card's fields that pass their checks (a field that fails is left out)",
+      "args": []
     },
     {
       "path": "patterns",
@@ -3770,6 +3938,39 @@
       ]
     },
     {
+      "path": "shares",
+      "desc": "Live links (one app or one whiteboard over its own tunnel): list and close them. Opening one is the owner's click in the app",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "shares close",
+      "desc": "Close a live link now (its guests see \"Bu paylaşım kapandı\"); `all` closes every one",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "shares list",
+      "desc": "List live links: what is shared, state, people connected, password yes/no (never the link)",
+      "args": []
+    },
+    {
+      "path": "shots",
+      "desc": "Screenshot one URL at a phone and a desktop width and list its console errors, through the browser limit and the machine's browser slots (exit 0 = shots and no console error, 1 = the page failed or logged errors, 2 = bad input or no playwright, 77 = past the limit, NOTHING ran, 75 = no slot came free)",
+      "args": [
+        "<url>"
+      ],
+      "valueFlags": [
+        "--width",
+        "--out",
+        "--wait-for",
+        "--script",
+        "--because",
+        "--max-wait"
+      ]
+    },
+    {
       "path": "sleep",
       "desc": "Track sleep debt and consolidation state",
       "args": [],
@@ -4083,7 +4284,7 @@
     },
     {
       "path": "super clean",
-      "desc": "Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children's merged worktrees, release worktrees idle 2+ days, any worktree idle 7+ days, node_modules / Rust target of worktrees idle 1+ day, this repo's old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI's target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept",
+      "desc": "Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children's clean worktrees on a branch, release worktrees idle 2+ days, any worktree idle 7+ days, git-ignored node_modules, dist and Rust target of worktrees idle 1+ day, this repo's old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI's target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept",
       "args": []
     },
     {
@@ -4098,7 +4299,7 @@
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap (15 live children, the only limit), the job is kept in the pool (`held`)",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap (15 live children, the only limit), the job is kept in the pool (`held`). With --worktree/--slug, refused (`worktree_busy`, naming the child) while a live child already works in that worktree",
       "args": [],
       "valueFlags": [
         "--prompt",
@@ -4107,11 +4308,13 @@
         "--note",
         "--origin",
         "--outward",
+        "--rule",
         "--for",
         "--brief",
         "--mode",
         "--model",
         "--effort",
+        "--risk",
         "--worktree",
         "--slug",
         "--base",
@@ -4122,7 +4325,7 @@
     },
     {
       "path": "super end",
-      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks",
+      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks: the answer then carries `refused: true` (several children: `notEnded` and a `warning`), and nothing was ended",
       "args": [
         "[children...]"
       ]
@@ -4168,12 +4371,13 @@
     },
     {
       "path": "super merge",
-      "desc": "Merge the branch each child's worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)",
+      "desc": "Merge the branch each child's worktree is on now (an ended child: its branch) into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed). The reply's `returns` lists the work not back in remote dev",
       "args": [
         "<children...>"
       ],
       "valueFlags": [
-        "--into"
+        "--into",
+        "--base"
       ]
     },
     {
@@ -4223,6 +4427,14 @@
       ]
     },
     {
+      "path": "super note link",
+      "desc": "Tie messages of his to a line (by their <owner-msg ref>): ones you judge are about it though no flag linked them, like a follow-up with a second example. Pressing the line then shows them and your answers to them",
+      "args": [
+        "<id>",
+        "<refs...>"
+      ]
+    },
+    {
       "path": "super note status",
       "desc": "Set a line's status: not-started | in-progress | almost-done | waiting | done (the owner's own lines too, when it helps him)",
       "args": [
@@ -4261,10 +4473,12 @@
         "--note",
         "--origin",
         "--outward",
+        "--rule",
         "--brief",
         "--mode",
         "--model",
         "--effort",
+        "--risk",
         "--worktree",
         "--slug",
         "--base",
@@ -4346,7 +4560,7 @@
     },
     {
       "path": "super resume",
-      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others",
+      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others. Refused (`worktree_busy`, naming it) while another live child works in its worktree",
       "args": [
         "<child>"
       ],
@@ -4354,7 +4568,30 @@
         "--mode",
         "--model",
         "--effort",
+        "--risk",
         "--origin"
+      ]
+    },
+    {
+      "path": "super returns",
+      "desc": "LOCAL, read-only: the work of a cut not yet back in remote dev (awaiting, in a PR, in a rescue branch, cut-fit), each group with its action and commands, and what installing this cut would DROP from each installed build. Never pushes, opens a PR or moves a branch",
+      "args": [],
+      "group": true,
+      "valueFlags": [
+        "--repo",
+        "--from",
+        "--installed-from",
+        "--mark-fit",
+        "--why"
+      ]
+    },
+    {
+      "path": "super returns ask",
+      "desc": "Super only: ONE owner card \"Kesim <topic> → dev'e dönüş\" (Hepsine aç / Seçeyim / Şimdi değil) with the numbered report page; the same list answered before is never asked again (returns_asked)",
+      "args": [],
+      "valueFlags": [
+        "--topic",
+        "--repo"
       ]
     },
     {
@@ -4365,10 +4602,13 @@
     },
     {
       "path": "super room say",
-      "desc": "Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`",
+      "desc": "Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. A `dream-voice` block in the text goes as a voice message, a `![name](path)` picture as a photo. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`, `bad_file`",
       "args": [
         "<request>",
-        "<text>"
+        "[text]"
+      ],
+      "valueFlags": [
+        "--file"
       ]
     },
     {
@@ -4449,7 +4689,7 @@
     },
     {
       "path": "super state",
-      "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "desc": "Children (each with its live status: working | idle | background | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
     },
     {
@@ -4460,7 +4700,7 @@
     },
     {
       "path": "super team amend",
-      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
+      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. On his word (--quote with his words typed in this chat, about the lines it changes) no daily ceiling counts it, and the reply's first field is `AMENDED <id>`: repeat it to him. A global member (every project) changes only from its OWN Super, on his word; a project's Super relays to it with `team ask` instead. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global` (a global member, not on its own word from him)",
       "args": [
         "<member>"
       ],
@@ -4493,6 +4733,16 @@
         "--model",
         "--effort",
         "--origin"
+      ]
+    },
+    {
+      "path": "super team cancel",
+      "desc": "The project's Super Agent only: close a team job you gave that will not end by itself (its member was deleted, it is no longer wanted, it sits \"working\" with nothing behind it). Its card reads failed (\"Cancelled by the Super Agent\"), nothing about it is told again, and the member's own request closes with it; nothing is deleted. A member gone from the AI Team is concluded by itself. Refused: `unknown_team` (404), `already_closed` (409, its done or stuck was told), `main_only` (403)",
+      "args": [
+        "<job>"
+      ],
+      "valueFlags": [
+        "--why"
       ]
     },
     {
@@ -4529,7 +4779,9 @@
       "valueFlags": [
         "--mode",
         "--model",
-        "--effort"
+        "--effort",
+        "--risk",
+        "--origin"
       ]
     },
     {
@@ -4545,7 +4797,7 @@
     },
     {
       "path": "super worktree remove",
-      "desc": "Remove a child's worktree; refuses one that is dirty or unmerged",
+      "desc": "Remove a child's clean worktree and keep its branch (in git and in the record); refuses a dirty one or a detached HEAD no ref holds",
       "args": [
         "<child>"
       ]

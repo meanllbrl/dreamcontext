@@ -11,7 +11,10 @@ import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
+import { anchorScroll, filterProjectRows, hiddenGroupMark, nearestRow, ownMembersOf, projectRowKey, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type SidebarMode } from './drawerModel';
+import { BrandMark } from '../../brand/BrandMark';
+import type { BoardsEntry } from './boardsFanout';
+import { SidebarBoards } from './SidebarBoards';
 import './ChatDrawer.css';
 import { HiddenGroupToggle } from './HiddenGroupToggle';
 
@@ -31,6 +34,10 @@ export interface ChatDrawerProps {
   onClose(): void;
   onResize(width: number): void;
   onToggleExpanded(name: string): void;
+  /** The desktop sidebar's one-open-project rule (wb-sol-panel, option A): a FOLDED project's
+   *  header on Chat and Whiteboards goes there and opens only it. Absent (device shells): every
+   *  header only folds and unfolds, as before. */
+  onEnterProject?(name: string): void;
   onIntent(vault: string, intent: DrawerIntent): void;
   onHistory(): void;
   onRelations(): void;
@@ -48,6 +55,8 @@ export interface ChatDrawerProps {
   onHideProject?(name: string): void;
   /** "Show again" on a hidden project: back into the list where it was. */
   onShowProject?(name: string): void;
+  /** Sliding away after it stopped being docked (WindowChrome): out of the row, not clickable. */
+  leaving?: boolean;
   /** "+" beside Projects: the app's Add Project flow. */
   onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
@@ -63,6 +72,31 @@ export interface ChatDrawerProps {
   /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view);
    *  `create` opens it on New member, `global` with "All projects" picked. */
   onManage?(vault: string | null, opts?: { create?: boolean; global?: boolean }): void;
+  /** The local new shell's ONE sidebar (tek-kenar C3): docked on every page, its body following
+   *  the page on screen. Absent: today's chat drawer (device shells). */
+  sidebar?: SidebarProps;
+}
+
+export interface SidebarProps {
+  mode: SidebarMode;
+  /** Every project folded (`collapseAll`), so each row carries its end mark: projects and boards modes. */
+  navRows: DrawerProjectRow[];
+  /** Boards mode: the projects whose boards are shown (the shared expanded set). */
+  boardsOpen: readonly string[];
+  boards: ReadonlyMap<string, BoardsEntry>;
+  /** The project a move is landing out of sight (C2): its row is lit and busy. */
+  preparingVault: string | null;
+  /** "Search boards…" (boards mode): filters every listed project's boards, the explorer's too. */
+  boardQuery: string;
+  onBoardQuery(q: string): void;
+  /** A project row: the same page in that project (C5). */
+  onSwitch(name: string): void;
+  /** Another project's board row: that board there (C2 prepare). */
+  onOpenBoard(vault: string, slug: string): void;
+  onSettings(): void;
+  /** The active project's explorer and its New board / New folder portal into these (C4). */
+  setBoardsSlot(el: HTMLElement | null): void;
+  setBoardsFootSlot(el: HTMLElement | null): void;
 }
 
 interface Menu { kind: 'project' | 'new' | 'window' | 'new-chat'; name?: string; windowId?: string; x: number; y: number }
@@ -266,8 +300,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const searchRef = useRef<HTMLInputElement>(null);
   const searching = !!search?.trim();
   // A search reaches every project, hidden ones too, in one flat list.
-  const split = splitHiddenRows(p.rows, p.hidden ?? []);
-  const shownRows = searching ? filterProjectRows(p.rows, search!) : split.shown;
+  // The projects and boards modes list the same projects, every one folded with its mark.
+  const listRows = p.sidebar && p.sidebar.mode !== 'chat' ? p.sidebar.navRows : p.rows;
+  const split = splitHiddenRows(listRows, p.hidden ?? []);
+  const shownRows = searching ? filterProjectRows(listRows, search!) : split.shown;
   const hiddenRows = searching ? [] : split.hidden;
   const listRef = useRef<DrawerProjectRow[]>(shownRows);
   listRef.current = shownRows;
@@ -283,6 +319,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-menu-open={menu?.kind === 'new-chat' && menu.name === row.name ? 'true' : undefined}
             data-hidden-project={inGroup ? row.name : undefined}
+            data-open={accordion && row.expanded ? 'true' : undefined}
             data-drop-before={!inGroup && drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
             {/* Sibling buttons, never one inside the other: the row's own toggle (name, notes, mark),
@@ -291,15 +328,16 @@ export function ChatDrawer(p: ChatDrawerProps) {
               onPointerDown={p.device ? undefined : (e) => { if (!searching && !inGroup) startDrag(e, row.name); }}
               onClick={(e) => {
                 if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
-                p.onToggleExpanded(row.name);
+                if (accordion) headerPress(row, e.currentTarget); else p.onToggleExpanded(row.name);
               }}
               onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
               {(words) => (<>
               <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
                 aria-label={words ? `${[row.name, row.otherWindow ? t('shell.drawer.otherWindow') : '', row.asleep ? t('shell.drawer.asleep') : ''].filter(Boolean).join(', ')} (${words})` : undefined}
                 title={words ? `${row.name} (${words})` : undefined}
-                onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
-                onKeyDown={(e) => { if (!searching) onRowKey(e, row.name); }}>
+                onClick={(e) => { if (justDragged.current) return; if (accordion) headerPress(row, e.currentTarget); else p.onToggleExpanded(row.name); }}
+                onKeyDown={(e) => headerKey(e, row, row.expanded)}>
+                {accordion && <Chevron open={row.expanded} />}
                 <span className="ns-dr-pic">
                   {row.logo
                     ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
@@ -327,9 +365,221 @@ export function ChatDrawer(p: ChatDrawerProps) {
               </span>
               </>)}
             </ProjectRowShell>
-            {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
+            {/* Open but not on screen = the project a move is landing in (the accordion opens it at
+                once). A press on its rows is a move into it, never input that cancels the move:
+                cancelled, the project folds under the pointer and the click lands back in A. */}
+            {row.expanded && <div className="ns-dr-children" data-testid="drawer-project-body" data-move={row.active ? undefined : 'true'}>{row.children.map((c) => child(row, c))}</div>}
           </div>
   );
+
+  /* ── The single sidebar (tek-kenar C3) ── */
+  const sb = p.sidebar;
+  const mode: SidebarMode = sb?.mode ?? 'chat';
+  const navMode = !!sb && mode !== 'chat';
+  /** Chat and Whiteboards on the desktop sidebar: one project open (wb-sol-panel). A folded
+   *  header enters its project; the open project's header only folds and unfolds. */
+  const accordion = !!sb && !p.device && !!p.onEnterProject && (mode === 'chat' || mode === 'boards');
+  /** A header press under the accordion: the project on screen folds or unfolds, any other is entered. */
+  const headerPress = (row: DrawerProjectRow, el: Element) => {
+    if (row.active) {
+      // A move to another project still landing: the press ends it (switchTo's own rule) and the
+      // open set falls back to this project; otherwise it only folds or unfolds.
+      if (sb?.preparingVault && sb.preparingVault !== row.name) sb.onSwitch(row.name);
+      else p.onToggleExpanded(row.name);
+      return;
+    }
+    // WebKit never focuses a clicked button: the pressed header keeps focus.
+    const own = el.closest('.ns-dr-proj')?.querySelector<HTMLElement>('.ns-dr-toggle');
+    if (own && document.activeElement !== own) own.focus({ preventScroll: true });
+    p.onEnterProject?.(row.name);
+    if (p.floating) p.onClose();
+  };
+  /** ← folds and → unfolds the open project's header (its `aria-expanded`); ⌥↑/⌥↓ still move it. */
+  const headerKey = (e: ReactKeyboardEvent, row: DrawerProjectRow, open: boolean) => {
+    // Not while a project search holds the keys, nor while another project's move is landing.
+    const landing = !!sb?.preparingVault && sb.preparingVault !== row.name;
+    if (accordion && row.active && !searching && !landing && !e.altKey && ((e.key === 'ArrowLeft' && open) || (e.key === 'ArrowRight' && !open))) {
+      e.preventDefault();
+      p.onToggleExpanded(row.name);
+      return;
+    }
+    if (!searching) onRowKey(e, row.name);
+  };
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const spacerTopRef = useRef<HTMLDivElement | null>(null);
+  const spacerBottomRef = useRef<HTMLDivElement | null>(null);
+  /** Anchor layer: the clicked row's key and on-screen y, kept until the move lands. */
+  const anchor = useRef<{ key: string; y: number; target: string; until: number } | null>(null);
+  const activeName = (sb?.navRows ?? p.rows).find((r) => r.active)?.name ?? null;
+  const setSpacers = (top: number, bottom: number) => {
+    if (spacerTopRef.current) spacerTopRef.current.style.height = `${top}px`;
+    if (spacerBottomRef.current) spacerBottomRef.current.style.height = `${bottom}px`;
+  };
+  const remember = (el: Element | null, target: string) => {
+    const row = el?.closest<HTMLElement>('[data-row-key]');
+    if (!row) return;
+    // The clicked row holds focus from the click on: WebKit never focuses a clicked button, so
+    // focus would fall to body when A (where it was) goes inert at activation.
+    const own = row.matches('button') ? row : row.querySelector<HTMLElement>('.ns-dr-toggle');
+    if (own && document.activeElement !== own) own.focus({ preventScroll: true });
+    anchor.current = { key: row.dataset.rowKey ?? '', y: row.getBoundingClientRect().top, target, until: Date.now() + 2500 };
+  };
+  /** Puts the anchored row back under the pointer and focuses it. True once done. */
+  const correct = (): boolean => {
+    const a = anchor.current;
+    const sc = scrollRef.current;
+    if (!a || !sc || activeName !== a.target) return false;
+    const found = Array.from(sc.querySelectorAll<HTMLElement>(`[data-row-key="${CSS.escape(a.key)}"]`)).map((el) => ({ el, top: 0 }));
+    setSpacers(0, 0);
+    for (const f of found) f.top = f.el.getBoundingClientRect().top;
+    const best = nearestRow(found, a.y);
+    if (!best) {
+      // Filtered away: focus the active project's row.
+      sc.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(projectRowKey(a.target))}"] .ns-dr-toggle`)?.focus({ preventScroll: true });
+      return false;
+    }
+    const r = anchorScroll({ scrollTop: sc.scrollTop, rowTop: best.top, wantTop: a.y, max: sc.scrollHeight - sc.clientHeight });
+    setSpacers(r.spacerTop, r.spacerBottom);
+    sc.scrollTop = r.scrollTop;
+    const focusEl = best.el.matches('button') ? best.el : best.el.querySelector<HTMLElement>('.ns-dr-toggle, .wbx-row-open, button');
+    focusEl?.focus({ preventScroll: true });
+    return true;
+  };
+  // The swap happens in the activation commit: correct in its layout effect, and again (before
+  // paint, a MutationObserver's microtask) when the active explorer's rows arrive a commit later.
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    if (!a || activeName !== a.target) return undefined;
+    correct();
+    const sc = scrollRef.current;
+    if (!sc || typeof MutationObserver === 'undefined') { anchor.current = null; return undefined; }
+    const mo = new MutationObserver(() => { if (anchor.current) correct(); });
+    mo.observe(sc, { childList: true, subtree: true });
+    const stop = () => { mo.disconnect(); anchor.current = null; };
+    const timer = window.setTimeout(stop, 600);
+    sc.addEventListener('wheel', stop, { once: true, passive: true });
+    sc.addEventListener('pointerdown', stop, { once: true });
+    return () => { window.clearTimeout(timer); mo.disconnect(); sc.removeEventListener('wheel', stop); sc.removeEventListener('pointerdown', stop); };
+  }, [activeName]); // eslint-disable-line react-hooks/exhaustive-deps -- once per activation
+  // While the move is out of sight the owner may scroll the column: the row's y follows it. The
+  // spacer goes on his next wheel, and when the mode changes.
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return undefined;
+    const onScroll = () => {
+      const a = anchor.current;
+      if (!a || activeName === a.target) return;
+      if (Date.now() > a.until) { anchor.current = null; return; }
+      const row = sc.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(a.key)}"]`);
+      if (row) a.y = row.getBoundingClientRect().top;
+    };
+    const onWheel = () => { if (!anchor.current) setSpacers(0, 0); };
+    sc.addEventListener('scroll', onScroll, { passive: true });
+    sc.addEventListener('wheel', onWheel, { passive: true });
+    return () => { sc.removeEventListener('scroll', onScroll); sc.removeEventListener('wheel', onWheel); };
+  }, [activeName]);
+  useEffect(() => { if (!anchor.current) setSpacers(0, 0); }, [mode]);
+
+  /* ── The open project's height (wb-sol-panel D4): its body scrolls inside itself, capped so
+     every other header stays in the column; with so many projects that they fill half of it, the
+     body keeps half and the column scrolls, the open header sticking to its top. Measured: the
+     column less everything but the body, on every render and every resize of the column. ── */
+  const fitOpen = () => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const body = sc.querySelector<HTMLElement>('.ns-dr-project[data-open] > :not(.ns-dr-proj)');
+    sc.querySelectorAll<HTMLElement>('[data-open-body]').forEach((el) => {
+      if (el !== body) { el.style.maxHeight = ''; delete el.dataset.openBody; }
+    });
+    if (!accordion || !body) return;
+    body.dataset.openBody = 'true';
+    // The rows' own extent (scrollHeight never reads below the column, which would freeze the cap).
+    const first = sc.firstElementChild?.getBoundingClientRect();
+    const last = sc.lastElementChild?.getBoundingClientRect();
+    const cs = getComputedStyle(sc);
+    const rows = first && last ? last.bottom - first.top : 0;
+    const rest = rows + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) - body.offsetHeight;
+    const cap = Math.max(Math.round(sc.clientHeight / 2), sc.clientHeight - rest);
+    body.style.maxHeight = `${cap}px`;
+  };
+  useLayoutEffect(fitOpen);
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc || !accordion || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => fitOpen());
+    ro.observe(sc);
+    return () => ro.disconnect();
+  }, [accordion]); // eslint-disable-line react-hooks/exhaustive-deps -- fitOpen reads refs only
+
+  /** A project row in the projects and boards modes: one click lands on the same page there. */
+  const navRow = (row: DrawerProjectRow, i: number, inGroup: boolean) => {
+    if (!sb) return null;
+    const busy = sb.preparingVault === row.name;
+    // Under the accordion the open set alone decides (the project on screen can be folded); a
+    // folded header's press opens its row at once, while the move lands out of sight.
+    const boardsOpen = mode === 'boards' && (accordion ? sb.boardsOpen.includes(row.name) : (row.active || sb.boardsOpen.includes(row.name)));
+    const entry = sb.boards.get(row.name);
+    const count = mode === 'boards' && !boardsOpen && entry?.state === 'ok' ? entry.boards.length : null;
+    // The project on screen: a press ends a pending prepare (switchTo's own rule), nothing else.
+    const go = (el: Element) => { if (accordion) { headerPress(row, el); return; } if (row.active) { sb.onSwitch(row.name); return; } remember(el, row.name); sb.onSwitch(row.name); if (p.floating) p.onClose(); };
+    return (
+      <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
+        data-hidden-project={inGroup ? row.name : undefined}
+        data-open={accordion && boardsOpen ? 'true' : undefined}
+        data-drop-before={!inGroup && drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
+        data-dragging={drag?.name === row.name ? 'true' : undefined}>
+        {/* A drag-reorder started on a project row is a move too (`data-move`): it never cancels a
+            prepare. A right-click (menu) is input and does. */}
+        <ProjectRowShell row={row} className={`ns-dr-row ns-dr-proj${row.active || busy ? ' is-cur' : ''}`}
+          data-row-key={projectRowKey(row.name)} data-move="true" aria-busy={busy ? true : undefined}
+          onPointerDown={(e) => { if (!searching && !inGroup) startDrag(e, row.name); }}
+          onClick={(e) => {
+            if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
+            go(e.currentTarget);
+          }}
+          onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
+          {(words) => (<>
+            {mode === 'boards' && !accordion && !row.active && (
+              <button type="button" className="ns-dr-act ns-sb-chev" aria-expanded={boardsOpen} data-testid="sidebar-boards-chevron"
+                aria-label={row.name} onClick={(e) => { e.stopPropagation(); p.onToggleExpanded(row.name); }}>
+                <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d={boardsOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
+              </button>
+            )}
+            <button type="button" className="ns-dr-toggle" data-testid="sidebar-project-row" data-move="true"
+              aria-current={row.active ? 'true' : undefined}
+              aria-label={`${[row.name, row.otherWindow ? t('shell.drawer.otherWindow') : '', row.asleep ? t('shell.drawer.asleep') : ''].filter(Boolean).join(', ')}${words ? ` (${words})` : ''}`}
+              title={words ? `${row.name} (${words})` : row.name}
+              aria-expanded={accordion ? boardsOpen : undefined}
+              onClick={(e) => { if (!justDragged.current) go(e.currentTarget); }}
+              onKeyDown={(e) => headerKey(e, row, boardsOpen)}>
+              {accordion && <Chevron open={boardsOpen} />}
+              <span className="ns-dr-pic">
+                {row.logo
+                  ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
+                  : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
+              </span>
+              <span className="ns-dr-t">{row.name}</span>
+              {count !== null && <span className="ns-sb-count" data-testid="sidebar-board-count">{count}</span>}
+              {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
+              {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
+              <ProjectMark row={row} />
+            </button>
+            <span className="ns-dr-acts">
+              <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
+                data-testid="drawer-project-more" aria-haspopup="menu"
+                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
+                <svg className="ns-dr-ico ns-dr-ico--fill" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></svg>
+              </button>
+            </span>
+          </>)}
+        </ProjectRowShell>
+        {boardsOpen && (row.active
+          ? <div className="ns-sb-explorer" ref={sb.setBoardsSlot} data-testid="sidebar-explorer" />
+          : <SidebarBoards vault={row.name} entry={entry} query={sb.boardQuery}
+              onOpen={(slug, el) => { remember(el, row.name); sb.onOpenBoard(row.name, slug); if (p.floating) p.onClose(); }} />)}
+      </div>
+    );
+  };
 
   const pick = (vault: string, intent: DrawerIntent) => {
     p.onIntent(vault, intent);
@@ -465,10 +715,28 @@ export function ChatDrawer(p: ChatDrawerProps) {
   };
 
   return (
-    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
-      ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer"
+    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} data-leaving={p.leaving ? 'true' : undefined}
+      inert={p.leaving || undefined} style={{ width: p.floating ? undefined : p.width }}
+      ref={rootRef} aria-label={sb ? t('shell.sidebar.label') : t('shell.drawer.projects')} data-testid="chat-drawer"
+      data-sidebar={sb ? 'true' : undefined} data-mode={sb ? mode : undefined}
       onMouseEnter={() => p.onHover?.(true)} onMouseLeave={() => p.onHover?.(false)}>
-      <div className="ns-dr-scroll">
+      {sb && (
+        <div className="ns-sb-head" data-testid="sidebar-brand">
+          <BrandMark size={18} />
+          <span className="ns-sb-word">dream<span>context</span></span>
+        </div>
+      )}
+      {sb && mode === 'boards' && (
+        <label className="ns-sb-search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2l3.3 3.3" /></svg>
+          <input type="search" value={sb.boardQuery} placeholder={t('whiteboard.switcher.search')} aria-label={t('whiteboard.switcher.search')}
+            data-testid="sidebar-board-search" onChange={(e) => sb.onBoardQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape' && sb.boardQuery) { e.preventDefault(); e.stopPropagation(); sb.onBoardQuery(''); } }} />
+        </label>
+      )}
+      <div className="ns-dr-scroll" ref={scrollRef} data-scroll-frame="true" data-accordion={accordion ? 'true' : undefined}>
+        <div className="ns-sb-spacer" ref={spacerTopRef} aria-hidden="true" />
+        {!navMode && (<>
         <button ref={newRowRef} type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-window"
           onClick={(e) => openMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h3l7-7-3-3-7 7v3zM9 4l3 3" /></svg>
@@ -491,6 +759,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <span className="ns-dr-t">{t('shell.drawer.relations')}</span>
         </button>
         )}
+        </>)}
 
         <div className="ns-dr-sec" data-searching={search !== null ? 'true' : undefined}>
           {search === null ? <span>{t('shell.drawer.projects')}</span> : (
@@ -514,16 +783,26 @@ export function ChatDrawer(p: ChatDrawerProps) {
           </span>
         </div>
         {searching && shownRows.length === 0 && <div className="ns-dr-empty" data-testid="drawer-project-nomatch">{t('shell.drawer.noProjectMatch')}</div>}
-        {shownRows.map((row, i) => projectRow(row, i, false))}
+        {shownRows.map((row, i) => (navMode ? navRow(row, i, false) : projectRow(row, i, false)))}
         {drag && drag.over >= shownRows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
         {hiddenRows.length > 0 && (
           <div className="ns-dr-hidden" data-open={hiddenOpen ? 'true' : undefined} data-testid="drawer-hidden-group">
             <HiddenGroupRow rows={hiddenRows} open={hiddenOpen} label={t('shell.drawer.hiddenGroup')} onToggle={() => setHiddenOpen((o) => !o)} />
-            {hiddenOpen && hiddenRows.map((row, i) => projectRow(row, i, true))}
+            {hiddenOpen && hiddenRows.map((row, i) => (navMode ? navRow(row, i, true) : projectRow(row, i, true)))}
           </div>
         )}
+        <div className="ns-sb-spacer" ref={spacerBottomRef} aria-hidden="true" />
       </div>
       {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
+      {sb && (
+        <div className="ns-sb-foot">
+          {mode === 'boards' && <div className="ns-sb-boards-foot" ref={sb.setBoardsFootSlot} />}
+          <button type="button" className="ns-dr-row ns-dr-entry" data-testid="sidebar-settings" onClick={() => { sb.onSettings(); if (p.floating) p.onClose(); }}>
+            <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7" /><circle cx="11" cy="4.5" r="1.5" /><circle cx="5" cy="11.5" r="1.5" /></svg>
+            <span className="ns-dr-t">{t('nav.settings')}</span>
+          </button>
+        </div>
+      )}
       {teamOpen && (
         <TeamList title={t('drawer.team.listTitle').replace('{project}', () => teamOpen.vault)} members={teamOf(teamOpen.vault)}
           sheet={phone} testid="team-list" vault={teamOpen.vault} anchor={{ x: teamOpen.x, y: teamOpen.y }}
@@ -533,7 +812,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           onClose={() => setTeamOpen(null)} />
       )}
 
-      {!p.floating && <div className="ns-dr-handle" onPointerDown={startResize} aria-hidden="true" />}
+      {!p.floating && <div className="ns-dr-handle" data-sidebar-frame="true" onPointerDown={startResize} aria-hidden="true" />}
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
 
       {menu && (
@@ -685,6 +964,16 @@ function HiddenGroupRow({ rows, open, label, onToggle }: { rows: readonly Drawer
     <HiddenGroupToggle open={open} label={label} count={rows.length} onToggle={onToggle} data-testid="drawer-hidden-row" {...askRow(mark.asking)}
       aria-label={`${label} (${rows.length}${words ? `, ${words}` : ''})`}
       end={<span className="ns-dr-end" data-testid="drawer-hidden-mark"><StatusMark {...mark} /></span>} />
+  );
+}
+
+/** The header's fold mark (wb-sol-panel D3): always drawn, turned down when open; never a target
+ *  of its own, the whole header is. */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg className="ns-dr-ico ns-dr-chev" data-open={open ? 'true' : undefined} data-testid="drawer-project-chevron" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M6 4l4 4-4 4" />
+    </svg>
   );
 }
 

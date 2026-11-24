@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { projectKey } from '../local-store.js';
-import { parsePattern, renderPattern, type RecordLessonInput } from '../automations/store.js';
+import { addLesson, parsePattern, renderPattern, type RecordLessonInput } from '../automations/store.js';
 import { globalMemoryDir } from './scope.js';
 
 /**
@@ -33,6 +33,11 @@ const JOURNAL_NAME = /^\d{8}T\d{9}Z-[0-9a-f]{16}-[A-Za-z0-9_-]{1,64}\.md$/;
 
 export function journalDir(slug: string, home?: string): string {
   return join(globalMemoryDir(slug, home), 'journal');
+}
+
+/** Where folded journal files are kept (D6): never deleted, out of the journal's way. */
+export function foldedDir(slug: string, home?: string): string {
+  return join(globalMemoryDir(slug, home), 'folded');
 }
 
 function memoryPath(slug: string, home?: string): string {
@@ -159,7 +164,7 @@ function apply(pattern: string, entries: readonly JournalEntry[]): string {
   const p = parsePattern(pattern);
   for (const e of entries) {
     if (e.playbook !== null) p.playbook = e.playbook;
-    if (e.lesson) p.lessons.unshift({ date: e.date, text: e.lesson });
+    if (e.lesson) p.lessons = addLesson(p.lessons, { date: e.date, text: e.lesson });
   }
   return renderPattern(p);
 }
@@ -220,8 +225,15 @@ export function consolidateGlobalMemory(
       writeAtomic(memoryPath(slug, opts.home), matter.stringify(`${apply(mem.pattern, pending)}\n`, { folded }));
     }
     if (opts.crashAfterWrite) return { folded: pending.length, busy: false };
+    // D6: a folded journal file is kept (moved to memory/folded/), never deleted.
+    const keep = foldedDir(slug, opts.home);
     for (const name of folded) {
-      try { rmSync(join(journalDir(slug, opts.home), name), { force: true }); } catch { /* the next pass drops it */ }
+      const from = join(journalDir(slug, opts.home), name);
+      try {
+        if (!JOURNAL_NAME.test(name) || !lstatSync(from).isFile()) continue;
+        ensureDir(keep);
+        renameSync(from, join(keep, name));
+      } catch { /* the next pass moves it */ }
     }
     return { folded: pending.length, busy: false };
   } finally {

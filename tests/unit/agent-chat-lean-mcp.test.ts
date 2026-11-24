@@ -124,7 +124,8 @@ vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
   return { ...real, resolveRecallMode: () => state.vaultMode };
 });
 
-const { startChatSession, leanChildMcpArgs, leanMcpForUpgrade, mcpConfigArgs } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, leanChildMcpArgs, leanMcpForUpgrade, mcpConfigArgs, firstReadUpgrade } = await import('../../src/server/routes/agent-chat.js');
+const { mintFirstReadTicket, mintCrewTicket, takeFirstReadLock, releaseFirstReadLock } = await import('../../src/lib/super/delegating.js');
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { setAutoSwitchEnabled } = await import('../../src/lib/claude-accounts.js');
 const {
@@ -373,6 +374,42 @@ describe('the surface briefing of a delegated child', () => {
     expect(lean).toMatch(/Never look for it among peers/);
     expect(briefingOf(spawnChat().child!)).not.toContain('Reaching the Super Agent');
   });
+
+  // Owner 2026-11-22: the Super forgot `--mcp`, the child never learned a server sat set up for
+  // the project, and it worked around it. The briefing now names what it may ask for.
+  it('a lean child is told which set-up servers it may ask for on its mcp card; a normal chat is not', () => {
+    const none = briefingOf(spawnChat({ mode: 'develop', leanMcp: [] }).child!);
+    expect(none).toContain('## MCP servers you may ask for');
+    expect(none).toContain('started with none of the project\'s MCP servers');
+    expect(none).toMatch(/not loaded in this chat, so this chat cannot use them until it asks: apple-mail, fathom, github, whatsapp\./);
+    expect(none).toContain('send ONE `mcp` card');
+    const some = briefingOf(spawnChat({ mode: 'develop', leanMcp: ['whatsapp'] }).child!);
+    expect(some).toContain('This chat has these MCP servers: whatsapp.');
+    expect(some).toMatch(/until it asks: apple-mail, fathom, github\./);
+    const all = briefingOf(spawnChat({ mode: 'develop', leanMcp: ['whatsapp', 'apple-mail', 'fathom', 'github'] }).child!);
+    expect(all).not.toContain('MCP servers you may ask for');
+    expect(briefingOf(spawnChat().child!)).not.toContain('MCP servers you may ask for');
+  });
+});
+
+describe('childMcpOfferLine', () => {
+  it('connectors only for a Claude child, and never one its account is known to lack', async () => {
+    const { childMcpOfferLine } = await import('../../src/lib/super/lean-mcp.js');
+    const local = new Map<string, unknown>([['posthog', {}]]);
+    const connectors = new Map([
+      ['notion', { alias: 'notion', name: 'claude.ai Notion', urls: { me: 'https://n' } }],
+      ['slack', { alias: 'slack', name: 'claude.ai Slack', urls: { other: 'https://s' } }],
+    ]);
+    const claude = childMcpOfferLine({ have: [], local, connectors, bridge: false, accountId: 'me', read: new Set(['me', 'other']) });
+    expect(claude).toMatch(/until it asks: notion, posthog\./);
+    const unread = childMcpOfferLine({ have: [], local, connectors, bridge: false, accountId: 'me', read: new Set(['other']) });
+    expect(unread).toMatch(/until it asks: notion, posthog, slack\./);
+    const codex = childMcpOfferLine({ have: [], local, connectors, bridge: true, accountId: 'me', read: new Set() });
+    expect(codex).toMatch(/until it asks: posthog\./);
+    expect(childMcpOfferLine({ have: ['posthog'], local, connectors: new Map(), bridge: true, accountId: '', read: new Set() })).toBe('');
+    // At the lean cap a card grants nothing, so the line promises nothing.
+    expect(childMcpOfferLine({ have: ['a', 'b', 'c', 'd', 'e', 'f'], local, connectors, bridge: false, accountId: 'me', read: new Set() })).toBe('');
+  });
 });
 
 describe('a set-up server the chat asks for on its card joins it (owner 2026-11-12, memoryos Slack)', () => {
@@ -607,4 +644,39 @@ describe('the Super follows the project\'s MCP set (owner 2026-11-12, a teammate
     expect(away.child!.stdin.end).not.toHaveBeenCalled();
     expect(basic.stdin.end).not.toHaveBeenCalled();
   }, 10_000);
+});
+
+// Plan ilk-acilis C15a: the first read's child spawn is the server's: auto, no MCP at all.
+describe('the first read\'s child spawn', () => {
+  it('a ticketed child is a first read once; a replay is not, unless a first read is in flight', () => {
+    const ctx = join(projectRoot, '_dream_context');
+    const ticket = mintFirstReadTicket(ctx);
+    const params = new URLSearchParams({ crewTicket: ticket, bypass: '1', lean: '1', mcp: 'whatsapp' });
+    expect(firstReadUpgrade(params, ctx, ['c1'])).toBe(true);
+    expect(firstReadUpgrade(params, ctx, ['c1'])).toBe(false);
+    // Fail closed while the read is in flight: a reconnect re-sends the URL with no live ticket.
+    expect(takeFirstReadLock(ctx, 60_000)).toBe(true);
+    expect(firstReadUpgrade(params, ctx, ['c1'])).toBe(true);
+    expect(firstReadUpgrade(new URLSearchParams({ bypass: '1' }), ctx, ['c1'])).toBe(false);
+    releaseFirstReadLock(ctx);
+    // A member's crew ticket is no first-read ticket, and a first-read ticket of another vault is none.
+    expect(firstReadUpgrade(new URLSearchParams({ crewTicket: mintCrewTicket(ctx, 'member:ege' as never, 'job-1') }), ctx, [])).toBe(false);
+    expect(firstReadUpgrade(new URLSearchParams({ crewTicket: mintFirstReadTicket('/elsewhere/_dream_context') }), ctx, [])).toBe(false);
+  });
+
+  it('spawns auto with --strict-mcp-config and no project .mcp.json, no lean servers', () => {
+    writeFileSync(join(projectRoot, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'x' } } }));
+    const ws = new FakeWs();
+    const before = spawned.length;
+    startChatSession(ws as unknown as import('ws').WebSocket, projectRoot, {
+      bypass: false, sessionId: '', resumeId: '', model: 'opus', effort: 'medium', mode: 'basic', account: '',
+      initialPrompt: '', deferPrompt: false, vault: 'demo-vault', leanMcp: [], firstRead: true,
+    });
+    const child = spawned.length > before ? spawned[spawned.length - 1] : undefined;
+    const a = argvOf(child!);
+    expect(a).toContain('--strict-mcp-config');
+    expect(a[a.indexOf('--permission-mode') + 1]).toBe('auto');
+    expect(mcpFiles(a).some((f) => f.endsWith('.mcp.json'))).toBe(false);
+    expect(child!.script).not.toContain('bypassPermissions');
+  });
 });

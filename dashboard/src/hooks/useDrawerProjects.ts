@@ -55,6 +55,15 @@ export function readFoldedMarks(vault: string): Promise<{ marks: SuperMarks; eki
   }, () => null);
 }
 
+/** A sidebar header press on Chat (wb-sol-panel D2): the project's saved chat count, read on
+ *  demand from its summary alone. Null when the read fails, has no count, or takes longer than
+ *  `ms` (the press then keeps the plain move, so a slow project never makes the click look dead). */
+export function readChatCount(vault: string, ms = 1200): Promise<number | null> {
+  const read = new ApiClient(vault).get<{ tabs?: unknown }>('/agent/sessions?summary=1')
+    .then((s) => (typeof s?.tabs === 'number' ? s.tabs : null), () => null);
+  return Promise.race([read, new Promise<null>((done) => { setTimeout(() => done(null), ms); })]);
+}
+
 export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   const api = new ApiClient(vault);
   const [summary, agents, automations, feed] = await Promise.all([
@@ -191,7 +200,7 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     const read = () => {
       void Promise.all(targets.map((v) => readFoldedMarks(v).then((m) => [v, m] as const))).then((pairs) => {
         if (gone) return;
-        const got = pairs.filter((pair): pair is readonly [string, { marks: SuperMarks; ekip: DrawerEkipFacts }] => pair[1] !== null);
+        const got = pairs.filter((pair): pair is readonly [string, { marks: SuperMarks; ekip: DrawerEkipFacts; tabs: number | null }] => pair[1] !== null);
         setMarks(Object.fromEntries(got.map(([v, r]) => [v, r.marks])));
         setTeams(Object.fromEntries(got.map(([v, r]) => [v, r.ekip])));
         timer = setTimeout(read, pollMs(DRAWER_POLL_MS));

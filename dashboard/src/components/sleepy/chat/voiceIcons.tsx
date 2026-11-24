@@ -58,3 +58,13 @@ export function SlidersIcon() {
     </svg>
   );
 }
+
+/** Clipboard: "paste the take into the composer". */
+export function PasteIcon() {
+  return (
+    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
+      <rect x="5" y="5" width="14" height="16" rx="2" />
+      <path d="M9 5V4a1 1 0 011-1h4a1 1 0 011 1v1M9 11h6M9 15h4" />
+    </svg>
+  );
+}

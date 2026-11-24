@@ -62,11 +62,8 @@ import {
   negationIsEffective,
   PATTERN_HEADING,
   SOUL_HEADING,
-  PATTERN_LESSON_LIMIT,
-  PATTERN_LESSON_MAX_CHARS,
   PATTERN_LESSONS_HEADING,
   PATTERN_PLAYBOOK_MAX_CHARS,
-  PATTERN_SECTION_MAX_CHARS,
   REVIEW_MODES,
   AUTOMATION_REPLIES,
   storedReply,
@@ -957,18 +954,26 @@ export function parsePattern(section: string): AutomationPattern {
   return { playbook: playbookLines.join('\n').trim(), lessons };
 }
 
-/** Render a pattern back to its `## Pattern` section body (heading excluded).
- *  Enforces every cap at the point of WRITE, so an over-long pattern can never
- *  reach the file, whatever the caller passed. */
+/** Render a pattern back to its `## Pattern` section body (heading excluded). Every lesson is
+ *  kept whole (D6): only the playbook prose has a ceiling; the prompt's VIEW is bounded instead. */
 export function renderPattern(p: AutomationPattern): string {
   const playbook = truncateChars(p.playbook, PATTERN_PLAYBOOK_MAX_CHARS);
-  const lessons = p.lessons
-    .slice(0, PATTERN_LESSON_LIMIT)
-    .map((l) => `- **[${l.date}]** ${truncateChars(oneLine(l.text), PATTERN_LESSON_MAX_CHARS)}`);
+  const lessons = p.lessons.map((l) => `- **[${l.date}]** ${oneLine(l.text)}`);
   const parts: string[] = [];
   if (playbook) parts.push(playbook);
   if (lessons.length > 0) parts.push(PATTERN_LESSONS_HEADING, ...lessons);
-  return truncateChars(parts.join('\n\n'), PATTERN_SECTION_MAX_CHARS);
+  return parts.join('\n\n');
+}
+
+// ─── Lessons (D6: never a cap, never a merge) ───────────────────────────────────
+
+/**
+ * Add a lesson newest-first, always as its own line (owner 2026-11-21, "Birleştirmeyi çıkar"): an
+ * old lesson never swallows a new one, since a lesson that takes a word back would otherwise lose
+ * to the one it reverses. Nothing is dropped and there is no count cap. Pure.
+ */
+export function addLesson(lessons: readonly PatternLesson[], lesson: PatternLesson): PatternLesson[] {
+  return [{ date: lesson.date, text: oneLine(lesson.text) }, ...lessons];
 }
 
 /** The automation's pattern, already parsed. Empty when it has never learned. */
@@ -1040,7 +1045,7 @@ export function writeLessonToFile(path: string, currentPattern: string, input: R
   const next: AutomationPattern = {
     playbook: playbook === undefined ? current.playbook : playbook,
     lessons: lesson
-      ? [{ date: localDateStamp(input.now ?? new Date()), text: lesson }, ...current.lessons]
+      ? addLesson(current.lessons, { date: localDateStamp(input.now ?? new Date()), text: lesson })
       : current.lessons,
   };
 

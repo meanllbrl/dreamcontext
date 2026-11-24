@@ -257,6 +257,17 @@ export function unionTaskMap(sides: TaskMapEntry[][]): TaskMapEntry[] {
   return resolved.sort((a, b) => a.slug.localeCompare(b.slug));
 }
 
+/** How old a cached member roster may be before a members read refreshes it (behind its answer). */
+export const MEMBERS_LIVE_MS = 5 * 60 * 1000;
+
+/** A member roster refreshed at `last` (null: never) is due for a refresh at `now`. */
+export function membersStale(last: number | null, now: number): boolean {
+  return last === null || now - last >= MEMBERS_LIVE_MS;
+}
+
+/** {@link SyncLedger.peekSyncState}'s parse, by file, while its mtime and size hold. */
+const syncStateMemo = new Map<string, { stamp: string; state: SyncStateFile }>();
+
 export class SyncLedger {
   constructor(private readonly contextRoot: string) {}
 
@@ -415,7 +426,33 @@ export class SyncLedger {
     return readJson<SyncStateFile>(this.syncPath, { watermark: null, tasks: {} });
   }
 
+  /**
+   * The sync state for a READ that never writes it back, parsed once per file stamp. The file
+   * carries every task's merge base (12.8 MB on a 900-task brain), and the questions asked on
+   * every app open (the sync status, the member cache, a throttle) parsed it whole each time.
+   * The object is shared: callers must not mutate it ({@link readSyncState} is the copy to edit).
+   */
+  peekSyncState(): Readonly<SyncStateFile> {
+    const path = this.syncPath;
+    let st;
+    try {
+      st = statSync(path);
+    } catch {
+      syncStateMemo.delete(path);
+      return { watermark: null, tasks: {} };
+    }
+    // The whole stamp (inode, size, mtime, ctime): a coarse-clock volume can keep mtime and size
+    // across a rewrite, never the ctime and inode too.
+    const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+    const hit = syncStateMemo.get(path);
+    if (hit && hit.stamp === stamp) return hit.state;
+    const state = readJson<SyncStateFile>(path, { watermark: null, tasks: {} });
+    syncStateMemo.set(path, { stamp, state });
+    return state;
+  }
+
   writeSyncState(state: SyncStateFile): void {
+    syncStateMemo.delete(this.syncPath);
     writeJson(this.syncPath, state);
   }
 
@@ -431,7 +468,7 @@ export class SyncLedger {
   }
 
   readMembers(): Record<string, CachedMember> {
-    return this.readSyncState().members ?? {};
+    return { ...(this.peekSyncState().members ?? {}) };
   }
 
   /**
@@ -554,7 +591,7 @@ export class SyncLedger {
   }
 
   readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet' | 'subIssuesUnavailableAt'): number | null {
-    return this.readSyncState()[key] ?? null;
+    return this.peekSyncState()[key] ?? null;
   }
 
   writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet' | 'subIssuesUnavailableAt', at: number): void {

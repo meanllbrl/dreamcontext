@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { appendOpenLog } from '../../lib/window-open-log.js';
+import { ownerPicturePaths } from '../../lib/t3-bridge/pictures.js';
 import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bindTake, voiceTakeBlock, type TakeRecord } from '../../lib/voice/voiceLog.js';
 import type { Server } from 'node:http';
@@ -26,9 +28,10 @@ import { sniffImageType } from '../../lib/image-sniff.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, SUPER_STAGE_FRAME, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
+import { reapOrphanCopies } from '../orphan-chats.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
-import { writeTabHandoff, readTabHandoff, resolveTabSeed, paneHandoffState, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle, ecoPlusDefault, appendLowered } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, paneHandoffState, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle, readHandoffRecord, shouldRotateForHandoff, ecoPlusDefault, appendLowered } from '../../lib/context-watch.js';
 import { ecoPlusKeepEnv, parseModelSource, resolveSpawnModel, type ModelSource } from '../../lib/eco-plus.js';
 import { renderModelsBlock, superModelsState, superModelsTurn, type EcoModelsState } from '../../lib/super/models-block.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
@@ -38,23 +41,26 @@ import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRu
 import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
-import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
+import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING, chatSurfaceReferenceReadRule, superChildSurfaceBriefing, writeChatSurfaceReference } from '../chat-surface.js';
 import { CardFeedbackTracker, endedClean, feedbackTurn } from '../card-feedback.js';
 import { onUndelivered, takeUndelivered, undeliveredNote } from '../../lib/super/undelivered.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
+import { noteTranscript } from '../../lib/agents/work-trace.js';
+import { queueDerive } from './agent-work.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { agentChatLevelArgs, agentLevelToFollow, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { onAgentLevel } from '../../lib/agents/level-follow.js';
+import { briefingOwnerFp, ownerBlockTurn, ownerCard, ownerEverSet, ownerHolding, renderOwnerBlock, type OwnerHeld, type OwnerRef } from '../../lib/agents/owner-block.js';
 import { agentPath } from '../../lib/agents/store.js';
 import { globalAgentPath } from '../../lib/agents/scope.js';
 import { automationsRegistryPath } from '../../lib/automations/registry.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
-  chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
+  chatSpawnRoster, collectTeam, memberCallState, promptOwnerText, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
-import { SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
+import { FIRST_READ_LIVE_BLOCK, SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
 import { appChatBriefing } from '../chat-surface.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -137,7 +143,8 @@ import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_E
 import { levelChatMode, levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
 import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
-import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
+import { consumeCrewTicket, consumeFirstReadTicket, firstReadLockHeld, membersDelegating } from '../../lib/super/delegating.js';
+import { isFirstReadChild, superFirstReadRunning } from '../../lib/super/store.js';
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-work.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
@@ -148,18 +155,18 @@ import { noteOwnerWords, waitingCards } from '../../lib/super/owner-consent.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, isOwnerProse, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
-  childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
+  childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildEnding, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
 import { registerOwnerCardLookup, registerOwnerItemCloser, registerOwnerReceiptDeliverer } from '../owner-receipts.js';
-import { isOwnerCardKind } from '../../lib/super/owner-wait.js';
+import { isOwnerCardKind, noteSuperSend, takeSuperSend } from '../../lib/super/owner-wait.js';
 import type { OwnerReceiptMark } from '../../lib/assistant/chat-registry.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  childMcpNeedingSignIn, connectorListSettled, connectorOnAccount, connectorListSettleMs, connectorRulesFor, knownChildMcp, knownMcpServers, leanAllowlist, mcpFileNames, mcpCardServers, mcpDrift, mcpGrantFor, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
+  childMcpNeedingSignIn, childMcpOfferLine, connectorListSettled, connectorOnAccount, connectorListSettleMs, connectorRulesFor, knownChildMcp, knownMcpServers, leanAllowlist, mcpFileNames, mcpCardServers, mcpDrift, mcpGrantFor, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { openRequest } from '../../lib/super/request-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
@@ -619,6 +626,18 @@ export function mcpConfigArgs(paths: Array<string | null>): string[] {
  * never wider, never a refusal that locks the conversation out. Never the Assistant or a Super
  * Agent's own session. Null = not lean (every other chat, as before); 'refuse' = a malformed list.
  */
+/**
+ * Is this chat upgrade the project's first read (plan ilk-acilis C15a)? The one-time ticket its
+ * delegate minted (consumed here), a record that marks the conversation, or, failing closed
+ * because a reconnect re-sends the URL without a live ticket, any lean child of this vault while
+ * a first read is in flight. Exported for tests.
+ */
+export function firstReadUpgrade(params: URLSearchParams, contextRoot: string, ids: readonly string[]): boolean {
+  return consumeFirstReadTicket(params.get('crewTicket'), contextRoot)
+    || ids.some((id) => !!id && isFirstReadChild(id))
+    || (params.get('lean') === '1' && firstReadLockHeld(contextRoot));
+}
+
 export function leanMcpForUpgrade(o: {
   assistant: boolean; mode: string; conversation: string; lean: string | null; mcp: string | null;
   recorded: (conversation: string) => string[] | null; known: () => ReadonlyMap<string, unknown>;
@@ -1177,11 +1196,13 @@ export function superOwnerWordsOf(
 }
 
 /** The chat kind the ledger names (`surface`), or null for a chat whose turns are never his
- *  typed words in the sense of D15 (the Assistant, a board card, an app, a member's own chat). */
+ *  typed words in the sense of D15 (the Assistant, a board card, an app). A member's own chat is
+ *  his words to that member (plan global-uye-ogrenme D7b): `member`. */
 export function ownerLedgerSurface(o: {
   mode: string; isAssistant: boolean; card: boolean; app: boolean; member: boolean; superChild: boolean; bridgeTool: string | null;
 }): string | null {
-  if (o.isAssistant || o.card || o.app || o.member) return null;
+  if (o.isAssistant || o.card || o.app) return null;
+  if (o.member) return 'member';
   if (o.bridgeTool === 'codex' || o.bridgeTool === 'antigravity') return o.bridgeTool;
   if (o.superChild) return 'child';
   return o.mode || 'plain';
@@ -1190,9 +1211,12 @@ export function ownerLedgerSurface(o: {
 /** One ledger line (contract A): every id the server has for the chat in `keys`, deduped. */
 export function ownerTurnLine(o: {
   source: { via: OwnerTurnVia; own: string }; vault: string; surface: string; keys: readonly string[]; session: string;
-  at?: string; turn?: string;
+  at?: string; turn?: string; ref?: string; parts?: readonly string[];
 }): OwnerTurnLine {
   return {
+    // The ref his `<owner-msg>` carries for this very turn (C4): what a `team ask --origin` names.
+    ...(o.ref ? { ref: o.ref } : {}),
+    ...(o.parts && o.parts.length ? { parts: [...o.parts] } : {}),
     at: o.at ?? new Date().toISOString(),
     turn: o.turn ?? newOwnerTurnId(),
     vault: o.vault,
@@ -1684,9 +1708,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const url = appUpgrade?.url ?? parsedUrl;
     socket.once('close', () => appUpgrade?.hold?.());
 
-    const bypass = url.searchParams.get('bypass') === '1';
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
+    // The project's first read (plan ilk-acilis C15a): its spawn is decided HERE, before `bypass`
+    // or any MCP is read: the one-time ticket its delegate minted, or a record that marks the
+    // conversation, or (fail closed, a reconnect re-sends the URL) any lean child of this vault
+    // while a first read is in flight. Such a child runs `auto` with no MCP, whatever the URL says.
+    const firstReadChild = !assistant && firstReadUpgrade(url.searchParams, join(projectRoot, '_dream_context'), [resumeId, sessionId]);
+    const bypass = !firstReadChild && url.searchParams.get('bypass') === '1';
     const model = sanitizeModel(url.searchParams.get('model'));
     const modelSource = parseModelSource(url.searchParams.get('modelSource'));
     const effort = sanitizeEffort(url.searchParams.get('effort'));
@@ -1707,7 +1736,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       recorded: delegatedChildMcp, known: () => knownChildMcp(projectRoot).all,
     });
     if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
-    const leanMcp = lean ?? undefined;
+    const leanMcp = firstReadChild ? [] : lean ?? undefined;
     // A member Super's child (plan-r10 1, security r8-2): marked, and capped at the member's level.
     // Its crew: the record, else the one-time `crewTicket` its member's delegate minted, else fail
     // closed while any member delegates (the cap reads every member the mark could stand for).
@@ -1903,6 +1932,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // target, or the conversation reads as still-held and the spawn silently starts a new,
       // unpinned one. No-op unless a resume was asked for and is genuinely still held.
       if (!adoptable) await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
+      // A conversation this server does not hold may still be running in a child a previous
+      // server left behind (ppid 1): end it first, so the spawn below is its only writer.
+      if (!adoptable && (resumeId || sessionId)) {
+        const ctxRoot = join(projectRoot, '_dream_context');
+        await reapOrphanCopies([resumeId, resumeId ? resolveAgentSession(ctxRoot, resumeId) : '', sessionId]).catch(() => []);
+      }
 
       const wss = new WebSocketServer({ noServer: true });
       // A Mac-mode phone socket: the device this socket proved (its id's hash) owns whatever it
@@ -1945,7 +1980,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
             if (outcome !== 'unadoptable') { releaseOpening(); return; }
             const child = childNow();
             if (child) { toWatch(ws, child); return; }
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, modelSource, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, modelSource, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(firstReadChild ? { firstRead: true } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
             releaseOpening();
           });
           return;
@@ -1956,7 +1991,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, modelSource, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, modelSource, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(firstReadChild ? { firstRead: true } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
           releaseOpening();
           return;
         }
@@ -1976,7 +2011,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, modelSource, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, modelSource, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(firstReadChild ? { firstRead: true } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
         appUpgrade?.hold?.();
         settleSupersede(accepted);
         releaseOpening();
@@ -2062,6 +2097,9 @@ async function readAccountForDecision(dir: string): Promise<ProbeOutcome> {
 
 interface ChatSpawnOpts {
   bypass: boolean;
+  /** Started by the server on a socket nobody holds (headless-super.ts, headless-child.ts): no
+   *  window stands behind it until one adopts it. */
+  serverStarted?: boolean;
   sessionId: string;
   resumeId: string;
   model: string;
@@ -2105,6 +2143,9 @@ interface ChatSpawnOpts {
   /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
    *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
   leanMcp?: string[];
+  /** The project's first read (plan ilk-acilis C15a): `auto`, `--strict-mcp-config` with no
+   *  project `.mcp.json`, no lean servers and no browser override; never switched to bypass. */
+  firstRead?: boolean;
   /** The Super's claude.ai connectors it already restarted for in this conversation (`followMcpDrift`):
    *  a successor that still lacks one never restarts for it again (end review r1: no restart loop). */
   mcpFollowed?: string[];
@@ -2343,6 +2384,8 @@ export function startChatSession(
   // reattach after a dropped socket); every send below reads it at call time, so output flows
   // to whichever socket currently owns the child.
   let ws = initialWs;
+  /** A window socket held this chat at some point (a server start has none until one adopts it). */
+  let windowSeen = requested.serverStarted !== true;
   /** The device whose socket drives this child — per SOCKET: set by whichever phone socket
    *  binds it, cleared when a desktop socket adopts it, kept across a detach. */
   let ownerDevice: DeviceTag | null = socketDevice.get(initialWs) ?? null;
@@ -2531,7 +2574,17 @@ export function startChatSession(
   /** Whose identity and permission envelope this child runs under: a card's or a Chat tab
    *  agent's. Only `card` decides what a card skips (registry, tab env, branch move). */
   const envelope = card ?? agentChat;
+  /** The member whose conversation this is (uye-gecmis-is C4): never a card's, an app's or no agent. */
+  const workMember = agentChat && opts.agent && !opts.card && !app ? opts.agent : null;
+  const workTool: 'claude' | 'codex' | 'antigravity' = bridgeTool === 'codex' ? 'codex' : bridgeTool === 'antigravity' ? 'antigravity' : 'claude';
   const scopedCard = !!envelope?.permissionArgs;
+  // Whose owner block this chat carries (plan uye-karnesi D9): a member speaking as itself, in
+  // its stage chat, a card, or as its own Super. What the session holds: its briefing's header at
+  // a fresh spawn, its transcript on a resume (below); `inPrompt` is what a compaction keeps.
+  const ownerRef: OwnerRef | null = card && opts.card ? { projectRoot, member: opts.card.agent } : agentChat && opts.agent ? { projectRoot, member: opts.agent } : null;
+  const ownerHold: { inPrompt: OwnerHeld; held: OwnerHeld } = { inPrompt: 'none', held: 'none' };
+  /** The owner block's fingerprint this spawn's briefing file really carried ('none' without). */
+  let spawnOwnerFp: OwnerHeld = 'none';
   // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
   // never takes the screen and the pane can show it live (browser-override.ts). Not for a
   // scoped card (no MCP at all).
@@ -2545,15 +2598,25 @@ export function startChatSession(
   const noteLeanChildFailed = (why: string): void => {
     if (opts.leanMcp && pinId) void noteChildStartFailed(contextRoot, pinId, why).catch((err) => { console.warn(`[super] child ${pinId}: its start failure was not recorded: ${(err as Error).message}`); });
   };
-  const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
+  const leanProjectMcp = opts.leanMcp && !opts.firstRead ? projectMcpJson(projectRoot) : null;
   const leanProjectMcpSafe = leanProjectMcp && tmpPathOk(leanProjectMcp) ? leanProjectMcp : null;
   /** The claude.ai connectors a lean Claude child was given (`--mcp notion`), each with the URL its
    *  allowlist entry needs (lean-mcp.ts `connectorRulesFor`). Never for a Codex or Antigravity child:
    *  connectors are Claude's, and `delegate` refuses them there. */
   let leanConnectorRules: Array<{ alias: string; name: string; url: string }> = [];
+  /** The servers a lean child may still ask for, for its briefing (`childMcpOfferLine`). */
+  let leanMcpOffer = '';
   if (opts.leanMcp && !scopedCard) {
     try {
       const childMcp = knownChildMcp(projectRoot);
+      if (!app) {
+        try {
+          leanMcpOffer = childMcpOfferLine({
+            have: opts.leanMcp, local: childMcp.local, connectors: childMcp.connectors, bridge: !!bridgeTool,
+            accountId: activeAccountId || (listClaudeAccounts().length ? '' : 'default'), read: childMcp.read,
+          });
+        } catch { leanMcpOffer = ''; }
+      }
       const known = childMcp.local;
       leanMcpPath = writeLeanMcpConfig(opts.leanMcp.filter((n) => known.has(n)), known);
       if (!bridgeTool && !app) leanConnectorRules = connectorRulesFor(opts.leanMcp.filter((n) => !known.has(n)), childMcp.connectors, activeAccountId || (listClaudeAccounts().length ? '' : 'default'), childMcp.read);
@@ -2570,14 +2633,16 @@ export function startChatSession(
       return;
     }
   }
-  const browserOverride = scopedCard || app?.own ? null : prepareBrowserOverride(projectRoot);
+  const browserOverride = scopedCard || app?.own || opts.firstRead ? null : prepareBrowserOverride(projectRoot);
   // The MCP stores every account shares (task mcp-management), by env reference.
   const storeMcp = chatStoreMcp({ scopedCard: scopedCard || !!app?.own, lean: !!opts.leanMcp, projectRoot });
   // A set-up server this chat was started without, asked for on its own `mcp` card, joins it on
   // an in-place respawn at the turn's end (lean-mcp.ts `mcpGrantFor`; owner 2026-11-12, a Super
   // child blind to a configured Slack). Ordinary Claude chats and lean children only: a scoped
   // card, an app, the Assistant and the Super keep their own MCP rules, a bridge tool its own config.
-  const mcpGrantable = !scopedCard && !app && !isAssistant && !isSuper && !bridgeTool;
+  // A LEAN Codex or Antigravity child too (owner 2026-11-22: every tool gets the same rule): its
+  // grant is the project's own servers only (connectors are Claude's), on the same in-place respawn.
+  const mcpGrantable = !scopedCard && !app && !isAssistant && !isSuper && (!bridgeTool || !!opts.leanMcp);
   // The Super's process outlives its MCP set (its Fresh session is a `/clear` in the same process),
   // so it FOLLOWS the project's set: a server set up after it started joins it on an in-place
   // respawn at an idle turn end (`followMcpDrift`; owner 2026-11-12, a teammate's Super blind to
@@ -2778,8 +2843,13 @@ export function startChatSession(
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock, superToolsSpawn, superModelsSpawn].filter(Boolean).join('\n\n');
-    // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
-    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
+    // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent, and
+    // gets the lean surface: each card's rule and example, the full text as a file it reads when it
+    // needs more (measured ~8k tokens less on every call). No reference file: the full text.
+    const childReference = !app && opts.leanMcp ? writeChatSurfaceReference() : null;
+    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}`
+      : opts.leanMcp ? `${childReference ? superChildSurfaceBriefing(childReference) : CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}${leanMcpOffer ? `\n${leanMcpOffer}` : ''}`
+        : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
@@ -2790,6 +2860,8 @@ export function startChatSession(
     // A resumed session's prompt is its first spawn's: the tools block rides its next message.
     if (superToolsSpawn) spawnToolsFp = toolsBlockFingerprint(superToolsSpawn);
     if (spawnToolsFp && !resumeTarget) superTools.inPrompt = superTools.delivered = spawnToolsFp;
+    if (ownerRef) spawnOwnerFp = briefingOwnerFp(briefing) ?? 'none';
+    if (ownerRef && !resumeTarget) ownerHold.inPrompt = ownerHold.held = spawnOwnerFp;
     // Born with the table it holds: `plus` with the block, `off` without (the briefing's rows).
     if (spawnEcoState) spawnModelsState = spawnEcoState;
     if (spawnModelsState && !resumeTarget) superModels.inPrompt = superModels.delivered = spawnModelsState;
@@ -2816,6 +2888,15 @@ export function startChatSession(
   // The Super Agent's briefing revision (K9): a new session carries it in its system prompt; a
   // resumed one learns from its transcript whether this revision still has to reach it.
   const superBrief = { inPrompt: true, due: false };
+  // A resumed member chat (card chats too): what its transcript holds of the owner block. No
+  // transcript: `unknown`, so a non-empty block rides once.
+  if (resumeTarget && ownerRef) {
+    try {
+      const transcript = findFirstTranscriptPath([resumeTarget]);
+      if (transcript) Object.assign(ownerHold, ownerHolding(readFileSync(transcript, 'utf-8')));
+      else ownerHold.inPrompt = ownerHold.held = 'unknown';
+    } catch { ownerHold.inPrompt = ownerHold.held = 'unknown'; }
+  }
   if (resumeTarget && !isAssistant && !card) {
     try {
       const transcript = findFirstTranscriptPath([resumeTarget]);
@@ -2847,6 +2928,10 @@ export function startChatSession(
   }
   // An app chat's gates ride here, AFTER the mode note's assign, which a plain assign of its
   // own would drop: the Bash gate (own assistant) and the file gate (own assistant and member). The carve-out for builders is not an app chat's business.
+  // A lean child's surface reference lives outside the project: reading it never asks. On every
+  // chat but an app's, since a conversation born lean can come back on a spawn that is not (a
+  // handed-over child resumes with the prompt that names the file).
+  if (!app) spawnSettings.permissions = { allow: [chatSurfaceReferenceReadRule()] };
   if (app) delete spawnSettings.autoMode;
   if (app?.hooks) spawnSettings.hooks = { ...(spawnSettings.hooks as Record<string, unknown> | undefined), ...app.hooks };
   // A lean child given a claude.ai connector: Claude Code's own MCP allowlist instead of
@@ -3084,6 +3169,7 @@ export function startChatSession(
         if (ws.readyState !== ws.OPEN) return false;
         try { ws.send(JSON.stringify({ type: '_meta', ...frame })); return true; } catch { return false; }
       },
+      windowAway: () => (!windowSeen ? Infinity : detached ? Date.now() - detachedAt : 0),
       vault: opts.vault ?? basename(projectRoot),
       contextRoot,
       sessionId: chatRegistryId,
@@ -3204,7 +3290,7 @@ export function startChatSession(
   /** Owner-proven card results on their way in (sahip-karti-yerinde K6), by text: the frame that
    *  carries one is marked `ownerReceipt` for the registry; each entry dies on its frame or its
    *  timeout (every store key needs a death). */
-  const ownerReceiptTurns = new Map<string, { mark: OwnerReceiptMark; resolve: (ok: boolean) => void }>();
+  const ownerReceiptTurns = new Map<string, { mark: OwnerReceiptMark; resolve: (ok: boolean) => void; pause: () => void; rearm: () => void }>();
   // How the server writes ITS OWN turn into any live crew process, window or not (the owner's
   // Allow once, K3): the injector's path, the turn noted as the server's so it is never read as
   // his words (it clears no other wait).
@@ -3222,9 +3308,16 @@ export function startChatSession(
       sendOwnerReceipt: (text, mark) => {
         if (!alive || stdinEnding() || handedOff || !text.trim()) return Promise.resolve(false);
         return new Promise<boolean>((resolve) => {
-          const timer = setTimeout(() => { if (ownerReceiptTurns.get(text)?.resolve === resolve) ownerReceiptTurns.delete(text); resolve(false); }, OWNER_RECEIPT_SEEN_MS);
-          timer.unref?.();
-          ownerReceiptTurns.set(text, { mark, resolve: (ok) => { clearTimeout(timer); resolve(ok); } });
+          // Its proof timer PAUSES while the frame sits in the D3 handoff hold (a held receipt is not
+          // "not seen": the inbox would resend it) and re-arms when the hold releases it.
+          const arm = (): ReturnType<typeof setTimeout> => {
+            const t = setTimeout(() => { if (ownerReceiptTurns.get(text)?.resolve === settle) ownerReceiptTurns.delete(text); resolve(false); }, OWNER_RECEIPT_SEEN_MS);
+            t.unref?.();
+            return t;
+          };
+          let timer = arm();
+          const settle = (ok: boolean): void => { clearTimeout(timer); resolve(ok); };
+          ownerReceiptTurns.set(text, { mark, resolve: settle, pause: () => clearTimeout(timer), rearm: () => { clearTimeout(timer); timer = arm(); } });
           crewSeat.noteServerTurn(text);
           onWsMessage(serverBuiltFrame({ type: 'user', text }, 'owner-receipt'));
         });
@@ -3264,9 +3357,12 @@ export function startChatSession(
   let observedConversation = '';
   // ── The owner-words ledger's view of this chat (C3) ──
   /** The chat kind, or null: the Assistant, a card, an app and a member's own chat keep no ledger. */
+  /** This pane is a Super child, known at spawn (the delegate route writes the child into the
+   *  super record only after the spawn): read by the ledger surface and the Eco ladder hint. */
+  const superChildPane = !isSuper && (!!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id)));
   const ledgerSurface = ownerLedgerSurface({
     mode, isAssistant, card: !!card, app: !!app, member: !!opts.agent, bridgeTool,
-    superChild: !isSuper && (!!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id))),
+    superChild: superChildPane,
   });
   /** The project root whose brain this chat runs in, resolved; '' when it has none. */
   const ledgerVault = ((): string => {
@@ -3334,6 +3430,18 @@ export function startChatSession(
    * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
+  /** When the running turn began (stamped at 0 -> 1): a task handoff record written at or after
+   *  it was written in THIS turn, so its folded messages ride the continue prompt (D3 carry). */
+  let turnStartedAt = 0;
+  /**
+   * D3 (super-cocuk-tasarruf): user frames written mid-turn while this pane's TASK handoff record
+   * is pending. Written now, they would fold into the old conversation, or run as its own turn
+   * after the result, and the `/clear` the rotation writes wipes them. Released ONCE at every turn
+   * end ({@link releaseHandoffHeld}), through the same admission a fresh socket frame takes.
+   */
+  const handoffHeld: Array<{ raw: Buffer | string; text: string; source: OwnerTurnSource; superSent: boolean; fromMirror: boolean }> = [];
+  /** Released frames not yet through the admission: a fresh frame meanwhile queues behind them. */
+  let handoffReleasing = 0;
   /** The Super Agent only: a turn its inbox opened is running. An owner frame that arrives
    *  meanwhile is written AT ONCE and folded into it, like a steer in any chat (plan r4 D4). */
   let superEventTurnOpen = false;
@@ -3397,7 +3505,9 @@ export function startChatSession(
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerKillTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const untrack = trackChild(child);
+  // The server's shutdown ends the child's whole process group (MCP servers, tool shells), not
+  // only its leader: the group is what the desktop shell's signal to the server never reaches.
+  const untrack = trackChild(() => signalGroup(child, 'SIGTERM'));
   // A write that loses a race with stdin's end is reported as an asynchronous 'error' event,
   // which `writeStdin`'s try/catch cannot see — and an unheard 'error' takes the whole server
   // down. The close handler already reports the child going away.
@@ -3509,6 +3619,8 @@ export function startChatSession(
       watchRoom: (device: DeviceTag) => mirrors?.room(device) ?? true,
     }),
     closeMirrors: () => { mirrors?.closeAll(MIRROR_CLOSE_ENDED, isSuper ? 'super taken back' : 'child taken back'); },
+    // Read at call time only (the timer is made further down this function).
+    resumeArmed: () => resumeAtReset.armed(),
   } : null;
   if (live) registerLiveChat(live);
   /** A phone joins this Super Agent beside its holder. It reads the turn state like a reattach
@@ -3560,6 +3672,10 @@ export function startChatSession(
   /** No socket right now; the reap timers below decide how long that may last. */
   let detached = false;
   let detachedAt = 0;
+  /** Since when a detached child has been busy without a break: the busy cap's start. A detached
+   *  Super takes new event turns (owner 2026-11-22), so the cap counts one busy run, never the
+   *  time since its socket went. */
+  let detachBusyFrom = 0;
   /** The next socket-gone ends the child instead of detaching it: the client said goodbye
    *  (`end`, a closed tab). A respawn's supersede is counted apart (`pendingSupersedes`). */
   let endOnSocketGone = false;
@@ -3575,6 +3691,22 @@ export function startChatSession(
    *  its answer, a `control_cancel_request`, or a tool_result for its `tool_use_id` (the CLI
    *  rejected it itself, e.g. on a closed stream): a replayed dead card is a ghost "asking". */
   const outstandingAsks = new Map<string, { line: string; toolUseId?: string; tool: string }>();
+  /** The ONE truth of what this chat asks, told to the window every time a request leaves it,
+   *  whoever settled it (the server's own answer for a background window, another socket, the
+   *  CLI's tool_result or cancel, a turn end or a Stop). A window only ever drops a card on its
+   *  own answer or a cancel otherwise, so a request settled anywhere else stayed drawn: the tab
+   *  read "asking", held the Super's sends "until the first opening" and refused `super end`
+   *  (owner 2026-11-22, four children). Assigned once `sendMeta` exists. */
+  let tellOpenRequests = (): void => { /* no socket yet */ };
+  const dropAsk = (requestId: string): void => {
+    if (outstandingAsks.delete(requestId)) tellOpenRequests();
+  };
+  /** A turn end or a Stop: nothing is open any more. Told even when nothing was held here, so
+   *  a card the window kept from an earlier miss goes at the next turn end. */
+  const dropAllAsks = (): void => {
+    outstandingAsks.clear();
+    tellOpenRequests();
+  };
 
   // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
   // A pinned project chat (not the Assistant, not a whiteboard card) can be parked by the
@@ -3597,7 +3729,7 @@ export function startChatSession(
     // never `gone`, while a card waits on the owner. An end is no park.
     if (detached || ws.readyState !== ws.OPEN) {
       if (!opts.end && registry) noteChildParking(chatRegistryId);
-      unregisterPark(); drain(); return Promise.resolve('drained');
+      unregisterPark(); drain(opts.end ? 'end' : `park:${reason}`); return Promise.resolve('drained');
     }
     parkEnding = opts.end === true;
     const id = randomUUID();
@@ -3619,7 +3751,7 @@ export function startChatSession(
       if (!parkEnding && registry) noteChildParking(chatRegistryId);
       endOnSocketGone = true;
       unregisterPark();
-      const t = setTimeout(() => { if (alive && !detached) drain(); }, 5_000);
+      const t = setTimeout(() => { if (alive && !detached) drain('parked'); }, 5_000);
       t.unref?.();
       parkAsk.settle('parked');
       return;
@@ -3675,6 +3807,7 @@ export function startChatSession(
   /** A turn edge — the ONLY place the live entry's activity fields move (see the contract in
    *  agent-chat-live.ts: sockets, pings and replays never touch them). */
   const openTurn = (): void => {
+    if (turnsInFlight === 0) turnStartedAt = Date.now();
     turnsInFlight += 1;
     stopSettledLate = false;
     if (live) markTurnStarted(live);
@@ -3684,7 +3817,7 @@ export function startChatSession(
    *  included (see `turnsInFlight`). */
   const closeTurn = (stopped = false): void => {
     turnsInFlight = 0;
-    outstandingAsks.clear();
+    dropAllAsks();
     // Every frame written before this result is answered by it (the CLI folds them in one turn).
     if (voiceArmed) { voiceArmed = false; sendMeta({ subtype: 'voice_turn_end' }); }
     if (live) markTurnEnded(live);
@@ -3718,11 +3851,17 @@ export function startChatSession(
       if (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed') setHandoffRun(failHandoffRun(handoffRun, 'stopped'));
       stopRotating(chatRegistryId);
     }
+    // The registry dropped every request on this Stop (stopSettled): so does the replay set, or
+    // `super end` reads a request nobody can see or answer any more.
+    if (turnsInFlight === 0) dropAllAsks();
     if (turnsInFlight > 0) closeTurn(stopped);
     // No turn in flight: still one end, marked stopped (a Stop is one end, never two).
     else if (isSuper && stopped) setImmediate(() => superTurnEnded(chatRegistryId, { stopped: true, inboxId: superInboxId }));
     stopSettledLate = true;
     sendMeta({ subtype: 'turn_state', busy: false });
+    // D3: a Stop the CLI acked with no result is a turn end too. (A late abort `result` after
+    // this settle can be read as a released frame's: today's race, accepted.)
+    releaseHandoffHeld();
   };
 
   // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
@@ -3984,6 +4123,80 @@ export function startChatSession(
     if (!recorded.estimated) armResumeAtReset(recorded.until, accountId, tool);
   };
 
+  /** A turn runs on a pane whose TASK handoff record is pending (no `actedAt`, no `consumedAt`):
+   *  a user frame now would be lost to the rotation (D3). One small sync read, mid-turn only. */
+  const holdsForHandoff = (): boolean => {
+    if (turnsInFlight === 0 || !pinId || isSuper) return false;
+    try {
+      const rec = readHandoffRecord(contextRoot, pinId);
+      return !!rec && rec.kind !== 'super' && shouldRotateForHandoff(rec);
+    } catch { return false; }
+  };
+  /**
+   * The ONE admission an owner frame takes (the socket's user frame, a released held frame): the
+   * account-switch gate, then the successor hold, then the turn. The `switchGate` chain keeps
+   * their order. `fromHold` = released by {@link releaseHandoffHeld}, never held again.
+   */
+  const admitOwnerFrame = (
+    raw: Buffer | string, text: string, source: OwnerTurnSource,
+    o: { fromHold?: boolean; fromMirror?: boolean; superSent?: boolean; settled?: () => void } = {},
+  ): void => {
+    // An owner card receipt's mark lives in THIS session's `ownerReceiptTurns`, so it never
+    // rides a restart as plain text (a resubmit or the successor would deliver it unmarked and
+    // the inbox would resend it marked: twice). It is kept out of the held texts and resolves
+    // "not seen" instead: the inbox delivers it once, marked, to the restarted pane.
+    const receiptKey = parseTelegramPrefix(text).body;
+    const isReceipt = (): boolean => ownerReceiptTurns.has(receiptKey);
+    const refuseReceipt = (): void => {
+      const r = ownerReceiptTurns.get(receiptKey);
+      if (!r) return;
+      ownerReceiptTurns.delete(receiptKey);
+      r.resolve(false);
+    };
+    switchGate = switchGate.then(() => (o.fromMirror && detached ? Promise.resolve(false)
+      // A receipt while a restart is already owed: refused below, never joined to it.
+      : isReceipt() ? (switchPending ? Promise.resolve(true) : maybeSwitchAccount(text, { resubmit: false }))
+        : maybeSwitchAccount(text))
+      // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
+      // never swallowed" would hold for every decision the chooser can make and fail for
+      // the one case nobody planned: an unexpected error on the way to making it.
+      .catch(() => false)
+      .then((held) => {
+        // A frame released from the D3 hold leaves with every mark it came in with, BEFORE any
+        // branch, so it takes the decisions it would have taken unheld: the Super's send note
+        // back in its store, its receipt's proof timer running again.
+        if (o.fromHold) {
+          if (o.superSent && (held || alive)) noteSuperSend(chatRegistryId, receiptKey);
+          ownerReceiptTurns.get(receiptKey)?.rearm();
+        }
+        // Held for an account switch's restart: its source is kept beside its text, so the
+        // resubmit (or a stalled release) writes it once, as it arrived. A receipt is not held.
+        if (held) {
+          if (isReceipt()) { refuseReceipt(); return; }
+          carryHeldOwnerMark(chatRegistryId, text, source);
+          return;
+        }
+        if (!alive) return;
+        // Autonomy changed while this message waited in the gate: it belongs to the successor
+        // (a receipt goes back to the inbox, which delivers it to the successor marked).
+        if (respawnTo !== null || handedOff) {
+          if (isReceipt()) { refuseReceipt(); return; }
+          holdForSuccessor(raw);
+          return;
+        }
+        writeOwnerTurn(text, source, { frame: raw, ...(o.fromHold ? { fromHold: true } : {}), ...(o.fromMirror ? { fromMirror: true } : {}) });
+      })
+      .finally(() => o.settled?.()));
+  };
+  /** Release every frame held for the handoff, once, in order, at a turn's end (the main result,
+   *  after the rotation and the limit dispatch; a Stop settled with no result). */
+  const releaseHandoffHeld = (): void => {
+    if (handoffHeld.length === 0) return;
+    for (const h of handoffHeld.splice(0)) {
+      handoffReleasing += 1;
+      admitOwnerFrame(h.raw, h.text, h.source, { fromHold: true, superSent: h.superSent, fromMirror: h.fromMirror, settled: () => { handoffReleasing -= 1; } });
+    }
+  };
   /**
    * The `<super-models>` block a Super turn carries (eco-plus K6), and the commit that records it
    * delivered once the write landed. Every turn into a Super passes here: his messages, the inbox
@@ -4018,7 +4231,21 @@ export function startChatSession(
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. `source` is REQUIRED (C3): where the turn came from,
    *  decided by `classifyOwnerFrame`; this is the only caller of `appendOwnerTurn`. */
-  const writeOwnerTurn = (raw: string, source: OwnerTurnSource): void => {
+  const writeOwnerTurn = (raw: string, source: OwnerTurnSource, opts: { frame?: Buffer | string; fromHold?: boolean; fromMirror?: boolean } = {}): void => {
+    // D3: held BEFORE any side effect (Telegram refs, ledger, registry, openTurn), so the released
+    // call stamps each once. A frame behind a release in progress takes the admission's tail.
+    if (!opts.fromHold) {
+      const frame = opts.frame ?? JSON.stringify({ type: 'user', text: raw });
+      const fromMirror = !!opts.fromMirror;
+      if (handoffReleasing > 0) { admitOwnerFrame(frame, raw, source, fromMirror ? { fromMirror } : {}); return; }
+      if ((handoffHeld.length > 0 && turnsInFlight > 0) || holdsForHandoff()) {
+        // The Super's send note lives 2 min (owner-wait.ts): taken now, put back at release. A
+        // receipt's proof timer pauses for the hold (the inbox must not resend it as unseen).
+        ownerReceiptTurns.get(parseTelegramPrefix(raw).body)?.pause();
+        handoffHeld.push({ raw: frame, text: raw, source, superSent: takeSuperSend(chatRegistryId, parseTelegramPrefix(raw).body), fromMirror });
+        return;
+      }
+    }
     // A Telegram turn rides as `TG_SENTINEL + ref + TG_SENTINEL + text` through every hold path
     // (D1). Parsed ONCE here: the ref counts only when the hub put it in THIS chat's store; an
     // owner-typed or stale prefix is stripped and the turn is an ordinary Mac turn. Everything
@@ -4072,6 +4299,7 @@ export function startChatSession(
         appendOwnerTurn(ownerTurnLine({
           source: ledgerSource, vault: ledgerVault, surface: ledgerSurface,
           keys: ledgerKeys(), session: ledgerSession(),
+          ref: tgRef ?? msgRef(text), parts: partRefs(text, tgRef ?? undefined),
         }));
       } catch (err) { console.warn(`[agent-chat] owner turn not written to the ledger: ${(err as Error).message}`); }
     }
@@ -4109,6 +4337,8 @@ export function startChatSession(
       // never part of them, so it answers nothing and owes nothing.
       const reactions = takeSuperReactionBlock(chatRegistryId);
       if (reactions) content.push({ type: 'text', text: reactions });
+      // While the app's first read runs, his message says so (C16): derived, never stored.
+      if (superFirstReadRunning(chatRegistryId)) content.push({ type: 'text', text: FIRST_READ_LIVE_BLOCK });
     }
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the
@@ -4138,6 +4368,16 @@ export function startChatSession(
     // The tools on this Mac changed since it last saw them (a sign-in, an install, a resume): once.
     const toolsTurn = isSuper ? superOwnerToolsBlock({ text, block: toolsBlockNow(), delivered: superTools.delivered }) : null;
     if (toolsTurn?.block) content.push({ type: 'text', text: toolsTurn.block });
+    // A member's own chat: his lines and lessons changed since the session last held them (plan
+    // uye-karnesi D9). Once; "none now" included. A failed read costs the block, never his message.
+    let ownerTurn: ReturnType<typeof ownerBlockTurn> | null = null;
+    if (ownerRef) {
+      try {
+        const oc = ownerCard(ownerRef);
+        ownerTurn = ownerBlockTurn({ text, block: renderOwnerBlock(oc, null), held: ownerHold.held, everSet: ownerEverSet(oc) });
+      } catch { ownerTurn = null; }
+    }
+    if (ownerTurn) content.push(...ownerTurn.blocks);
     // The model table (eco-plus D5): when the briefing rides, its Model rows are the default ones
     // again, so the current block rides the SAME turn, after it.
     if (isSuper && brief) superModels.delivered = null;
@@ -4182,14 +4422,17 @@ export function startChatSession(
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
     // command is no message of his: it answers none.
-    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') || serverWritten ? null : tgRef ?? msgRef(text));
+    if (isSuper) {
+      const own = text.startsWith('/') || serverWritten ? null : tgRef ?? msgRef(text);
+      noteSuperOwnerMsg(chatRegistryId, own, own ? { parts: partRefs(text, tgRef ?? undefined), words: promptOwnerText(text) ?? '', pictures: ownerPicturePaths(text, contextRoot) } : {});
+    }
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords);
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords, text);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
-    if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
+    if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef, ownerPicturePaths(text, contextRoot));
     if (handMarks) {
       if (wrote) void superOwnerMarksCarried(handMarks.carry);
       else superOwnerMarksReturned(handMarks.carry);
@@ -4200,6 +4443,8 @@ export function startChatSession(
     if (brief && wrote) superBrief.due = false;
     if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
     if (toolsTurn && wrote) superTools.delivered = toolsTurn.delivered;
+    if (ownerTurn && wrote) ownerHold.held = ownerTurn.held;
+    if (ownerRef && wrote && text.trim() === '/clear') ownerHold.inPrompt = ownerHold.held = spawnOwnerFp;
     if (wrote) modelsTurn.commit();
     // Fresh for the next message: `codex --version` and Claude's model list, off this turn's path.
     if (isSuper) void refreshSuperTools();
@@ -4215,6 +4460,13 @@ export function startChatSession(
     if (ws.readyState === ws.OPEN) {
       try { ws.send(JSON.stringify({ type: '_meta', ...frame })); } catch { /* closing */ }
     }
+  };
+  // Its mirrors hear it too: harmless where no card was drawn, and a mirror that ever draws one
+  // never keeps a dead card.
+  tellOpenRequests = () => {
+    const frame = { subtype: 'open_requests', requestIds: [...outstandingAsks.keys()] };
+    sendMeta(frame);
+    mirrors?.frame(JSON.stringify({ type: '_meta', ...frame }));
   };
 
   // The chat's run/secret card records (plan I1): the socket that holds the chat and the phone
@@ -4272,7 +4524,7 @@ export function startChatSession(
   // init. A resumed pane must show what is on disk, not what was clicked last time.
   try {
     if (pinId) {
-      const state = paneHandoffState(contextRoot, projectRoot, pinId);
+      const state = paneHandoffState(contextRoot, projectRoot, pinId, superChildPane ? { child: true } : {});
       sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, hardAt: state.hardAt, remindEvery: state.remindEvery, chosen: state.chosen } });
     }
   } catch { /* the switch falls back to its default rendering */ }
@@ -4392,8 +4644,11 @@ export function startChatSession(
    *  immediately so a re-opened tab can `--resume` without waiting out the drain (the
    *  drain-vs-resume write race this leaves open is the same documented beta limitation the
    *  terminal/chat double-attach already has). */
-  function drain(): void {
+  function drain(why = 'eof'): void {
     if (!alive || lingerTimer || lingerKillTimer) return;
+    // Why the server ended it, with what still ran (field 2026-11-22: three Super children ended
+    // over running background work and no line said by which path).
+    if (registry) appendOpenLog('chat_end', { session: chatRegistryId.slice(0, 8), why, turns: turnsInFlight, background: backgroundTasks, detached });
     // The phone's mirrors leave with the stdin: their reconnect lands on the successor.
     mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super ended');
     clearDetachTimers();
@@ -4427,26 +4682,34 @@ export function startChatSession(
   /** The SERVER ends this child (a detached child's idle or busy reap, the drain on an autonomy
    *  change): nobody chose to end the job, so it is a park (K2), never a real exit. A card it
    *  holds for the owner stays open (kart-alta-yapisma-2: only a real exit withdraws one). */
-  function serverDrain(): void {
+  function serverDrain(why: string): void {
     if (registry) noteChildParking(chatRegistryId);
-    drain();
+    drain(why);
   }
+  /** Nothing of the child's own still runs: no turn, and no background work the CLI reports (a
+   *  shell, a Monitor, a background agent). Every path that ends a child for being idle asks
+   *  this, never the turn count alone (owner 2026-11-23: a child waiting on its background job
+   *  was ended, the job died with it, and it came back saying it was still waiting). */
+  function quiet(): boolean { return turnsInFlight === 0 && backgroundTasks === 0; }
   /** (Re)arm the reaping of a DETACHED child for its current state. A no-op while attached.
    *  Idle: ended after `detachIdleMs()` (15 min) of continuous idleness. Busy: never reaped
-   *  for lack of a socket, up to `detachBusyCapMs()` (4 h) after it lost its socket. */
+   *  for lack of a socket, up to `detachBusyCapMs()` (4 h) of one busy run (from its socket going, or its last idle). */
   function armDetachReap(): void {
     if (!detached || !alive) return;
-    if (turnsInFlight > 0) {
+    // Its background work runs on after the turn: busy, bounded by the same 4 h cap.
+    if (!quiet()) {
       if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
       if (!detachCapTimer) {
-        const left = Math.max(0, detachBusyCapMs() - (Date.now() - detachedAt));
-        detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain(); }, left);
+        const left = Math.max(0, detachBusyCapMs() - (Date.now() - Math.max(detachedAt, detachBusyFrom)));
+        detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain('detached-busy-cap'); }, left);
       }
       return;
     }
     if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
+    // Idle now: the next busy run's cap starts from here.
+    detachBusyFrom = Date.now();
     if (!detachIdleTimer) {
-      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; serverDrain(); }, detachIdleMs());
+      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; if (quiet()) serverDrain('detached-idle'); else armDetachReap(); }, detachIdleMs());
     }
   }
 
@@ -4509,6 +4772,7 @@ export function startChatSession(
     }
     stopPing();
     ws = next;
+    windowSeen = true;
     // Per socket: a phone socket makes its device the owner, a desktop socket clears it.
     const phoneHadIt = ownerDevice?.store === 'mac';
     ownerDevice = socketDevice.get(next) ?? null;
@@ -4532,6 +4796,8 @@ export function startChatSession(
     for (const { line } of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
+    // A card the window still draws for a request settled while it was away goes now.
+    tellOpenRequests();
     if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
     if (mcpLast) sendMeta({ subtype: 'mcp_status', servers: mcpLast, at: mcpLastAt });
     browserMirror?.replay();
@@ -4557,7 +4823,7 @@ export function startChatSession(
       settled = true;
       fn(accepted);
     };
-    if (detached && turnsInFlight === 0) { serverDrain(); return () => { /* already given up */ }; }
+    if (detached && quiet()) { serverDrain('superseded'); return () => { /* already given up */ }; }
     if (detached) {
       // Every hold it has, the rotated conversation's too: the respawn resumes THAT one.
       const lent = ownHolds();
@@ -4566,7 +4832,7 @@ export function startChatSession(
       return settleOnce((accepted) => {
         // Accepted: the new process holds the conversation now; `holdLent` keeps the drain
         // from releasing its hold.
-        if (accepted) { serverDrain(); return; }
+        if (accepted) { serverDrain('superseded'); return; }
         if (!holdLent || !alive) return;
         // Refused: take the holds back — unless someone else took a conversation meanwhile,
         // in which case the child stays lent and never releases them.
@@ -4651,11 +4917,15 @@ export function startChatSession(
       // It drops a `<super-team>` a message carried too: what it holds is its system prompt's block.
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTeam.delivered = superTeam.inPrompt;
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTools.delivered = superTools.inPrompt;
+      // A member's own chat keeps only its birth prompt's owner block after a compaction.
+      if (ownerRef && obj.type === 'system' && obj.subtype === 'compact_boundary') ownerHold.held = ownerHold.inPrompt;
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superModels.delivered = superModels.inPrompt;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
         // An MCP grant waited for the chat's background work (a dev server, a sub-agent) to end.
         if (backgroundTasks === 0) armMcpGrant();
+        // A detached child's reap follows its background work: held while it runs, idle after.
+        armDetachReap();
       }
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
@@ -4667,7 +4937,7 @@ export function startChatSession(
             tool: typeof req.tool_name === 'string' ? req.tool_name : 'tool',
             ...(typeof req.tool_use_id === 'string' && req.tool_use_id ? { toolUseId: req.tool_use_id } : {}),
           });
-        } else if (obj.type === 'control_cancel_request') outstandingAsks.delete(obj.request_id);
+        } else if (obj.type === 'control_cancel_request') dropAsk(obj.request_id);
       }
       // A tool_result (top level or a sub-agent's) for a prompt's tool call: the CLI is done with
       // it, so the prompt is dead. Never replayed again (the registry settles it on the same frame).
@@ -4675,7 +4945,7 @@ export function startChatSession(
         for (const id of toolResultIds(obj)) {
           for (const [requestId, ask] of outstandingAsks) {
             if (ask.toolUseId !== id) continue;
-            outstandingAsks.delete(requestId);
+            dropAsk(requestId);
             console.warn(`[agent-chat] ${chatRegistryId.slice(0, 8)}: a ${ask.tool} permission request closed by its tool_result (no answer reached the CLI)`);
           }
         }
@@ -4725,6 +4995,10 @@ export function startChatSession(
         observedConversation = obj.session_id;
         if (!obj.parent_tool_use_id) holdRotated(obj.session_id);
       }
+      // A member's past work (uye-gecmis-is C4b): every MAIN init names a transcript the pin held.
+      if (workMember && obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && typeof obj.session_id === 'string') {
+        void noteTranscript({ slug: workMember, projectRoot }, obj.session_id, { tool: workTool, ...(pinId ? { pin: pinId } : {}) }).catch(() => undefined);
+      }
       if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && typeof obj.apiKeySource === 'string') {
         const first = chatApiKeySource === '';
         chatApiKeySource = obj.apiKeySource || 'none';
@@ -4759,6 +5033,8 @@ export function startChatSession(
       // not also advance it, and `turnsInFlight` must be the count before this frame closes one.
       const stageBefore = handoffRun?.stage;
       const turnsBefore = turnsInFlight;
+      /** The acting turn's start, read before `closeTurn` (the rotation's carry). */
+      const turnStartedBefore = turnsInFlight > 0 ? turnStartedAt : 0;
       if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
       cardFeedback.noteFrame(obj);
       // The Super's own text: its line-start `<!-- re:<ref> -->` sections close what it owed him.
@@ -4775,6 +5051,8 @@ export function startChatSession(
       const limit = readLimitSignal(obj);
       /** The ONE main-result predicate this frame uses (rotation, and the latch reset below). */
       const mainResult = obj.type === 'result' && obj.parent_tool_use_id === undefined;
+      // C4a: the transcript this result belongs to is derived (queued, debounced), before any rotation.
+      if (workMember && mainResult && observedConversation) queueDerive(workMember, projectRoot, observedConversation, workTool);
 
       if (mainResult) {
         // A Stop's own `result`, or a slow abort `result` after the Stop already settled.
@@ -4813,6 +5091,7 @@ export function startChatSession(
             isLimit: limitHitThisTurn || !!limit,
             observedConversation,
             lastMainContext,
+            turnStartedAt: turnStartedBefore,
             writeUserTurn: (text) => {
               syncSuperModel();
               openTurn();
@@ -4822,6 +5101,7 @@ export function startChatSession(
               // `/clear` starts a fresh conversation on THIS spawn's system prompt: it holds this
               // spawn's team block, whatever an earlier message delivered.
               if (isSuper && text === '/clear' && wroteTurn) superTeamCleared();
+              if (ownerRef && text === '/clear' && wroteTurn) ownerHold.inPrompt = ownerHold.held = spawnOwnerFp;
             },
             // Its own frame, not the branch notice's one-liner: the chat draws the run as it
             // happens (handoff-progress.ts), so "it is happening" is on screen from now on.
@@ -4895,6 +5175,9 @@ export function startChatSession(
       }
       // After this frame's own refusal was dispatched (it may set the latch again): the turn is over.
       if (mainResult) limitHitThisTurn = false;
+      // D3: the frames held during a handoff turn go now, through the admission, after the
+      // rotation (acted, none or thrown) and after `onLimitRejected` (an owed switch takes them).
+      if (mainResult) releaseHandoffHeld();
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -4961,7 +5244,10 @@ export function startChatSession(
     try { ws.close(); } catch { /* already closed */ }
   });
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
+    // How it ended, with what still ran: a signal nobody here sent (macOS under memory pressure)
+    // reads apart from the server's own end (`chat_end`).
+    if (registry) appendOpenLog('chat_exit', { session: chatRegistryId.slice(0, 8), code, signal: signal ?? null, turns: turnsInFlight, background: backgroundTasks });
     mcpStop();
     mcpControl.close();
     teardown();
@@ -5708,12 +5994,17 @@ export function startChatSession(
     detachInbox = attachSuperInbox({
       id: superInboxId,
       sessionId: chatRegistryId,
-      attached: () => alive && !detached && ws.readyState === ws.OPEN,
+      // An alive Super is reachable whether a window holds it or not (owner 2026-11-22, from
+      // Telegram with the app's window closed): a closed window or a server start leaves it
+      // detached, and its events (a member's request, a member's answer) still go in, written to
+      // stdin by this inbox's own `deliver` (never `onWsMessage`, which reads as his message).
+      attached: () => alive,
+      bound: () => alive && !detached && ws.readyState === ws.OPEN,
       idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding() && respawnTo === null,
       deliver: (text, event, cancelled) => new Promise<boolean>((resolve) => {
         // `cancelled`: the inbox gave up waiting (a slow account switch); the items are still
         // pending there, so this turn must never be written late.
-        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || respawnTo !== null || handedOff || !!cancelled?.();
+        const blocked = () => !alive || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || respawnTo !== null || handedOff || !!cancelled?.();
         if (blocked()) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)
@@ -5835,7 +6126,7 @@ export function startChatSession(
     try {
       // A lean Claude child may be granted a claude.ai connector too (`notion`); an ordinary chat
       // already carries the account's connectors, so only the project's servers are news to it.
-      const known = opts.leanMcp ? knownChildMcp(projectRoot).all : knownMcpServers(projectRoot);
+      const known = opts.leanMcp && !bridgeTool ? knownChildMcp(projectRoot).all : knownMcpServers(projectRoot);
       grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known, lean: !!opts.leanMcp });
     } catch { return; }
     if (!grant.length) return;
@@ -5938,7 +6229,7 @@ export function startChatSession(
       // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
       // with nothing held is ended now instead, so no process keeps running at the old level
       // in the meantime; the conversation stays on disk and its next open resumes it.
-      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) serverDrain();
+      if (detached && quiet() && heldForSuccessor.length === 0 && !mcpGrantReceipt) serverDrain('autonomy-change');
       return;
     }
     handedOff = true;
@@ -6010,7 +6301,7 @@ export function startChatSession(
 
     // The client is closing this pane on purpose (a closed tab, a respawn): the socket's close
     // that follows ends the child as it always did, instead of detaching it for a reattach.
-    if (msg.type === 'end') { endOnSocketGone = true; return; }
+    if (msg.type === 'end') { endOnSocketGone = true; if (registry) noteChildEnding(chatRegistryId); return; }
 
     // MCP status and sign-in (task mcp-management), desktop-held sockets only.
     if (msg.type === 'mcpConnect' || msg.type === 'mcpReconnect' || msg.type === 'mcpRefresh') { onMcpMessage(msg as { type: string; name?: unknown }); return; }
@@ -6068,20 +6359,7 @@ export function startChatSession(
       const source = !classified.writes && classified.silent === 'unmarked'
         ? takeHeldOwnerMark(chatRegistryId, text) ?? classified
         : classified;
-      switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
-        // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
-        // never swallowed" would hold for every decision the chooser can make and fail for
-        // the one case nobody planned: an unexpected error on the way to making it.
-        .catch(() => false)
-        .then((held) => {
-          // Held for an account switch's restart: its source is kept beside its text, so the
-          // resubmit (or a stalled release) writes it once, as it arrived.
-          if (held) { carryHeldOwnerMark(chatRegistryId, text, source); return; }
-          if (!alive) return;
-          // Autonomy changed while this message waited in the gate: it belongs to the successor.
-          if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
-          writeOwnerTurn(text, source);
-        }));
+      admitOwnerFrame(raw, text, source, { fromMirror });
       return;
     }
 
@@ -6115,7 +6393,7 @@ export function startChatSession(
     // A card switches only within its agent's level: never past it (owner 2026-11-07).
     const cardCapped = !!card && (msg.mode === 'auto' || msg.mode === 'bypass')
       && narrowerMode(permissionModeFor(msg.mode === 'bypass'), card.levelMode) !== permissionModeFor(msg.mode === 'bypass');
-    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && !cardCapped && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && !cardCapped && !(opts.firstRead && msg.mode === 'bypass') && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       // Off Bypass: its leftover asks are the owner's again, from this moment and for good
       // (a switch back never re-arms the Super's say: fail closed).
@@ -6156,7 +6434,7 @@ export function startChatSession(
     if (msg.type === 'setContextHandoff' && typeof msg.enabled === 'boolean') {
       if (!pinId) return; // an unpinned pane has no tab file to own a toggle
       try {
-        const echo = applyPaneHandoffToggle(contextRoot, projectRoot, pinId, msg.enabled);
+        const echo = applyPaneHandoffToggle(contextRoot, projectRoot, pinId, msg.enabled, superChildPane ? { child: true } : {});
         if (echo) {
           sendMeta({ subtype: 'context_handoff', state: { enabled: echo.enabled, nudgeAt: echo.nudgeAt, hardAt: echo.hardAt, remindEvery: echo.remindEvery, chosen: true } });
         }
@@ -6210,7 +6488,7 @@ export function startChatSession(
         type: 'control_response',
         response: { subtype: 'success', request_id: msg.requestId, response },
       });
-      outstandingAsks.delete(msg.requestId);
+      dropAsk(msg.requestId);
       registry?.answered(msg.requestId, msg.behavior === 'allow' ? (msg.updatedInput as { answers?: unknown } | undefined)?.answers : undefined);
       return;
     }

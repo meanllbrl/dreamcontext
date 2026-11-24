@@ -187,7 +187,7 @@ describe('the composer and the server use it', () => {
     expect(chat).toMatch(/const abouts = isSuper \? ownerAbouts\(text, aboutHeads\(text\)\) : \[\];/);
     // …and whether the turn is his own words (a member's chat: only they close its card, 2026-11-15).
     expect(chat).toMatch(/superAnswerDigest\(chatRegistryId, Date\.now\(\), abouts, ownWords\)/);
-    expect(chat).toMatch(/superOwnerSpoke\(chatRegistryId, Date\.now\(\), held\?\.items \?\? \[\], abouts, midTurn, ownWords\)/);
+    expect(chat).toMatch(/superOwnerSpoke\(chatRegistryId, Date\.now\(\), held\?\.items \?\? \[\], abouts, midTurn, ownWords, text\)/);
     expect(chat).toMatch(/superAskStillOpen\(chatRegistryId, abouts, ownWords\)/);
     // `midTurn` is read before his own turn is counted, or every message would look mid-turn
     // and keep the 15 s lease (verify run 2026-10-27).

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Header } from './Header';
+import { fadeIn } from '../../lib/softMotion';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
 import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultContext';
@@ -7,7 +8,13 @@ import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { publishPage } from '../../lib/pageContext';
 import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../lib/projectSwitchPage';
-import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
+import { AGENT_SURFACE_EXPANDED_EVENT } from '../../lib/agentSettings';
+import { runChatLadder } from '../../lib/chatLadder';
+import { DRAWER_PAGE_EVENT } from '../../lib/drawerIntents';
+import { readOpenItem, useOpenItem } from '../../lib/openItem';
+import { regionSettled, type PrepareReport, type PrepareTarget } from '../../lib/revealGate';
+import { CHAT_MOVE_MAX_MS } from './navRecorder';
+import { useChrome } from './WindowChrome';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
@@ -17,7 +24,20 @@ import './Shell.css';
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
 const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'settings', 'whiteboards', 'relations', 'stats', 'apps'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
+/** How many times the background render of a picked page may be restarted before it is forced. */
+const LANDING_ATTEMPTS = 3;
+/** The longest a picked page waits behind what is on screen, however the render is going. */
+const LANDING_CAP_MS = 1200;
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
+
+/** A page name this shell knows (a window landing's page is checked against it). */
+export function isShellPage(p: unknown): p is Page {
+  return typeof p === 'string' && (VALID_PAGES as readonly string[]).includes(p);
+}
+
+/** A chat closing this soon after a navigation is that navigation's doing (it collapses the
+ *  chat), never a separate act of the owner's. */
+const NAV_COLLAPSE_MS = 1_000;
 
 /**
  * Which page a project was last on — per-project navigation, so it goes through the
@@ -69,7 +89,9 @@ function initialPage(vault: string | null, instanceId: string, newShell: boolean
   return { page, settings: false };
 }
 
-export type NavOrigin = 'chat' | 'rail' | 'other';
+/** `'landing'`: a window move landed it (the project rail, ← →, a switch's carry, ⌘K across
+ *  projects); the window's recorder tells it from the owner's own navigation by this. */
+export type NavOrigin = 'chat' | 'rail' | 'other' | 'landing';
 
 export interface ShellNavigation {
   page: Page;
@@ -93,9 +115,13 @@ interface ShellProps {
    */
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  /** Tek-kenar C2: this project is being prepared out of sight for a move to `preparing`. Its
+   *  landing runs as an active one's would; it reports to the window's gate, never the recorder. */
+  preparing?: PrepareTarget | null;
+  onPrepared?: (report: PrepareReport) => void;
 }
 
-export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProps) {
+export function Shell({ children, sidebarCollapsed, onToggleSidebar, preparing = null, onPrepared }: ShellProps) {
   const { vault, instanceId, isActive, bus } = useVault();
   const newShell = useIsNewShell();
   const [initial] = useState(() => initialPage(vault, instanceId, newShell));
@@ -113,9 +139,16 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, for the stored value read at mount
   const [origin, setOrigin] = useState<NavOrigin>('other');
-  // The new shell's ← → in the title bar: this project's own page history.
-  const historyRef = useRef<{ stack: Page[]; at: number }>({ stack: [activePage], at: 0 });
-  const [historyRev, setHistoryRev] = useState(0);
+  const activePageRef = useRef(activePage);
+  activePageRef.current = activePage;
+  /** Delta 1's one writer: `places.leave` for the page on screen, while this project is active. */
+  const leaveShownRef = useRef<() => void>(() => {});
+  // Navigation B: ← → are the WINDOW's (WindowChrome's place history). This Shell reports what it
+  // shows, and whether the owner caused the change, to the window's recorder.
+  const chrome = useChrome();
+  // Who caused the next report: the owner (a non-`landing` navigate, his own Chat open or close)
+  // or a landing. Taken by the report, then false (an item publish is nobody's act).
+  const ownerRef = useRef<{ byOwner: boolean; navAt: number }>({ byOwner: false, navAt: 0 });
   const [focusId, setFocusId] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -163,15 +196,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   // The open page, on the same element, for surfaces outside this tree that step aside on a
   // page: the corner agent dock and Chat button do not sit over a whiteboard's cards
   // (owner, 2026-10-05; AgentTerminal.css).
-  useLayoutEffect(() => {
-    const instanceEl = shellRef.current?.closest('.project-instance');
-    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = activePage;
-  }, [activePage]);
-  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
-  useEffect(() => {
-    publishPage(bus, activePage);
-    return () => publishPage(bus, null);
-  }, [bus, activePage]);
+  // (Both follow the page that is ON SCREEN: see `shownNav` below.)
 
   // The rail's motion — see useRailGlide.ts. Declared after the attribute above, so the
   // slab measures the rail with the overlay's edge already moved.
@@ -188,14 +213,13 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
       setSettingsWindow((prev) => ({ focusId: id, nonce: (prev?.nonce ?? 0) + 1 }));
       return;
     }
+    // Delta 1: the window leaves the page on screen; its open item is remembered now, and only
+    // for a page this project showed while active (never from a landing out of sight).
+    leaveShownRef.current();
     setActivePage(page);
+    activePageRef.current = page;
     setOrigin(from);
-    const h = historyRef.current;
-    if (h.stack[h.at] !== page) {
-      h.stack = [...h.stack.slice(0, h.at + 1), page].slice(-50);
-      h.at = h.stack.length - 1;
-      setHistoryRev((n) => n + 1);
-    }
+    ownerRef.current = { byOwner: from !== 'landing', navAt: Date.now() };
     setFocusId(id);
     setNonce((n) => n + 1);
     // Tell this instance's Agent overlay (mounted outside this tree, but inside the same
@@ -223,12 +247,38 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [chatOpen, setChatOpen] = useState(false);
   const chatOpenRef = useRef(chatOpen);
   chatOpenRef.current = chatOpen;
-  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
-  // it opens, and on any navigation: they never reopen a chat the owner closed or left.
-  const chatRetriesRef = useRef<number[]>([]);
-  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
-  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => { setChatOpen(open === true); if (open === true) stopChatRetries(); });
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  const preparingRef = useRef(preparing !== null);
+  preparingRef.current = preparing !== null;
+  // The carried or landed Chat's ladder (lib/chatLadder.ts: a freshly mounted surface is not
+  // listening yet) stops the moment it opens, and on any navigation: it never reopens a chat the
+  // owner closed or left.
+  const ladderRef = useRef<(() => void) | null>(null);
+  const stopChatRetries = useCallback(() => { ladderRef.current?.(); ladderRef.current = null; }, []);
+  const startChatLadder = useCallback(() => {
+    stopChatRetries();
+    // Classic keeps its old 2.5 s carry; the new shell asks until the chat move's bound.
+    ladderRef.current = runChatLadder(bus, newShell ? CHAT_MOVE_MAX_MS : 2_500, {
+      isOpen: () => chatOpenRef.current,
+      stillActive: () => isActiveRef.current || preparingRef.current,
+    });
+    if (chatOpenRef.current) stopChatRetries();
+  }, [bus, newShell, stopChatRetries]);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => {
+    const isOpen = open === true;
+    // An open the ladder asked for is a landing's; a close right after a navigation is that
+    // navigation's; any other open or close is the owner's (the rail's Chat row, Esc).
+    const byOwner = isOpen ? ladderRef.current === null : Date.now() - ownerRef.current.navAt > NAV_COLLAPSE_MS;
+    ownerRef.current = { ...ownerRef.current, byOwner };
+    setChatOpen(isOpen);
+    if (isOpen) stopChatRetries();
+  });
   useInstanceEvent('dreamcontext-navigate', stopChatRetries);
+  // A window move landing on this project's Chat (C5): the chat expands as it stands.
+  useInstanceEvent<{ page?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
+    if (detail?.page === 'chat') startChatLadder();
+  });
   const wasActiveRef = useRef(false);
   useEffect(() => {
     const arrived = isActive && !wasActiveRef.current;
@@ -237,22 +287,96 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     if (!arrived || !vault || !takeProjectSwitch(vault)) return undefined;
     const plan = planProjectSwitch(readShownSurface(), { page: activePage, chat: chatOpen },
       (p) => !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p)));
-    if (plan.navigate) navigate(plan.navigate, null);
+    if (plan.navigate) navigate(plan.navigate, null, 'landing');
     // Closing the chat with a navigate signal no page reads as its own (Lab clears its open funnel
     // on `page: 'lab'`); the agent surface collapses on any.
-    if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    if (plan.chat === false && !plan.navigate) {
+      ownerRef.current = { byOwner: false, navAt: Date.now() };
+      emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    }
     if (plan.chat !== true) return undefined;
     // A project mounted by this switch has no chat surface listening yet: ask until it opens.
-    openAgentSurface(bus);
-    if (chatOpenRef.current) return undefined;
-    chatRetriesRef.current = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
-      if (!chatOpenRef.current) openAgentSurface(bus);
-    }, ms));
+    startChatLadder();
     return stopChatRetries;
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
   useEffect(() => {
     if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });
   }, [isActive, activePage, chatOpen]);
+
+  // What this project shows, to the window's recorder (C3): on becoming active and on every
+  // change, only while active. The open item travels only when it belongs to the shown page.
+  const openItem = useOpenItem(bus);
+  const itemOnPage = openItem && openItem.page === activePage ? openItem : null;
+
+  // Delta 1: what the window remembers of (this project, the page on screen) is written as it
+  // LEAVES it: in navigate(), when this project stops being active, on pagehide and on unmount.
+  const places = chrome.places;
+  leaveShownRef.current = () => {
+    if (!newShell || !vault || !places || !isActiveRef.current) return;
+    const page = activePageRef.current;
+    const item = readOpenItem(bus);
+    places.leave(vault, page, item && item.page === page ? { id: item.id, label: item.label } : null);
+  };
+  const wasShownRef = useRef(false);
+  useEffect(() => {
+    if (isActive) { wasShownRef.current = true; return undefined; }
+    if (!wasShownRef.current) return undefined;
+    wasShownRef.current = false;
+    // Just stopped being active: the page is still mounted, its item still published.
+    if (!newShell || !vault || !places) return undefined;
+    const page = activePageRef.current;
+    const item = readOpenItem(bus);
+    places.leave(vault, page, item && item.page === page ? { id: item.id, label: item.label } : null);
+    return undefined;
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- on the active edge only
+  useEffect(() => {
+    const onHide = () => leaveShownRef.current();
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      // closeTab of the active project unmounts it with no deactivation effect.
+      leaveShownRef.current();
+    };
+  }, []);
+  // The open item on the instance root (`data-item`), for the probe and the shell's tests.
+  useLayoutEffect(() => {
+    const instanceEl = shellRef.current?.closest('.project-instance');
+    if (!(instanceEl instanceof HTMLElement)) return;
+    if (itemOnPage) instanceEl.dataset.item = itemOnPage.id;
+    else delete instanceEl.dataset.item;
+  }, [itemOnPage?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- by value
+
+  // C2: while prepared out of sight, report what this project shows to the window's gate once a
+  // frame. The bound runs on the window's real timers, so a stopped frame clock (an occluded
+  // WebKit window) never holds a prepare past it.
+  const preparedRef = useRef({ page: activePage, chatOpen: false, item: null as string | null });
+  preparedRef.current = { page: activePage, chatOpen, item: itemOnPage?.id ?? null };
+  const onPreparedRef = useRef(onPrepared);
+  onPreparedRef.current = onPrepared;
+  const preparingKey = preparing ? JSON.stringify(preparing) : null;
+  useEffect(() => {
+    if (!preparing) return undefined;
+    let raf = 0;
+    const tick = () => {
+      const root = shellRef.current?.closest('.project-instance');
+      const settled = root ? regionSettled(root, preparing) : false;
+      onPreparedRef.current?.({ ...preparedRef.current, settled });
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [preparingKey]); // eslint-disable-line react-hooks/exhaustive-deps -- by value
+  const reportedRef = useRef(false);
+  const reportShown = chrome.reportShown;
+  useEffect(() => {
+    if (!newShell || !vault) return;
+    if (!isActive) { reportedRef.current = false; return; }
+    const becoming = !reportedRef.current;
+    reportedRef.current = true;
+    const byOwner = !becoming && ownerRef.current.byOwner;
+    ownerRef.current = { ...ownerRef.current, byOwner: false };
+    reportShown(vault, { page: activePage, chatOpen, item: itemOnPage ? { id: itemOnPage.id, label: itemOnPage.label } : null, byOwner });
+  }, [newShell, vault, isActive, activePage, chatOpen, itemOnPage?.id, itemOnPage?.label, reportShown]); // eslint-disable-line react-hooks/exhaustive-deps -- the item by value
 
   const handleSidebarNavigate = useCallback(
     (page: Page, id?: string) => {
@@ -262,25 +386,6 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);
-
-  // ← → step through this project's page history without adding to it.
-  const stepHistory = useCallback((delta: -1 | 1) => {
-    const h = historyRef.current;
-    const at = h.at + delta;
-    if (at < 0 || at >= h.stack.length) return;
-    h.at = at;
-    setHistoryRev((n) => n + 1);
-    const page = h.stack[at];
-    setActivePage(page);
-    setFocusId(null);
-    setNonce((n) => n + 1);
-    setOrigin('other');
-    emitInstance(bus, 'dreamcontext-navigate', { page });
-    writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
-  }, [bus, vault]);
-  const canBack = historyRef.current.at > 0;
-  const canForward = historyRef.current.at < historyRef.current.stack.length - 1;
-  void historyRev;
 
   // Stable so <CommandModal>'s topmost-Esc effect doesn't re-register (and re-assert
   // the palette as top of the overlay stack) on every Shell re-render — which would
@@ -296,21 +401,86 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     [activePage, focusId, nonce, origin, navigate, clearFocus],
   );
 
+  // ── What is ON SCREEN lags what was picked by exactly one render ────────────────────────
+  //
+  // A page is a big tree (the task board mounts thousands of elements). Rendered at the press it
+  // held the main thread for one long task, during which nothing answered, least of all while a
+  // chat was streaming (302 ms to the first frame, measured 2026-11-22). So the page the children
+  // draw is the DEFERRED navigation: React builds the picked page in the background, in slices,
+  // while the screen stays whole and live, then swaps in one commit. What must answer at the
+  // press (the stored page, the window's report, the chat closing, the lit tab) still reads
+  // `activePage`; this window's own bookkeeping is untouched.
+  //
+  // Not while this project is prepared out of sight (the window's reveal gate reads what the
+  // project shows): then the page is drawn at once, as before.
+  //
+  // A background render is thrown away and started again by every urgent update in the window (a
+  // streaming chat makes them many times a second), so left alone a page could wait for seconds
+  // behind a busy agent. The landing is therefore FORCED, in one ordinary render like before this
+  // existed, once the background render was restarted `LANDING_ATTEMPTS` times or took
+  // `LANDING_CAP_MS`.
+  const deferredNav = useDeferredValue(nav);
+  const deferring = isActive && preparing === null;
+  const [forcedNonce, setForcedNonce] = useState(-1);
+  // What landed last. After a forced landing the deferred value is still one navigation behind
+  // until its own render commits: the screen never steps back to it.
+  const landedNavRef = useRef(nav);
+  const shownNav = !deferring || forcedNonce === nonce ? nav
+    : deferredNav.nonce < landedNavRef.current.nonce ? landedNavRef.current : deferredNav;
+  const navPending = shownNav.nonce !== nonce;
+  const landedNonceRef = useRef(shownNav.nonce);
+  // Counted in render on purpose: a render React throws away runs no effect, and those thrown
+  // away are exactly what is being counted. Only a ref is written, and only to be compared.
+  const attemptsRef = useRef({ nonce: -1, count: 0 });
+  if (deferring && deferredNav.nonce === nonce && landedNonceRef.current !== nonce && forcedNonce !== nonce) {
+    if (attemptsRef.current.nonce !== nonce) attemptsRef.current = { nonce, count: 0 };
+    attemptsRef.current.count += 1;
+    if (attemptsRef.current.count === LANDING_ATTEMPTS + 1) queueMicrotask(() => setForcedNonce(nonce));
+  }
+  useEffect(() => {
+    if (!navPending) return undefined;
+    const timer = window.setTimeout(() => setForcedNonce(nonce), LANDING_CAP_MS);
+    return () => window.clearTimeout(timer);
+  }, [navPending, nonce]);
+  const mainRef = useRef<HTMLElement>(null);
+  const landedPageRef = useRef(shownNav.page);
+  useLayoutEffect(() => {
+    if (shownNav.nonce === landedNonceRef.current) return;
+    landedNonceRef.current = shownNav.nonce;
+    landedNavRef.current = shownNav;
+    // The page arrives with a short fade of what the frame holds (opacity only: the frame itself,
+    // and anything a page positions against it, stays where it is). A move inside the same page
+    // (a focused item) is not an arrival.
+    if (shownNav.page === landedPageRef.current) return;
+    landedPageRef.current = shownNav.page;
+    for (const el of mainRef.current?.children ?? []) fadeIn(el);
+  }, [shownNav]);
+  // The page on screen, on the instance element, for surfaces outside this tree that step aside
+  // on a page: the corner agent dock and Chat button do not sit over a whiteboard's cards
+  // (owner, 2026-10-05; AgentTerminal.css).
+  const shownPage = shownNav.page;
+  useLayoutEffect(() => {
+    const instanceEl = shellRef.current?.closest('.project-instance');
+    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = shownPage;
+  }, [shownPage]);
+  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
+  useEffect(() => {
+    publishPage(bus, shownPage);
+    return () => publishPage(bus, null);
+  }, [bus, shownPage]);
+
   if (newShell) {
     return (
       <div className="shell" ref={shellRef}>
         <NewShellControls
           activePage={activePage}
+          navPending={navPending}
           onNavigate={(page) => navigate(page, null, 'rail')}
           onOpenSearch={() => setPaletteOpen(true)}
-          canBack={canBack}
-          canForward={canForward}
-          onBack={() => stepHistory(-1)}
-          onForward={() => stepHistory(1)}
         />
         <div className="shell-body">
-          <main className="shell-main">
-            {children(nav)}
+          <main className="shell-main" data-region="page" ref={mainRef}>
+            {children(shownNav)}
           </main>
         </div>
         <CommandPalette
@@ -336,8 +506,8 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
       <div className="shell-body">
         <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
-        <main className="shell-main">
-          {children(nav)}
+        <main className="shell-main" ref={mainRef}>
+          {children(shownNav)}
         </main>
       </div>
       <CommandPalette

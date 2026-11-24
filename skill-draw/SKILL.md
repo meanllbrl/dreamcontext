@@ -25,13 +25,14 @@ On a whiteboard the mix is the point: an explanation is a drawing from the kit; 
 revenue, signups, a trend, a split) is a live `insight` widget** (`dreamcontext whiteboard add
 <board> insight --ref <slug>`), never a `kpi`/chart drawn from today's values; a note is a caption.
 
-## 2. Five design rules (the references explain each)
+## 2. Six design rules (the references explain each)
 
 1. Use a builder; never hand-roll rectangles and text when one fits.
 2. Visual first: a flow, a funnel, a device, a chart before a sentence.
 3. Text keeps a readable measure: every text block has a width.
 4. Write for a glance: lead with the conclusion, blocks under ~4 lines.
 5. No overlap: flow the layout with `stack` / `row` / `panel`, never hand-place.
+6. A product screen (how a screen WILL look) is never kit boxes: build it as HTML with the product's own styles (its tokens, fonts, window frame, real copy), screenshot it at 2x with Playwright, and place the PNG as a picture. Wireframes and kit `device`s only when a wireframe is asked for.
 
 ## 3. Never
 

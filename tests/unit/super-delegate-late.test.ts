@@ -105,7 +105,7 @@ describe('super delegate answered late', () => {
     const out = { status: 0, json: {} as Record<string, unknown> } as ServerResponse & { status: number; json: Record<string, unknown> };
     (out as unknown as { writeHead: (s: number) => void }).writeHead = (s: number) => { out.status = s; };
     (out as unknown as { end: (b?: string) => void }).end = (b?: string) => { out.json = b ? JSON.parse(b) : {}; };
-    await handleSuperVerb(req(body), out, { verb: 'delegate' });
+    await handleSuperVerb(req({ model: 'sonnet', ...body }), out, { verb: 'delegate' });
     return out;
   }
   const commands = () => frames.filter((f) => f.subtype === 'super_command');

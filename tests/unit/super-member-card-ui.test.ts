@@ -35,8 +35,9 @@ describe('member cards in the window', () => {
     const src = read('SuperContainer.tsx');
     // Its red light is drawn off (no onClick), never wired to a close.
     expect(src).toMatch(/const closeLight: Light = c\.kind === 'member' \|\| \(props\.remote && c\.kind !== 'agenda'\)\s*\? \{ label: closeLabel \}/);
-    expect(src).toMatch(/if \(c\.kind === 'member' && !small\) return;/);
-    expect(src).toMatch(/data-inert=\{full \? undefined : 'true'\} data-member-card/);
+    // A medium Scorecard is its live tile (one row high): a click on its background opens it side by side.
+    expect(src).toMatch(/if \(c\.kind === 'member' && !small && !\(c\.ref === 'scorecard' && SIZE_UNITS\[drawnSize\]\.h === 1\)\) return;/);
+    expect(src).toMatch(/data-inert=\{live \? undefined : 'true'\} data-member-card/);
     expect(src).toMatch(/!inFullscreen\(e\.target\) && !onControl\(c, e\.target\)\) props\.onPress/);
     const surface = read('SuperSurface.tsx');
     expect(surface).toMatch(/c\.kind === 'agenda' \|\| c\.kind === 'member'\) continue;/);

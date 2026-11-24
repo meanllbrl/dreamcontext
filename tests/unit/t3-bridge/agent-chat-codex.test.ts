@@ -4,7 +4,7 @@
  * and the rotation writes `/clear` to it exactly as to Claude. A Claude pane's script is unchanged.
  */
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,6 +37,12 @@ const codexProblem = vi.hoisted(() => ({ value: null as string | null }));
 vi.mock('../../../src/lib/codex-bin.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/lib/codex-bin.js')>()),
   codexStartProblem: () => codexProblem.value,
+}));
+
+// A lean Codex child starts only behind the env gate; whether this machine has it is not the test's.
+vi.mock('../../../src/lib/t3-bridge/env-gate.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/lib/t3-bridge/env-gate.js')>()),
+  codexEnvGateGap: () => null,
 }));
 
 const { startChatSession } = await import('../../../src/server/routes/agent-chat.js');
@@ -229,6 +235,56 @@ describe('a Codex pane on the server\'s real turn counter', () => {
     });
     expect(spawned.length).toBe(before);
     expect(metas(ws).join('\n')).toMatch(/Nothing was lost/);
+  });
+});
+
+// Owner 2026-11-22: every tool gets the same rule. A lean Codex child is told the project's
+// servers it may ask for (never a claude.ai connector), and its own `mcp` card grants one.
+describe('a lean Codex child and the MCP it may ask for', () => {
+  const T1 = '01a0d5eb-f0c0-7481-a417-5e8871805cbe';
+  const line = (s: { child: FakeChild }, f: Record<string, unknown>) => s.child.stdout.emit('data', Buffer.from(JSON.stringify(f) + '\n'));
+  let home = '';
+  let homeWas: string | undefined;
+  beforeEach(() => {
+    homeWas = process.env.HOME;
+    home = mkdtempSync(join(tmpdir(), 'dc-codex-lean-home-'));
+    process.env.HOME = home;
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: { whatsapp: { command: 'whatsapp-mcp' }, posthog: { type: 'http', url: 'https://example.invalid/mcp' } } }));
+  });
+  afterEach(() => {
+    process.env.HOME = homeWas;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const lean = () => {
+    const ws = new FakeWs();
+    startChatSession(ws as unknown as import('ws').WebSocket, project, {
+      bypass: false, sessionId: PANE, resumeId: '', model: 'gpt-5.6-terra', effort: 'high', mode: 'develop' as never,
+      account: '', initialPrompt: '', deferPrompt: false, tool: 'codex', leanMcp: [],
+    });
+    return { ws, s: spawned[spawned.length - 1]! };
+  };
+  const briefingOf = (s: { file: string; args: string[] }) => {
+    const m = /"--briefing-file" "([^"]+)"/.exec(scriptOf(s));
+    return m ? readFileSync(m[1]!, 'utf-8') : '';
+  };
+
+  it('its briefing names the set-up servers, and its card respawns it at the turn end', async () => {
+    const { s } = lean();
+    expect(briefingOf(s)).toMatch(/until it asks: posthog, whatsapp\./);
+    const card = `\`\`\`dream-view\n${JSON.stringify({ type: 'mcp', id: 'need', why: 'send the message', servers: ['whatsapp'] })}\n\`\`\`\n`;
+    line(s, { type: 'system', subtype: 'init', session_id: T1, dc_tool: 'codex' });
+    line(s, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: card }] }, parent_tool_use_id: null });
+    expect(s.child.stdin.end).not.toHaveBeenCalled();
+    line(s, { type: 'result', subtype: 'success', is_error: false, result: '', session_id: T1 });
+    await vi.waitFor(() => expect(s.child.stdin.end).toHaveBeenCalled());
+    const before = spawned.length;
+    s.child.emit('close', 0);
+    expect(spawned.length).toBe(before + 1);
+    const next = scriptOf(spawned[spawned.length - 1]!);
+    const m = /"--mcp-config" "([^"]+)"/.exec(next);
+    expect(m).not.toBeNull();
+    expect(Object.keys(JSON.parse(readFileSync(m![1]!, 'utf-8')).mcpServers)).toEqual(['whatsapp']);
+    expect(next).toContain('"--strict-mcp"');
   });
 });
 

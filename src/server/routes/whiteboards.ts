@@ -35,6 +35,7 @@ import { searchPages } from '../../lib/whiteboards/pages.js';
 import type { PageKind } from '../../lib/whiteboards/widgets.js';
 import { parseGroupInput, readGroup } from '../../lib/whiteboards/validate.js';
 import { readGroupOrder, writeGroupOrder } from '../../lib/whiteboards/group-order.js';
+import { closeBoardShares } from '../shares/board-kind.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
   WhiteboardConflictError,
@@ -369,6 +370,8 @@ export async function handleWhiteboardDelete(
   }
   try {
     const { id } = await trashWhiteboard(contextRoot, slug);
+    // Its live link ends with it (tunel-paylasim C5 `board_gone`).
+    closeBoardShares(contextRoot, slug);
     sendJson(res, 200, { ok: true, slug, trashed: `${TRASH_DIR}/${id}`, id });
   } catch (err) {
     sendWhiteboardError(res, err);

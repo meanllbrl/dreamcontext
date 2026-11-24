@@ -1,0 +1,109 @@
+/* The outline of a page that is still loading (LoadingSkeleton.tsx). One entrance, delayed, so
+   a page that is ready at once never flashes it; no endless animation. */
+
+.dc-skel {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: dc-skel-in 0.22s ease-out 0.14s backwards;
+}
+
+.dc-skel-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.dc-skel-block {
+  display: block;
+  flex: none;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  opacity: 0.7;
+}
+
+/* ── A task board: the tabs row, then columns of cards ── */
+
+.dc-skel-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--space-13);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dc-skel-title { width: 72px; height: var(--space-5); }
+.dc-skel-chip { width: 96px; height: var(--space-6); border-radius: var(--radius-full, 999px); }
+
+.dc-skel-cols {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  overflow: hidden;
+}
+
+.dc-skel-col {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dc-skel-head { width: 40%; height: var(--space-4); }
+.dc-skel-card { width: 100%; height: 76px; border-radius: var(--radius-lg); }
+
+/* ── A whiteboard: a few notes in the middle of an empty canvas ── */
+
+.dc-skel--canvas {
+  align-items: center;
+  justify-content: center;
+}
+
+.dc-skel-canvas {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+}
+
+.dc-skel-note { width: 148px; height: 104px; border-radius: var(--radius-lg); }
+.dc-skel-note--wide { width: 212px; height: 136px; margin-top: var(--space-8); }
+
+/* ── A list (a side panel's rows): a few lines where the first rows will be ── */
+
+.dc-skel--list {
+  flex: none;
+  height: auto;
+}
+
+.dc-skel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-2);
+}
+
+.dc-skel-row { height: var(--space-3); border-radius: var(--radius-sm); }
+
+@keyframes dc-skel-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-skel { animation: none; }
+}
+/* Light mode moves nothing either: the same gate as `softMotionOff()` (lib/softMotion.ts). */
+:root[data-light='true'] .dc-skel { animation: none; }

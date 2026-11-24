@@ -1,0 +1,199 @@
+/* A member's Scorecard (plan uye-karnesi D1): tokens only, 4px grid. Stars use the warning
+   family, bars accent / error / muted, the one emphasis is the first unrated run's accent border. */
+.sc-strong { font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.sc-accent { color: var(--color-accent-ink); font-size: var(--font-size-sm); }
+.sc-label { margin: 0; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-secondary); }
+.sc-label-soft { font-weight: var(--font-weight-normal, 400); text-transform: none; letter-spacing: 0; }
+.sc-sub { margin-top: calc(-1 * var(--space-1)); }
+.is-good { color: var(--color-success-ink, var(--color-success)); }
+.is-bad { color: var(--color-error-ink, var(--color-error)); }
+
+/* Stars. A filled star (warning-ink, >= 4.5:1 on the card in both themes) and an outline empty star
+   in a quiet grey that still reads (3:1): shape and luminance carry on/off, not hue. Each
+   star's hit area is 24px on a pointer and 44px on touch, the glyph stays small. Adjacent hit
+   areas leave no gap, so hovering between two stars never lights all five. */
+.sc-stars { --sc-empty: color-mix(in srgb, var(--color-text-secondary) 75%, var(--color-bg)); display: inline-flex; align-items: center; gap: 0; flex: none; }
+.sc-star {
+  display: inline-flex; align-items: center; justify-content: center; min-width: var(--space-6, 24px); min-height: var(--space-6, 24px); padding: 0;
+  border: 0; background: transparent; line-height: 1; color: var(--sc-empty); cursor: default;
+}
+.sc-glyph { font-size: var(--font-size-base); line-height: 1; }
+button.sc-star { cursor: pointer; }
+button.sc-star:disabled { cursor: progress; }
+.sc-star.is-on { color: var(--color-warning-ink, var(--color-warning)); }
+/* The Super's reading of his words (W3 E12): violet, still filled vs outline by shape. */
+.sc-stars--judged .sc-star.is-on { color: var(--color-accent-ink); }
+/* Its empty stars are violet outlines too (the approved drawing): the whole row reads as the Super's. */
+.sc-stars--judged .sc-star:not(.is-on) { color: color-mix(in srgb, var(--color-accent-ink) 70%, var(--color-bg)); }
+.sc-stars:hover button.sc-star:not(:disabled) { color: var(--color-warning-ink, var(--color-warning)); }
+.sc-stars button.sc-star:hover ~ button.sc-star { color: var(--sc-empty); }
+button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-sm); }
+.sc-stars--big .sc-star { min-width: var(--space-8, 32px); min-height: var(--space-8, 32px); }
+.sc-stars--big .sc-glyph { font-size: var(--font-size-2xl, 24px); }
+@media (pointer: coarse) { .sc-star { min-width: 44px; min-height: 44px; } }
+
+/* Tile */
+.sc-tile { gap: var(--space-1); min-width: 0; }
+.sc-tile-head { font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.sc-tile-run { font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-tile-rate { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-2); row-gap: var(--space-1); }
+.sc-tile-rate .sc-accent { white-space: nowrap; }
+.sc-tile-row { display: flex; flex-wrap: wrap; align-items: flex-end; column-gap: var(--space-3); row-gap: var(--space-1); min-width: 0; }
+.sc-tile-row .mcb-big { white-space: nowrap; }
+
+/* Bars */
+.sc-bars { display: inline-flex; align-items: flex-end; gap: var(--space-1); height: 56px; flex: none; }
+.sc-bars--small { height: 28px; gap: 2px; }
+.sc-bar { display: block; width: 14px; min-height: 4px; border-radius: 3px; background: var(--color-accent); }
+.sc-bars--small .sc-bar { width: 6px; border-radius: 2px; }
+.sc-bar.is-empty { height: 4px; background: var(--color-border); }
+.sc-bar.is-low { background: var(--color-error); }
+.sc-bar.is-mid { background: color-mix(in srgb, var(--color-text-secondary) 75%, var(--color-bg)); }
+.sc-bar.is-high { background: var(--color-accent); }
+
+/* Full card: laid out by its own width (a large floating card is ~344px): one column below
+   TWO_COLUMN_MIN_PX, the phone's order. */
+.sc-full { gap: var(--space-3); container-type: inline-size; }
+.sc-full--one .sc-run-top { flex-wrap: wrap; }
+.sc-write-error { font-size: var(--font-size-xs); }
+.sc-why { font-size: var(--font-size-xs); width: 100%; }
+.sc-cleared { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); }
+.sc-run-open { padding: 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.sc-run-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.sc-cols { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(280px, 2fr); gap: var(--space-4); min-height: 0; }
+.sc-col { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.sc-col--right { padding-left: var(--space-4); border-left: 1px solid var(--color-border); }
+.sc-section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.sc-damaged, .sc-error {
+  display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md); background: var(--color-error-subtle); color: var(--color-error-ink, var(--color-error)); font-size: var(--font-size-sm);
+}
+.sc-failed { margin: 0; font-size: var(--font-size-sm); color: var(--color-error-ink, var(--color-error)); }
+
+/* Goal band */
+.sc-goal-add {
+  display: block; width: 100%; text-align: left; padding: var(--space-2) var(--space-3); border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md); background: transparent; font: inherit; font-size: var(--font-size-sm); cursor: pointer;
+}
+.sc-goal-add:hover { background: var(--color-bg-tertiary); }
+.sc-goal {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-secondary);
+}
+.sc-goal--elsewhere, .sc-goal--gone { display: flex; gap: var(--space-2); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.sc-goal-num { display: flex; flex-direction: column; gap: 2px; }
+.sc-goal-value { display: flex; align-items: baseline; gap: var(--space-2); }
+.sc-goal-big { font-size: var(--font-size-2xl, 24px); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.sc-move { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.sc-move.is-good { color: var(--color-success-ink, var(--color-success)); }
+.sc-move.is-bad { color: var(--color-error-ink, var(--color-error)); }
+.sc-goal-line { width: 100%; height: 56px; min-width: 0; }
+.sc-goal-path { fill: none; stroke: var(--color-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.sc-goal-target { stroke: var(--color-border); stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.sc-goal-dot { fill: var(--color-bg); stroke: var(--color-text-secondary); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.sc-goal-dot.is-good { stroke: var(--color-success); }
+.sc-goal-dot.is-bad { stroke: var(--color-error); }
+.sc-goal-src { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: var(--font-size-sm); text-align: right; }
+@container (max-width: 620px) {
+  .sc-goal { grid-template-columns: 1fr; gap: var(--space-2); }
+  .sc-goal-src { align-items: flex-start; text-align: left; }
+}
+.sc-goal-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+.sc-field { display: flex; flex-direction: column; gap: var(--space-1); }
+.sc-field select, .sc-field input, .sc-crit-add input, .sc-note-form textarea {
+  padding: var(--space-1) var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-bg); color: var(--color-text); font: inherit; font-size: var(--font-size-sm);
+}
+.sc-field input { width: 96px; }
+.sc-form-actions { display: inline-flex; align-items: center; gap: var(--space-3); }
+.sc-btn {
+  padding: var(--space-1) var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--color-accent-strong);
+  color: var(--color-accent-text); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
+}
+.sc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Criteria */
+.sc-crit {
+  display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: var(--font-size-sm); color: var(--color-text);
+}
+.sc-crit-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sc-x { flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.sc-x:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.sc-crit-new { text-align: left; color: var(--color-text-secondary); }
+.sc-crit-add input { width: 100%; box-sizing: border-box; }
+.sc-example { font-size: var(--font-size-xs); }
+
+/* Lessons */
+.sc-lesson { display: flex; flex-direction: column; gap: 2px; padding-left: var(--space-3); border-left: 3px solid var(--color-accent); font-size: var(--font-size-sm); }
+.sc-lesson.is-held { border-left-color: var(--color-warning); }
+.sc-lesson-text { color: var(--color-text); overflow-wrap: anywhere; }
+.sc-lesson-meta { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); font-size: var(--font-size-xs); }
+.sc-lesson-meta .mcb-link { font-size: var(--font-size-xs); }
+.sc-empty-line { padding-left: var(--space-3); border-left: 3px solid var(--color-border); font-size: var(--font-size-xs); }
+.sc-length { font-size: var(--font-size-xs); }
+
+/* Trend */
+.sc-trend-row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
+.sc-trend-num { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sc-avg { font-size: 32px; font-weight: var(--font-weight-semibold); line-height: 1.1; color: var(--color-text); }
+.sc-trend-empty { font-size: var(--font-size-lg, 18px); }
+.sc-trend-word { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.sc-trend-word.is-up { color: var(--color-success-ink, var(--color-success)); }
+.sc-trend-word.is-down { color: var(--color-error-ink, var(--color-error)); }
+.sc-trend-word.is-same { color: var(--color-text-secondary); }
+
+/* Runs */
+.sc-run {
+  display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg);
+}
+.sc-run.is-lead { border-color: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent-soft, transparent); }
+.sc-run.is-low { border-color: var(--color-error-subtle); background: color-mix(in srgb, var(--color-error-subtle) 40%, var(--color-bg)); }
+.sc-run-top { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.sc-run-title { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--font-size-sm); }
+.sc-run-title > .sc-strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-run-sub { font-size: var(--font-size-xs); }
+.sc-run-day { flex: none; font-size: var(--font-size-xs); min-width: 56px; text-align: right; }
+.sc-run-cta { font-size: var(--font-size-xs); }
+.sc-rated { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; }
+.sc-note {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); width: 100%; box-sizing: border-box;
+  padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); font-size: var(--font-size-sm);
+}
+.sc-note-form { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; }
+.sc-note-form textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.sc-quote { font-size: var(--font-size-xs); }
+.sc-clear, .sc-add-note { font-size: var(--font-size-xs); }
+.sc-clear { color: var(--color-text-secondary); }
+.sc-check { margin: 0; font-size: var(--font-size-xs); }
+.sc-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.sc-chip {
+  padding: 2px var(--space-2); border: 1px solid var(--color-border); border-radius: 999px; background: transparent;
+  font: inherit; font-size: var(--font-size-xs); color: var(--color-text-secondary); cursor: default;
+}
+button.sc-chip { cursor: pointer; }
+.sc-chip.is-met { border-color: var(--color-success-subtle); color: var(--color-success-ink, var(--color-success)); }
+.sc-chip.is-miss { border-color: var(--color-error-subtle); color: var(--color-error-ink, var(--color-error)); }
+.sc-run-lesson {
+  display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); font-size: var(--font-size-sm);
+}
+.sc-run-lesson .sc-lesson-text { flex: 1; min-width: 0; }
+.sc-run-lesson-act { display: inline-flex; gap: var(--space-2); }
+
+/* Phone: one column, stars a finger wide. */
+.sc-full--phone .sc-star { min-width: 44px; min-height: 44px; }
+.sc-full--phone .sc-glyph { font-size: var(--font-size-2xl, 24px); }
+.sc-full--phone .sc-run-top .sc-stars { order: 3; width: 100%; }
+
+/* Under a run in the member's chat */
+.sc-runstars { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); font-size: var(--font-size-sm); }
+.sc-runstars-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.sc-runstars-note { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.sc-runstars-clear { align-self: flex-start; }
+
+/* W3: a job the Super handed the member, his words the Super noted, past-window runs. */
+.sc-run-chip { display: inline-block; align-self: flex-start; margin-left: 0; padding: 0 var(--space-1); border-radius: var(--radius-sm); font-size: var(--font-size-xs); color: var(--color-accent-ink); background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg)); white-space: nowrap; }
+.sc-judged-row, .sc-correction { margin: 0; padding: var(--space-1) var(--space-2); border: 1px dashed color-mix(in srgb, var(--color-accent) 55%, var(--color-bg)); border-radius: var(--radius-sm); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.sc-run-notrated { font-size: var(--font-size-xs); }

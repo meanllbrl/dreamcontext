@@ -1,9 +1,11 @@
+import { dropScorecard } from './scorecard.js';
 import { stopAgentTaskJobs } from './task-starter.js';
-import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
 import { removeMemberGrants } from '../grants/store.js';
 import { basename, dirname, join } from 'node:path';
 import { lockHolderPid, withFileLockSync } from '../file-lock.js';
 import fg from '../glob.js';
+import { readTaskHeads } from '../task-heads.js';
 import matter from 'gray-matter';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { generateId } from '../id.js';
@@ -59,10 +61,10 @@ import {
   type RecordLessonInput,
 } from '../automations/store.js';
 import { approvalFields, approveAutomation, checkApproval, listRegisteredProjects, manifestHash, revokeAgent } from '../automations/registry.js';
-import { readWhiteboard, listWhiteboards } from '../whiteboards/store.js';
+import { readWhiteboard, listWhiteboards, resolveWhiteboardPath } from '../whiteboards/store.js';
 import { liveElements } from '../whiteboards/ops.js';
 import { widgetPayloadOf } from '../whiteboards/widgets.js';
-import { classifyAutomationSlot, isSafeAutomationSlug, parseManifestFrontmatter, readManifestFrontmatter } from './slot.js';
+import { classifyAutomationSlot, isSafeAutomationSlug, parseManifestFrontmatter } from './slot.js';
 import { assertOwned, currentLogin, parseOwner } from './owner.js';
 import { adoptPattern, agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from './agent-sync.js';
 import { composeRun, legacyPair } from './compose.js';
@@ -75,6 +77,8 @@ import {
   AGENTS_DIR,
   AGENTS_GITIGNORE_ENTRIES,
   AGENTS_GITIGNORE_ENTRIES_ROOT,
+  AGENT_RULES_GITIGNORE_ENTRIES,
+  AGENT_RULES_GITIGNORE_ENTRIES_ROOT,
   DEFAULT_CALL_SETTINGS,
   type AgentCallSettings,
   type AgentIdentityPatch,
@@ -367,6 +371,10 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   try {
     ensureGitignoreEntries(contextRoot, [...AGENTS_GITIGNORE_ENTRIES], { comment });
     ensureGitignoreEntries(dirname(contextRoot), [...AGENTS_GITIGNORE_ENTRIES_ROOT], { comment });
+    // A project member's rules: their own block (D1), before the first rules file is written.
+    const rules = 'dreamcontext agents — member rules, private by default (shared ones are negated below)';
+    ensureGitignoreEntries(contextRoot, [...AGENT_RULES_GITIGNORE_ENTRIES], { comment: rules });
+    ensureGitignoreEntries(dirname(contextRoot), [...AGENT_RULES_GITIGNORE_ENTRIES_ROOT], { comment: rules });
   } catch (err) {
     throw new AutomationError(`An agent file cannot be written: a governing .gitignore could not be ensured (${(err as Error).message}).`);
   }
@@ -701,6 +709,8 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
   revokeAgent(dirname(contextRoot), slug, automationFileTarget(contextRoot, slug), opts.home);
   // Its machine-local entries die with it (the stage's home session).
   forgetAgentLocal(dirname(contextRoot), slug, opts.home);
+  // Its scorecard dies with it (a global member's goes with its folder, below).
+  dropScorecard(dirname(contextRoot), slug, 'project', opts.home);
   // Its task jobs: queued steps stop ("agent gone"), its sessions are forgotten (C1-5).
   stopAgentTaskJobs(contextRoot, slug, opts.home);
   reparentReports(contextRoot, slug, agent.reportsTo);
@@ -880,8 +890,72 @@ export interface AgentUsage {
   tasks: string[];
 }
 
-/** Where an agent is used. Reads only; a board or task that will not parse is skipped. */
-export function agentUsage(contextRoot: string, slug: string): AgentUsage {
+/**
+ * What the usage question reads out of the brain's boards and tasks, in ONE pass: which agents
+ * each board carries a live card of, and each task's `agent:`. The Team page lists every
+ * member, and each member asked for itself re-read every board (the biggest is a megabyte) and
+ * every task file: on a real brain that was seconds of the server's only thread at app open,
+ * while every other request waited (task: opening the app is slow, 2026-11-23).
+ *
+ * Each board's answer is kept while its stamp (inode, size, mtime, ctime) holds, and the tasks come from the shared heads memo (task-heads.ts), so a call
+ * after the first only stats. A changed file is read again.
+ */
+export interface AgentUsageScan {
+  /** Board slug -> the agents it carries a live card of. */
+  boards: Map<string, Set<string>>;
+  /** Task slug -> its `agent:` value, for the tasks that have one. */
+  tasks: Map<string, unknown>;
+}
+
+const boardRefsMemo = new Map<string, { stamp: string; refs: Set<string> }>();
+
+/** The agents a board carries a live card of, by its stamp. Null: unreadable (no card we can see). */
+function boardAgentRefs(contextRoot: string, slug: string): Set<string> | null {
+  let file: string;
+  let st;
+  try {
+    file = resolveWhiteboardPath(contextRoot, slug).file;
+    st = lstatSync(file);
+  } catch {
+    return null;
+  }
+  const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+  const hit = boardRefsMemo.get(file);
+  if (hit && hit.stamp === stamp) return hit.refs;
+  const refs = new Set<string>();
+  try {
+    for (const el of liveElements(readWhiteboard(contextRoot, slug).board.elements)) {
+      const dc = widgetPayloadOf(el);
+      if (dc?.kind === 'agent' && typeof dc.ref === 'string') refs.add(dc.ref);
+    }
+  } catch {
+    // an unreadable board carries no card we can see
+    boardRefsMemo.delete(file);
+    return null;
+  }
+  boardRefsMemo.set(file, { stamp, refs });
+  return refs;
+}
+
+/** One pass over the boards and tasks, for every agent's usage at once. */
+export function agentUsageScan(contextRoot: string): AgentUsageScan {
+  const boards = new Map<string, Set<string>>();
+  for (const wb of listWhiteboards(contextRoot)) {
+    if (wb.corrupt) continue;
+    const refs = boardAgentRefs(contextRoot, wb.slug);
+    if (refs && refs.size) boards.set(wb.slug, refs);
+  }
+  // Each task's `agent:`, from the stamp-keyed heads every task scan shares (task-heads.ts).
+  const tasks = new Map<string, unknown>();
+  for (const head of readTaskHeads(contextRoot)) {
+    if (head.data.agent !== undefined) tasks.set(head.slug, head.data.agent);
+  }
+  return { boards, tasks };
+}
+
+/** Where an agent is used. Reads only; a board or task that will not parse is skipped.
+ *  `scan`: one {@link agentUsageScan} shared by every agent of a list. */
+export function agentUsage(contextRoot: string, slug: string, scan: AgentUsageScan = agentUsageScan(contextRoot)): AgentUsage {
   const automations = readSlotFiles(contextRoot)
     .filter((f) => boundJobOf(f, slug) !== null)
     .map((f) => f.slug);
@@ -889,26 +963,10 @@ export function agentUsage(contextRoot: string, slug: string): AgentUsage {
   const boards = new Set<string>();
   const home = getAgent(contextRoot, slug)?.whiteboard;
   if (home) boards.add(home);
-  for (const wb of listWhiteboards(contextRoot)) {
-    if (wb.corrupt) continue;
-    try {
-      const elements = liveElements(readWhiteboard(contextRoot, wb.slug).board.elements);
-      if (elements.some((el) => {
-        const dc = widgetPayloadOf(el);
-        return dc?.kind === 'agent' && dc.ref === slug;
-      })) boards.add(wb.slug);
-    } catch {
-      // an unreadable board carries no card we can see
-    }
-  }
+  for (const [board, refs] of scan.boards) if (refs.has(slug)) boards.add(board);
 
   const tasks: string[] = [];
-  const stateDir = join(contextRoot, 'state');
-  if (pathOccupied(stateDir)) {
-    for (const file of fg.sync('*.md', { cwd: stateDir, absolute: true }).sort()) {
-      if (readManifestFrontmatter(file)?.data.agent === slug) tasks.push(basename(file, '.md'));
-    }
-  }
+  for (const [task, agent] of scan.tasks) if (agent === slug) tasks.push(task);
   return { automations, boards: [...boards].sort(), tasks };
 }
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { refreshAntigravityModels } from '../antigravity-models.js';
 import { refreshCodexHealth } from '../codex-bin.js';
 import { BASE_MODEL_OPTIONS, modelOptionsFrom, type ModelOption } from '../model-list.js';
 import { listTools, type ToolId, type ToolInfo, type ToolLookup } from '../t3-bridge/registry.js';
@@ -60,7 +61,7 @@ function toolLine(t: ToolInfo, claudeModels: readonly ModelOption[]): string {
   const ids = t.models.map((m) => m.id);
   const efforts = [...new Set(t.models.flatMap((m) => m.efforts))];
   const effort = t.tool === 'antigravity'
-    ? 'the model id carries its effort (-high, -medium, -low); no --effort.'
+    ? 'a Gemini id carries its effort (-high, -medium, -low); no --effort.'
     : efforts.length ? `--effort ${efforts.join('|')}.` : '';
   const models = ids.length ? `Models: ${modelList(ids, t.defaultModel)}; no --model = the default.` : 'Its own default model only: no --model.';
   return `- ${name}: ready. ${models} ${effort}`.trimEnd();
@@ -106,6 +107,15 @@ const SAFE_ID = /^[A-Za-z0-9._[\]-]{1,64}$/;
  */
 export async function refreshSuperTools(home: string = homedir()): Promise<void> {
   try { await refreshCodexHealth(); } catch { /* the render below asks again */ }
+  // Antigravity's models: the runtime's own answer, re-asked off this path when the cached one is
+  // stale (a probe takes seconds); a new answer re-renders the block when it lands.
+  try {
+    refreshAntigravityModels({ home }).then((c) => {
+      if (!c) return;
+      const after = liveToolsBlock();
+      if (after) blockCache = after;
+    }).catch(() => { /* the cached list stands */ });
+  } catch { /* the cached list stands */ }
   try {
     const raw = await readFile(join(home, '.claude.json'), 'utf-8');
     claudeModelsCache = modelOptionsFrom(JSON.parse(raw) as Record<string, unknown>).filter((m) => SAFE_ID.test(m.id));

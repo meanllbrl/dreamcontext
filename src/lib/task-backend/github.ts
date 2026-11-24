@@ -55,7 +55,7 @@ import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { liveParentOf, parentsFirst, pulledParent, withBaseParent } from './subtask-link.js';
-import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
+import { SyncLedger, hashContent, membersStale, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
   type AddChangelogOptions,
@@ -476,19 +476,31 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   }
 
   /**
-   * Repo collaborators for the assignee picker. Tries a live refresh; offline /
+   * Repo collaborators for the assignee picker. With a cached roster it answers from the cache
+   * at once and refreshes it behind the answer (at most every five minutes, `MEMBERS_LIVE_MS`): the
+   * picker is asked on every app open, and a live GitHub round trip plus two rewrites of the
+   * sync state held the open. With no cache it waits for the live refresh; offline or
    * unconfigured it falls back to the cache rather than returning empty.
    */
   async listMembers(): Promise<RemoteMember[]> {
-    try {
-      const adapter = this.getAdapter();
-      const { owner, repo } = this.requireRepo();
-      this.membersRefreshed = false;
-      await this.refreshMembers(adapter, owner, repo, true);
-    } catch { /* fall back to the cache below */ }
-    return Object.entries(this.ledger.readMembers())
+    const cached = () => Object.entries(this.ledger.readMembers())
       .map(([slug, m]) => ({ slug, id: m.id, name: m.name }))
       .sort((a, b) => a.slug.localeCompare(b.slug));
+    const refresh = async () => {
+      try {
+        const adapter = this.getAdapter();
+        const { owner, repo } = this.requireRepo();
+        this.membersRefreshed = false;
+        await this.refreshMembers(adapter, owner, repo, true);
+      } catch { /* fall back to the cache */ }
+    };
+    const have = cached();
+    if (have.length === 0) {
+      await refresh();
+      return cached();
+    }
+    if (membersStale(this.ledger.readThrottle('lastMetaRefreshAt'), this.nowMs())) void refresh();
+    return have;
   }
 
   /** Person slug → GitHub login (the cached collaborator login). */

@@ -1,7 +1,7 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
 import { readIndexStop } from '../../lib/embeddings/index-stop.js';
 import { logHandoff } from '../../lib/usage-records.js';
-import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
+import { browserAny, ciWaitAny, ciWatchIn, directHeavy, heavyRefusalLead, heavySuggestion } from '../../lib/run-budget.js';
 import { suiteRedOpen } from '../../lib/suite-record.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
@@ -17,7 +17,7 @@ import {
   readFileSync, existsSync, statSync, lstatSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
 } from 'node:fs';
 import { format as formatArgs } from 'node:util';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
@@ -25,9 +25,9 @@ import { dirname, resolve, join, extname, basename, relative, sep } from 'node:p
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../../lib/draw-intent.js';
 import {
-  enterHookProject, firstActInSession, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  enterHookProject, firstActInSession, firstInSession, fitPromptContext, markShownBlocks, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync, readStdinSync,
-  markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn,
+  markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn, markSessionWork, sessionWork,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
 } from '../../lib/hook-delivery.js';
 import { judgedRecall, type JudgedHit, type JudgedRecall } from '../../lib/recall-judged.js';
@@ -76,14 +76,19 @@ import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grant
 import type { Grant } from '../../lib/grants/types.js';
 import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, docKey, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
-import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
+import { bm25Search, docKey, loadSkillDocs, namedProjectSkills, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, recallTurn, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
+import { nearLimitLine } from '../../lib/super/usage-line.js';
 import {
-  actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, promptSurface,
+  actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, newSinceLines, promptSurface, stampSession,
 } from '../../lib/rules-delivery.js';
+import { sessionMember } from '../../lib/agents/session-member.js';
+import { hookQueryOf, workRoot } from '../../lib/agents/work-trace.js';
+import { renderPastWork, selectViaServer } from '../../lib/agents/work-index.js';
 import { HOOK_OUTPUT_MAX_CHARS } from '../../lib/snapshot-budget.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
+import { stripOwnerBlocks } from '../../lib/agents/owner-block.js';
 import { stripSuperModelsBlocks } from '../../lib/super/models-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
@@ -100,7 +105,8 @@ import {
 } from '../../lib/federation-recall.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
-import { dreamcontextVersion } from '../../lib/manifest.js';
+import { dreamcontextVersion, readManifest } from '../../lib/manifest.js';
+import { knownArtifactNames } from '../../lib/catalog.js';
 import { desktopAppPresent, maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { appUpdateNotice } from '../../lib/app-windows.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
@@ -114,10 +120,12 @@ import {
   renderHandoffBanner,
   stampHandoffRecord,
   lastMainChainContext,
+  tailRecords,
   ecoPlusDefault,
   ecoPlusInEffect,
   appendLowered,
 } from '../../lib/context-watch.js';
+import { MODEL_PIN_LINE, agentDefinitionModel, parentModelFrom, pinSubagentModel } from '../../lib/agent-model-pin.js';
 import { ecoPlusDispatchModel } from '../../lib/eco-plus-dispatch.js';
 import { listAgentTargets } from '../../lib/agents/store.js';
 import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
@@ -242,6 +250,23 @@ export function grantGateAllow(
  */
 export function rewritesInput(input: Record<string, unknown> | null | undefined): boolean {
   return input?.permission_mode !== 'auto';
+}
+
+/**
+ * The model a dispatch is pinned to, or null (untouched): only the Fable cases of
+ * {@link pinSubagentModel}. The parent's model is read from this hook's own transcript tail, never
+ * from the Eco nudge (which returns early with Eco off).
+ */
+export function dispatchModelPin(input: Record<string, unknown>, toolInput: Record<string, unknown>, home: string = homedir()): 'opus' | null {
+  const requested = typeof toolInput.model === 'string' ? toolInput.model : null;
+  const type = typeof toolInput.subagent_type === 'string' ? toolInput.subagent_type : '';
+  const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+  if (requested && requested.trim()) return pinSubagentModel({ requested, definition: 'unknown', parentModel: null });
+  const definition = agentDefinitionModel(type, cwd, home);
+  if (definition !== 'none') return null;
+  const path = typeof input.transcript_path === 'string' ? input.transcript_path : '';
+  const parentModel = path ? parentModelFrom(tailRecords(path, 256 * 1024) as unknown as Record<string, unknown>[]) : null;
+  return pinSubagentModel({ requested: null, definition, parentModel });
 }
 
 function readStdin(): Record<string, unknown> | null {
@@ -832,7 +857,7 @@ export interface JudgedPromptRecall {
  */
 export async function judgedPromptRecall(
   prompt: string, prev: string | null, root: string, recallMode: RecallMode, judge: 'claude' | 'codex',
-  o: { env?: NodeJS.ProcessEnv; home?: string; seen?: SessionRecall } = {},
+  o: { env?: NodeJS.ProcessEnv; home?: string; seen?: SessionRecall; about?: string | null } = {},
 ): Promise<JudgedPromptRecall> {
   const env = o.env ?? process.env;
   const tier = recallMode === 'hybrid' ? resolvePromptTier(root, env, o.home).tier : 'local';
@@ -860,6 +885,7 @@ export async function judgedPromptRecall(
     inContext: o.seen?.inContext, passedOver: o.seen?.passedOver,
     whenLines: whenLinesLookup(root, o.home),
     judge: judgeOpts,
+    about: o.about ?? null,
   });
   const where = result.channel === 'voyage' ? 'cloud index' : result.channel === 'e5' ? 'local search' : 'keyword search';
   const label = `${judge === 'codex' ? 'Codex judge' : 'Haiku'} · ${where}`;
@@ -948,6 +974,45 @@ export const RECALL_VIA_SERVER_TIMEOUT_MS = 1500;
  * miss (no server, a server for another vault, an older server without the route, a timeout,
  * a malformed answer): the caller then recalls in-process. Never throws.
  */
+/**
+ * A member chat turn's past-work block (D8, D10), or null: only in a member's CHAT session (its
+ * Chat tab or its own Super stage), never in a run, a crew child or an app's chat; only when the
+ * prompt has something to search on (`hookQueryOf`) and the member has a work folder at all; asked
+ * of the running app's warm index. No server, a late answer or an error is no block (G3).
+ */
+export async function pastWorkForTurn(
+  root: string,
+  rawPrompt: string,
+  input: Record<string, unknown>,
+  deps: { env?: NodeJS.ProcessEnv; home?: string; select?: typeof selectViaServer } = {},
+): Promise<{ text: string; ids: string[]; sessionId: string } | null> {
+  const env = deps.env ?? process.env;
+  const home = deps.home ?? homedir();
+  const chat = (env.DREAMCONTEXT_AGENT_CHAT ?? '').trim();
+  if (!chat || chat.startsWith('app-')) return null;
+  if (env.DREAMCONTEXT_AGENT_SELF !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined
+    || env.DREAMCONTEXT_AUTOMATION_SLUG || env.DREAMCONTEXT_MEMBER_CREW || env.DREAMCONTEXT_RUN_MEMBER) return null;
+  if (isAutomationFirePrompt(rawPrompt)) return null;
+  const member = sessionMember(env, root, home);
+  if (!member || member.slug !== chat) return null;
+  const query = hookQueryOf(rawPrompt);
+  if (!query) return null;
+  const projectRoot = dirname(root);
+  const workDir = workRoot(member.slug, projectRoot, home, member.scope);
+  if (!workDir || !existsSync(workDir)) return null;
+  const sid = typeof input.session_id === 'string' ? input.session_id : '';
+  const seen = sessionWork(sid, home);
+  let vault: string | null = null;
+  try { vault = listVaults(home).find((v) => resolve(v.path) === resolve(projectRoot))?.name ?? null; } catch { vault = null; }
+  const sel = await (deps.select ?? selectViaServer)(
+    { member: member.slug, root: projectRoot, query, audience: 'owner', exclude: { ids: seen.ids, conversation: sid || null, since: seen.since ?? 0 } },
+    { port: resolveRecallServerPort(env, home), vault },
+  );
+  if (!sel || sel.lines.length === 0) return null;
+  const text = renderPastWork(sel.lines, sel.more, member.slug, randomBytes(3).toString('hex'), query, { all: member.scope === 'global', fold: sel.fold });
+  return text ? { text: `\n${text}`, ids: sel.lines.map((l) => l.id), sessionId: sid } : null;
+}
+
 export function recallViaDashboard(
   prompt: string,
   root: string,
@@ -2042,7 +2107,7 @@ export function userPromptReminder(
  *     Do not use workflows or deep-research unless the user requested it
  *
  * That outranks a SKILL.md instruction, so `sleep` silently degraded to running
- * `sleep-tasks` / `sleep-state` / `sleep-product` / `sleep-migration` INLINE in the
+ * `sleep-tasks` / `sleep-state` / `sleep-product` INLINE in the
  * main context — the exact opposite of why those specialists exist. Fan-out is not
  * a speed optimization here: each specialist owns a disjoint file domain, and the
  * no-stomp guarantee plus the per-agent context budget both come from them running
@@ -2074,7 +2139,7 @@ export function userPromptReminder(
 export const SUBAGENT_DISPATCH_AUTHORIZATION =
   'Sub-agent dispatch is pre-authorized by the user for dreamcontext\'s documented '
   + 'orchestration flows — sleep (sleep-tasks / sleep-state / sleep-product / '
-  + 'sleep-migration / sleep-learn), curator, initializer, goal-skill, '
+  + 'sleep-learn), curator, initializer, goal-skill, '
   + 'dreamcontext-deep-research, council, multi-review, and the Plan and Develop chat '
   + 'modes\' clean judges (goal-plan-reviewer, reviewer, goal-validator, and the '
   + 'review-router and review-* specialists of the end review the diff picks). '
@@ -2093,9 +2158,32 @@ export const SUBAGENT_DISPATCH_REMINDER =
   'Pre-authorized by the user: sub-agents for sleep, curator, initializer, goal-skill, deep-research, '
   + 'council, multi-review, Plan/Develop judges; nothing ad-hoc.';
 
-/** The "Before you act" gate after its first full print in a session. */
+/** The "Before you act" gate after its first full print in a session: still names skills (owner 2026-11-20). */
 export const CONTEXT_GATE_REMINDER =
-  '⛔ Before acting: read the matching sections, recall more, check for a task.';
+  '⛔ Before acting: read the matching sections, load the skill that fits this turn, recall more, check for a task.';
+
+/** One project skill a turn falls in (`namedProjectSkills`), by name. A non-Claude tool has no Skill tool: it opens the file (by its folder). */
+export function skillNameLine(skill: { name: string; dir: string }, otherTool: boolean): string {
+  return otherTool
+    ? `→ SKILL: ${skill.name} (this project's skill fits this turn: open .claude/skills/${skill.dir}/SKILL.md before acting)`
+    : `→ SKILL: ${skill.name} (this project's skill fits this turn: load it with the Skill tool before acting)`;
+}
+
+/**
+ * Skill folders dreamcontext itself installs, never named as "this project's": the shipped names, and every
+ * folder under a skills root this project's install manifest records, whatever its kind (the installer
+ * writes its own skills as `core`, packs as `pack-skill`).
+ */
+export function dreamcontextSkillDirs(projectRoot: string): Set<string> {
+  const out = new Set(knownArtifactNames().skillDirs);
+  try {
+    for (const rel of Object.keys(readManifest(projectRoot)?.files ?? {})) {
+      const m = /^\.(?:claude|agents|codex)\/skills\/([^/]+)\//.exec(rel);
+      if (m) out.add(m[1]);
+    }
+  } catch { /* no manifest: the shipped names alone */ }
+  return out;
+}
 
 /** The pattern banner after its first full print in a session. */
 export const PATTERN_BANNER_REMINDER =
@@ -2542,6 +2630,7 @@ function beginPromptDelivery(sessionId: string): void {
   process.once('exit', () => {
     if (blocks.length === 0) return;
     const fit = fitPromptContext(blocks);
+    markShownBlocks(blocks, fit);
     let text = fit.text;
     if (fit.overflow !== null) {
       try {
@@ -2555,9 +2644,9 @@ function beginPromptDelivery(sessionId: string): void {
 }
 
 /** Print a block the turn can lose before its rules; `console.log` is `must`. */
-function emitPromptBlock(kind: PromptBlockKind, text: string, compact?: string): void {
-  if (promptBlocks) promptBlocks.push({ kind, text, compact });
-  else console.log(text);
+function emitPromptBlock(kind: PromptBlockKind, text: string, compact?: string, onShown?: () => void): void {
+  if (promptBlocks) promptBlocks.push({ kind, text, compact, onShown });
+  else { console.log(text); onShown?.(); }
 }
 
 /**
@@ -2577,6 +2666,63 @@ export function codexToolCallsAsClaude(toolName: string, toolInput: Record<strin
   }
   if (toolName === 'shell' || toolName === 'exec_command' || toolName === 'local_shell') return [{ toolName: 'Bash', toolInput: { command: raw } }];
   return [{ toolName, toolInput }];
+}
+
+/**
+ * Is `sessionId` a Super (main's or a member's) of the brain at `contextRoot`? Read off the records
+ * on disk, the `session` field only; false on anything unreadable. Only asked for a line that waits
+ * on CI or runs a browser, so the ordinary call never reads a record.
+ */
+export function superSessionOnDisk(contextRoot: string, sessionId: string): boolean {
+  if (!sessionId) return false;
+  const files = [join(contextRoot, 'state', '.super-agent.json')];
+  try {
+    const dir = join(contextRoot, 'state', '.super', 'members');
+    if (lstatSync(dir).isDirectory()) for (const n of readdirSync(dir)) if (n.endsWith('.json') && !n.endsWith('.read-marks.json')) files.push(join(dir, n));
+  } catch { /* no member supers */ }
+  for (const f of files) {
+    try {
+      const st = lstatSync(f);
+      if (!st.isFile() || st.size > 2 * 1024 * 1024) continue;
+      const v = JSON.parse(readFileSync(f, 'utf-8')) as { session?: unknown };
+      if (v.session === sessionId) return true;
+    } catch { /* unreadable: not this one */ }
+  }
+  return false;
+}
+
+/**
+ * Why this shell line is refused by the CI gate, or null (plan sirket-yavaslik D6). Every session:
+ * a foreground `gh run watch`, `gh pr checks --watch` or `gh run` polling loop becomes
+ * `dreamcontext ci wait`. A Super session: no CI wait of any kind and no browser run either; the
+ * child waits and reports, and the owner's next message does not queue behind a watch.
+ */
+/**
+ * Where a foreground CI watch is ours to refuse: the same sessions the heavy-step limit holds
+ * (gate 1d). Our own children, a Claude session inside a dreamcontext project, a Codex or
+ * Antigravity session in a project that opted in. The Mac-wide Codex and Antigravity hooks run in
+ * every folder: the owner's own sessions elsewhere are not ours to hold (review r1).
+ */
+export function ciWatchGated(cwd: string): boolean {
+  if (process.env.DREAMCONTEXT_CONTEXT_BY) return true;
+  if (hookTool() !== null) return codexProjectOptedIn(cwd);
+  return resolveContextRoot(cwd) !== null;
+}
+
+export function ciGateRefusal(command: string, cwd: string, sessionId: string): string | null {
+  const wait = ciWaitAny(command);
+  const browser = !wait && /playwright|puppeteer|shots|verify|node|tsx|bun/.test(command) && browserAny(command, cwd);
+  if (wait || browser) {
+    const root = resolveContextRoot(cwd);
+    if (root && superSessionOnDisk(root, sessionId)) {
+      return `Not run: a Super does not ${wait ? `wait on CI (${wait})` : 'run a browser'}. Give it to the child that owns the work (super delegate, or super update <child>) and read the result from its report; the owner's next message must not wait behind this.`;
+    }
+  }
+  const watch = ciWatchIn(command);
+  if (watch && ciWatchGated(cwd)) {
+    return `Not run: ${watch} holds this session in the foreground and hits the tool's 600 s ceiling. Run: dreamcontext ci wait <run-id> (or --branch <branch>: every run of this checkout's HEAD) with the Bash tool's timeout 600000; it returns before the ceiling (exit 4 = still running: run the same command again).`;
+  }
+  return null;
 }
 
 export function registerHookCommand(program: Command): void {
@@ -2971,7 +3117,13 @@ export function registerHookCommand(program: Command): void {
       if (sid) recordTabSessionFromHook(root, sid);
       // The prompt hook's once-per-session blocks print in full again on the next prompt: a fresh,
       // resumed, cleared or compacted session no longer holds the first copy in its context.
-      if (sid) resetSessionOnce(sid);
+      if (sid) {
+        // A member's chat stamps its reset for its past work (D10) on its very first start too.
+        const chat = (process.env.DREAMCONTEXT_AGENT_CHAT ?? '').trim();
+        resetSessionOnce(sid, undefined, undefined, { memberChat: !!chat && !chat.startsWith('app-') });
+      }
+      // D5: the snapshot below delivers every rule in force; later ones are "new since" on a turn.
+      if (sid) stampSession(sid);
 
       // Codex has its own limit and splitter; a session with no id has nothing to key the parts on.
       const claudeHook = hookTool() !== 'codex';
@@ -3411,7 +3563,7 @@ export function registerHookCommand(program: Command): void {
         if (act && sid) {
           const actRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
           const reason = actRoot
-            ? actRefusal(act, deliverForTurn(actRoot, { ...input, tool_name: toolName, tool_input: toolInput, surface: 'act' }))
+            ? actRefusal(act, deliverForTurn(actRoot, { ...input, tool_name: toolName, tool_input: toolInput, surface: 'act' }, { member: sessionMember(process.env, actRoot) }))
             : null;
           if (reason && firstActInSession(sid, act)) {
             deny(reason);
@@ -3420,11 +3572,23 @@ export function registerHookCommand(program: Command): void {
         }
       } catch { /* fail open: the act gate never blocks a call it could not read */ }
 
+      // Gate 1c (plan sirket-yavaslik D6): no foreground CI watch past `ci wait`, and a Super
+      // never waits on CI or runs a browser. Read only when the line could be one; any error lets
+      // the call through.
+      if (toolName === 'Bash') {
+        try {
+          const command = typeof toolInput.command === 'string' ? toolInput.command : '';
+          const at = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+          const reason = ciGateRefusal(command, at, typeof input.session_id === 'string' ? input.session_id : '');
+          if (reason) { deny(reason); return; }
+        } catch { /* fail open */ }
+      }
+
       // Gate 1d: a heavy step goes through the lock and the repeat limit. Measured 2026-10-31:
       // 88% of them went straight past `builder`, so the limit would count almost nothing.
       if (toolName === 'Bash') {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
-        const kind = directHeavy(command);
+        const kind = directHeavy(command, typeof input.cwd === 'string' && input.cwd ? input.cwd : undefined);
         if (!kind) allow();
         const suggested = heavySuggestion(command, { redOpen: kind === 'suite' && suiteRedOpen(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()) });
         // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own
@@ -3435,7 +3599,7 @@ export function registerHookCommand(program: Command): void {
             hookEventName: 'PreToolUse',
             permissionDecision: 'deny',
             permissionDecisionReason: [
-              `Not run: this is a heavy step (${kind}), and those go through the lock and the repeat limit.`,
+              heavyRefusalLead(command, kind ?? 'check', suggested),
               `Run it as: ${suggested}`,
               'A check that already passed on the same code prints its receipt instead of running (--fresh runs it anyway).',
               kind === 'suite'
@@ -3453,14 +3617,28 @@ export function registerHookCommand(program: Command): void {
       // is refused as unreviewed ("a hook changed this call's input after auto mode reviewed it"),
       // so a harmless Agent call was lost and its refusal reached the owner as an Allow card. The
       // same rules still reach the sub-agent through the SubagentStart hook (`subagent-start`).
+      // The same one answer also pins the model off Fable (agent-model-pin.ts): an explicit Fable
+      // model, or none under a Fable parent for an agent with no model of its own, becomes opus.
       const dispatchInput = (): Record<string, unknown> | null => {
         if (!rewritesInput(input as Record<string, unknown>)) return null;
+        let prompt: string | null = null;
         try {
           const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
-          if (!dRoot || typeof toolInput.prompt !== 'string') return null;
-          const prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }));
-          return prompt ? { ...toolInput, prompt } : null;
-        } catch { return null; }
+          if (dRoot && typeof toolInput.prompt === 'string') {
+            prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }, { member: sessionMember(process.env, dRoot) })) || null;
+          }
+        } catch { prompt = null; }
+        let model: 'opus' | null = null;
+        try { model = dispatchModelPin(input as Record<string, unknown>, toolInput); } catch { model = null; }
+        if (!prompt && !model) return null;
+        const out: Record<string, unknown> = { ...toolInput };
+        if (prompt) out.prompt = prompt;
+        if (model) {
+          out.model = model;
+          const base = typeof out.prompt === 'string' ? out.prompt : '';
+          out.prompt = base ? `${base}\n\n${MODEL_PIN_LINE}` : MODEL_PIN_LINE;
+        }
+        return out;
       };
       // Eco Plus (plan eco-plus D6, K4): an Opus/Fable dispatch runs on `sonnet`, the judges kept.
       // Computed apart from the prompt append and merged into the one `updatedInput`; sent even
@@ -3577,7 +3755,7 @@ export function registerHookCommand(program: Command): void {
       let rules: string | null = null;
       try {
         const room = HOOK_OUTPUT_MAX_CHARS - (briefing?.length ?? 0) - (brainNote?.length ?? 0) - 200;
-        if (room > 300) rules = helperLines(deliverForTurn(root, { ...(input ?? {}), surface: 'child' }, { max: room }));
+        if (room > 300) rules = helperLines(deliverForTurn(root, { ...(input ?? {}), surface: 'child' }, { max: room, member: sessionMember(process.env, root) }));
       } catch { rules = null; }
       const body = [briefing, rules].filter(Boolean).join('\n\n');
       if (!body) process.exit(0);
@@ -3697,6 +3875,15 @@ export function registerHookCommand(program: Command): void {
       if (!superChat) {
         console.log(fullBlock('authorization') ? SUBAGENT_DISPATCH_AUTHORIZATION : SUBAGENT_DISPATCH_REMINDER);
       }
+      // C5 (iyilesme-360 D11): the main Super near its account's limit; one small read, no state.
+      if (!isNestedClaudeHook()) {
+        const usage = nearLimitLine({
+          contextRoot: root,
+          ids: [onceSid, process.env.CLAUDE_CODE_SESSION_ID ?? '', process.env.DREAMCONTEXT_TAB_SESSION ?? ''],
+          configDir: process.env.CLAUDE_CONFIG_DIR,
+        });
+        if (usage) console.log(usage);
+      }
 
       // What the owner wrote, without what a machine wrapped around it (audit MM-1). Null `query`:
       // a task notification, a Super event, a bare wrapper: the lines above and below that must
@@ -3704,6 +3891,9 @@ export function registerHookCommand(program: Command): void {
       const rawPrompt = String((input as Record<string, unknown>).prompt ?? '');
       const ownerText = promptOwnerText(rawPrompt);
       const query = recallQuery(rawPrompt);
+      // Recall and the skills check also read what the turn points at (an agenda line, a replied
+      // message, a card: `recallTurn`), so a short "shall we move to the video" under a line recalls on that line.
+      const turn = recallTurn(rawPrompt, { root });
       // He asked for a rule to be remembered (learning loop C4): one must-print cue, on his own words
       // only. It writes nothing (the hook never writes the owner-words ledger) and makes no rule active.
       if (ownerText !== null && detectRememberIntent(ownerText)) console.log(REMEMBER_INTENT_LINE);
@@ -3712,8 +3902,13 @@ export function registerHookCommand(program: Command): void {
       try {
         const surface = promptSurface(rawPrompt);
         if (surface !== 'machine') {
-          const lines = momentLines(deliverForTurn(root, { ...input, surface }));
+          const member = sessionMember(process.env, root);
+          const lines = momentLines(deliverForTurn(root, { ...input, surface }, { member }));
           if (lines) console.log(lines);
+          // D5: a rule written while this session was open, on its very next turn.
+          const sidNow = typeof input.session_id === 'string' ? input.session_id : '';
+          const fresh = sidNow ? newSinceLines(root, sidNow, { member }) : null;
+          if (fresh) console.log(fresh);
         }
       } catch { /* the rules are also in the session-start block */ }
 
@@ -3858,6 +4053,12 @@ export function registerHookCommand(program: Command): void {
       // surfaced something; gatedSkills = a related skill surfaced.
       let hadRecallHits = false;
       let gatedSkills = false;
+      // The project skills this turn falls in, by name (`→ SKILL: <name>`): printed on every turn
+      // they match, never once per session (owner 2026-11-20).
+      let namedSkills: Array<{ name: string; dir: string }> = [];
+
+      // ── A member's past work (uye-gecmis-is D8): asked now, in parallel with recall, printed after it.
+      const pastWork = pastWorkForTurn(root, rawPrompt, input as Record<string, unknown>);
 
       // Memory recall injection — single Haiku call sees corpus index + prompt,
       // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
@@ -3865,11 +4066,11 @@ export function registerHookCommand(program: Command): void {
       // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
-          // The owner's words only (recallQuery: no Super roster or tools block, no notification,
-          // no wrapper line, no paths). Null: a machine turn, no recall at all.
+          // The owner's words and the subject his turn points at (recallTurn: no Super roster or tools
+          // block, no notification, no wrapper line, no paths). Null: a machine turn, no recall at all.
           // An automation's fire prompt is the runner's text, the same on every fire: no recall, no peers.
-          const prompt = isAutomationFirePrompt(rawPrompt) ? null : query;
-          if (prompt !== null) {
+          if (turn !== null && !isAutomationFirePrompt(rawPrompt)) {
+            const prompt = turn.search;
             const recallMode = resolveRecallMode(root);
 
             if (recallMode !== 'off') {
@@ -3878,13 +4079,14 @@ export function registerHookCommand(program: Command): void {
               const recallSid = hookTool() === null && promptSessionId ? promptSessionId : '';
               const seen = sessionRecall(recallSid);
               // The owner's previous turn (the judge reads it), then this turn becomes the previous one.
+              // His words only: a subject he pointed at never reaches the judge as his previous turn.
               const prevOwner = promptSessionId ? readPrevOwnerTurn(promptSessionId) : null;
-              if (promptSessionId && ownerText !== null) writePrevOwnerTurn(promptSessionId, prompt);
+              if (promptSessionId && turn.words) writePrevOwnerTurn(promptSessionId, turn.words);
 
               const judge = judgeFor(recallMode);
               let judged: JudgedPromptRecall | null = null;
               if (judge !== null) {
-                judged = await judgedPromptRecall(prompt, prevOwner, root, recallMode, judge, { seen });
+                judged = await judgedPromptRecall(turn.words, prevOwner, root, recallMode, judge, { seen, about: turn.about });
                 const r = judged.result;
                 if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') {
                   console.error(JSON.stringify({ judged: r.outcome, channel: r.channel, shown: r.shown.length, picked: r.hits.length, searchMs: r.searchMs, judgeMs: r.judgeMs, usd: r.usd }));
@@ -3972,6 +4174,14 @@ export function registerHookCommand(program: Command): void {
         }
       }
 
+      try {
+        const pw = await pastWork;
+        if (pw) {
+          // Marked shown only if the fitted output kept the block (a dropped block arrives next turn).
+          emitPromptBlock('pastwork', pw.text, undefined, () => markSessionWork(pw.sessionId, pw.ids));
+        }
+      } catch { /* no block: the member can still search its history */ }
+
       // ── The AI Team member line (task super-agent-isi-bolerken-…) ──────────
       // An app chat only (`DREAMCONTEXT_TEAM_ROUTE` super|offer, never a nested hook): when the
       // OWNER's own words fall in a callable member's field, one line says so (super: give it with
@@ -3997,7 +4207,7 @@ export function registerHookCommand(program: Command): void {
       // line is what stops the agent recomputing what an installed app already answers.
       if (!isBackgroundAutoSleep()) {
         try {
-          const prompt = stripSuperModelsBlocks(stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? ''))));
+          const prompt = stripSuperModelsBlocks(stripOwnerBlocks(stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')))));
           const block = appToolsBlock(prompt, root, homedir());
           if (block) console.log(block);
         } catch (appErr) {
@@ -4144,12 +4354,16 @@ export function registerHookCommand(program: Command): void {
       // Own try/catch so it can never throw out of the action.
       if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
         try {
-          const prompt = query;
+          const prompt = turn?.search ?? null;
           if (prompt !== null) {
             const skillsRoot = join(process.cwd(), '.claude', 'skills');
             const docs = loadSkillDocs(skillsRoot);
             if (docs.length > 0 && bm25Search(prompt, docs, 5).some(h => h.score >= SKILL_SCORE_THRESHOLD)) {
               gatedSkills = true;
+            }
+            if (docs.length > 0) {
+              namedSkills = namedProjectSkills(prompt, docs, dreamcontextSkillDirs(dirname(root)));
+              if (namedSkills.length > 0) gatedSkills = true;
             }
           }
         } catch (skillErr) {
@@ -4164,10 +4378,11 @@ export function registerHookCommand(program: Command): void {
       // depth, and check for an existing task. We never name specific files —
       // the recall block above lists candidates; the agent judges relevance.
       // Pure string ops over local state, so no try/catch needed.
+      const skillLines = namedSkills.map((n) => skillNameLine(n, hookTool() !== null));
       if ((hadRecallHits || gatedSkills) && !fullBlock('gate')) {
-        emitPromptBlock('gate', `\n${CONTEXT_GATE_REMINDER}`);
+        emitPromptBlock('gate', ['', ...skillLines, CONTEXT_GATE_REMINDER].join('\n'));
       } else if (hadRecallHits || gatedSkills) {
-        const g: string[] = ['', '⛔ Before you act, get the full picture from project memory — not optional:'];
+        const g: string[] = ['', ...skillLines, '⛔ Before you act, get the full picture from project memory — not optional:'];
         if (hadRecallHits) {
           // Any non-Claude turn (`--format codex`; hookTool() names the tool) has no Read or Skill tool: its words, not Claude's.
           g.push(hookTool() !== null

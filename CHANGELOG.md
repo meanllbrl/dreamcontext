@@ -4,6 +4,19 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **A slow, busy Mac.** At most 2 type-checks, test runs or browser checks run at once across the whole Mac, short ones included, and only 1 while it is hot or heavily loaded.
+- **No second session after a restart.** A job that was mid-way when the app restarted gets 10 minutes to come back before it is called gone, so it is no longer handed out a second time. A chat is started without a window only once the window has really been closed for 45 seconds.
+- **Fast design jobs.** A one-screen look or copy change can run in a fast lane: one short code read and one screenshot. Anything that touches money, sign-in, analytics or data always takes the full check, and "tam doğrula" turns any fast job into a full one.
+- **Waiting on CI.** `dreamcontext ci wait` waits on every run of one commit and stops before the shell's time limit, in place of `gh run watch`.
+- **One sidebar on the Mac.** The left sidebar lists every project on every page: on Chat it shows each project's chats, on Whiteboards each project's boards, elsewhere the projects themselves. Clicking another project's row or board opens it in one click, and the window shows it only once it is ready, so nothing flickers. The sidebar is a little wider by default (232 px instead of 200) and can still be resized.
+- **Page tabs.** The page icon strip is gone on the Mac: Chat, Tasks, Insights, Whiteboards and Apps are tabs in the title bar, everything else is under More. The project name in the title bar opens the project picker. The phone and tablet layouts are unchanged.
+- **Where you were.** Back and forward, the palette and the picker work across projects, and each project reopens on the page and item you left.
+- **Smooth app.** Typing in the message box no longer redraws the chat area around it. Changing project keeps the project you leave on screen until the next one is drawn, so no empty card flashes. Boards show an outline while they load instead of a "Loading" line.
+- **Super children use fewer tokens.** A session the Super started hands off to a fresh one at 250k instead of 300k, and new work sent to a child already past that point asks it to hand off first, so the work does not ride a huge old context. Your own chats keep their limits.
+- **Nothing you send during a handoff is lost.** A message written while a session is handing off waits and arrives once, in the fresh session, after it has read its handoff.
+- **The right model for the job.** The Super's model table has one row per kind of work, and a sub-agent opened without a model under a Fable session runs on Opus instead of Fable.
+- **Does the Super raise token use?** Stats › dreamcontext answers it: the same kind of work with and without the Super, the Super's own share included, cache reads shown apart.
+
 ## [0.41.23] - 2026-11-19
 
 Beta on 0.41.22: everything in 0.41.22, plus new surfaces not yet tried by many people. Local build; not published.

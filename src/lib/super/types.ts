@@ -31,13 +31,15 @@ export type ContainerKind = typeof CONTAINER_KINDS[number];
  * are the owner's: no agent verb opens, moves, resizes or closes one, no sweep closes or retires
  * one, and a missing one comes back at its default place (`ensureMemberCards`).
  */
-export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings', 'scorecard'] as const;
 export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
 /** First-open defaults (K5, G2): Rutinler large, Talimatlar small, Üye small in Others. */
 export const MEMBER_CARD_DEFAULTS: Readonly<Record<MemberCardRef, { size: ContainerSize; place: ContainerPlace }>> = {
   routines: { size: 'large', place: 'float' },
   instructions: { size: 'small', place: 'float' },
   settings: { size: 'small', place: 'others' },
+  // The owner's scorecard of the member's runs (plan uye-karnesi D1).
+  scorecard: { size: 'medium', place: 'float' },
 };
 export const isMemberCardRef = (r: unknown): r is MemberCardRef => typeof r === 'string' && (MEMBER_CARD_REFS as readonly string[]).includes(r);
 
@@ -566,29 +568,42 @@ export function presentCards(
   return counter(item, true);
 }
 
-/** A picture question that is still open with the owner: its item waits instead of leaving (AC4). */
-export type AskStillOpen = (ask: string) => boolean;
+/** The owner's queue gestures: `next`, `leave`, `resume`, and `drop` (the waiting strip's ✕). */
+export type QueueStepOp = 'next' | 'leave' | 'resume' | 'drop';
+export const QUEUE_STEP_OPS: readonly QueueStepOp[] = ['next', 'leave', 'resume', 'drop'];
+
+/**
+ * An item waiting this long, never seen, is stale (owner 2026-11-18, "şu takılı kalıyor": a picture
+ * question's presentation from 03:40 still waited at 21:40): the store drops it on its next read.
+ */
+export const PRESENT_ITEM_STALE_MS = 12 * 60 * 60 * 1000;
 
 /**
  * The owner's queue gesture (D2, AC2, AC5), guarded by the item his window showed: `next` (also
  * closing the presentation) passes the head and opens the next, `leave` passes it and floats the
- * stage with the rest waiting, `resume` opens the head. A head whose picture question is still
- * open is not passed: it goes to the end and waits (AC4). Returns whether anything changed.
+ * stage with the rest waiting, `resume` opens the head, `drop` (the waiting strip's ✕) takes the
+ * head off the queue without showing it and leaves the stage as it is. An item he has seen or
+ * dismissed is gone for good, even while its picture question is still open (owner 2026-11-18:
+ * re-queueing it made "1 presentation waiting" come back after every close): the question stays
+ * open on its own card. Returns whether anything changed.
  */
 export function ownerQueueStep(
-  s: Pick<SuperState, 'view' | 'presentQueue'>, op: 'next' | 'leave' | 'resume', item: string, askOpen: AskStillOpen,
+  s: Pick<SuperState, 'view' | 'presentQueue'>, op: QueueStepOp, item: string,
 ): boolean {
   const q = s.presentQueue;
   const head = q?.items[0];
   if (!q || !head || head.id !== item) return false;
   if (op === 'resume') { showHead(s); return true; }
-  if (!headShowing(s)) return false;
+  const onScreen = headShowing(s);
+  if (op !== 'drop' && !onScreen) return false;
   q.items.shift();
-  if (head.ask && askOpen(head.ask)) q.items.push(head); else q.seen += 1;
+  q.seen += 1;
   delete q.showing;
-  // Alone and re-queued (an unanswered question): it waits rather than opening again at once.
-  if (op === 'next' && q.items.length && q.items[0].id !== head.id) showHead(s);
-  else { s.view = { mode: 'float' }; if (!q.items.length) q.seen = 0; }
+  if (!q.items.length) q.seen = 0;
+  // A dismissed item that was not on screen leaves the stage alone.
+  if (op === 'drop' && !onScreen) return true;
+  if (op === 'next' && q.items.length) showHead(s);
+  else s.view = { mode: 'float' };
   return true;
 }
 
@@ -634,11 +649,13 @@ export function dropAskItem(s: Pick<SuperState, 'view' | 'presentQueue'>, ask: s
  */
 export function settlePresentQueue(
   raw: unknown, view: SuperView, containers: readonly (LayoutCard & { id: string })[],
+  opts: { now?: number; askClosed?: (ask: string) => boolean } = {},
 ): { queue?: PresentQueue; view: SuperView } {
   const rec = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   if (!rec || !Array.isArray(rec.items)) return { view };
   const known = new Set(containers.map((c) => c.id));
   const rawIds: string[] = [];
+  const retired = new Set<string>();
   const items: PresentItem[] = [];
   for (const x of rec.items as unknown[]) {
     const r = x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : null;
@@ -646,11 +663,16 @@ export function settlePresentQueue(
     rawIds.push(r.id);
     const cards = Array.isArray(r.cards) ? [...new Set((r.cards as unknown[]).filter((id): id is string => typeof id === 'string' && known.has(id)))].slice(0, MAX_FILMSTRIP) : [];
     if (!cards.length || items.some((i) => sameCardSet(i.cards, cards))) continue;
-    const layout = typeof r.layout === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(r.layout) ? r.layout as PresentLayout : undefined;
+    const ask = typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? r.ask : undefined;
     const at = typeof r.at === 'number' && Number.isFinite(r.at) ? r.at : 0;
+    // No longer valid (owner 2026-11-18): its question is over, or it waited unseen past
+    // PRESENT_ITEM_STALE_MS (so a stale item never survives a restart). The one on screen stays.
+    const onScreen = r.id === rec.showing && !items.length && viewShowsItem(view, { id: r.id, cards, ...(ask ? { ask } : {}), at });
+    if (!onScreen && ((ask && opts.askClosed?.(ask)) || (opts.now !== undefined && opts.now - at > PRESENT_ITEM_STALE_MS))) { retired.add(r.id); continue; }
+    const layout = typeof r.layout === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(r.layout) ? r.layout as PresentLayout : undefined;
     items.push({
       id: r.id, cards, ...(layout ? { layout } : {}), ...(layout && r.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
-      ...(typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? { ask: r.ask } : {}), at,
+      ...(ask ? { ask } : {}), at,
     });
   }
   const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < max ? Math.floor(v) : 0);
@@ -663,7 +685,13 @@ export function settlePresentQueue(
   if (showing) {
     const head = items[0];
     if (head?.id === showing && viewShowsItem(view, head)) q.showing = showing;
-    else if (rawIds.includes(showing) && !items.some((i) => i.id === showing)) {
+    else if (head?.id === showing) {
+      // He saw it and left it another way (a chat side by side, his own presentation, a group):
+      // it is passed, never back in the queue as unseen (owner 2026-11-21: "eski sunumlar ekran
+      // açılınca sürekli önüme çıkıyor"). What he moved to stays; the rest keep waiting.
+      q.items.shift();
+      q.seen += 1;
+    } else if (rawIds.includes(showing) && !retired.has(showing) && !items.some((i) => i.id === showing)) {
       // The item on screen lost its cards (closed): it is passed, and the next opens. Only when
       // the stage was left floating by it, never over another view.
       if (view.mode === 'float') {
@@ -778,8 +806,17 @@ export interface SuperChild {
   adopted: boolean;
   /** Its own worktree, when `super delegate --worktree` made one: under `~/.claude-worktrees/`. */
   worktree?: string;
-  /** `super/<slug>`, beside `worktree`. */
+  /** `super/<slug>`: its work's branch. Kept on its own, also after the worktree is gone (K9):
+   *  `super merge` and `super resume` reach a dal-yalnız child through it. */
   branch?: string;
+  /** The linked repo it works in (`delegate --worktree <repo>`). Absent in an older record:
+   *  derived from the one linked repo holding `branch` (childCheckout). */
+  repo?: string;
+  /** The `super/*` branch its worktree was on when the sweep removed it (it may have moved past
+   *  `branch`). */
+  lastBranch?: string;
+  /** A non-`super/*` branch its worktree had moved to when the sweep removed it (report only). */
+  movedTo?: string;
   startedAt: number;
   /** The job list's row (plan r4 D5, D6, D15): written by the SERVER from the registry, never
    *  by an agent verb. Absent in an older record: derived from the live status until reconciled. */
@@ -804,6 +841,13 @@ export interface SuperChild {
    *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
    *  turn ends. */
   awaited?: true;
+  /** The app's one-time first read of this project (plan ilk-acilis C15a): set by the server's
+   *  delegate core only. Its spawn is decided by the server (auto, no MCP); its done item lets
+   *  the Super write one short message (C16). */
+  firstRead?: true;
+  /** The id of the first done item of that first read that was delivered: only THAT item carries
+   *  the one-message allowance (C16); a later done item of the same child carries none. */
+  firstReadAnnounced?: string;
   /** The owner message it answers (`msgRef`, the turn's `<owner-msg ref>`): its awaited=owner
    *  events carry `origin=<ref>`, so the result the super writes links under that message. */
   origin?: string;
@@ -812,6 +856,15 @@ export interface SuperChild {
   /** The push, PR or deploy his own message named that this child was told it may run
    *  (`delegate --outward`, outward.ts); a `--succeeds` successor carries it on. */
   outward?: OutwardGrant;
+  /** C3 (plan iyilesme-360 D3): the conversation keys of the Super chat that delegated it (its pin
+   *  id and the record's session), stamped at delegate, copied on `--succeeds`. `learn` in this
+   *  child treats a quote of that chat as "here" (owner-quote.ts delegatingKeys). At most 8. */
+  delegatedBy?: string[];
+  /** C11: what its job was accepted with (origin, pictures, policy); `--succeeds` inherits it. */
+  context?: JobContext;
+  /** The agent migration task ids this child runs (`super delegate --migration`): written ONLY by
+   *  the server, never by a verb's argument. One such child per project at a time. */
+  migration?: string[];
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -852,10 +905,20 @@ export interface SuperChild {
    *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
    *  and clears this. At most MAX_SENT. */
   sent?: string[];
+  /** When its row last moved INTO `working` from done, stuck, gone, waiting or none (never from
+   *  `asking`: a question it asked does not restart its job), epoch ms (`setRow`). The progress
+   *  clock's start (super-sessiz-kalmaz C4); absent = `startedAt`. */
+  workingSince?: number;
+  /** When the Super last told the owner about this job (a section under its origin, or under one
+   *  of his messages), epoch ms: the progress clock restarts (C4). */
+  toldAt?: number;
+  /** When a written `progress` delivery last named it, epoch ms (C3). */
+  progressAt?: number;
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
- *  still owns a worktree (it leaves when `super worktree remove` clears it). */
+ *  still holds its identity (a worktree or a branch not yet home, K9 `holdsIdentity`): the
+ *  janitor releases it once its branch reaches home. */
 export const MAX_ENDED_CHILDREN = 30;
 
 /** A child's row in the job list. `asking` = the super agent is handling its question.
@@ -920,14 +983,26 @@ job or asking: K6). Both are the server's facts, never an agent's words.
 `nudge` (K6): the server's one solo turn into a member Super that stopped without closing its
 request or asking ("close it with team done, or ask properly"). In the MEMBER's queue; never
 mirrored, never counted on any surface.
+`progress` (super-sessiz-kalmaz D2): the owner waits on jobs and has heard nothing about them for
+PROGRESS_DUE_MS while he is present (his newest message within OWNER_PRESENT_MS). Derived by the
+sweep from facts only, in MAIN's record only: ONE pending item names every due job (`progress.jobs`),
+its `sessionId` the Super's own. Pruned again at delivery (a job no longer live or due is dropped,
+an empty item is never delivered); a written delivery stamps each named job's `progressAt`. It
+opens no result debt and never moves a child's `sent` list.
 `routine` (K7): something a routine (an automation) waits on the owner for, derived from disk by
 `syncRoutineNeeds`, the ONLY writer that opens or closes it: a pending question, an approval or
 review, a blocked or orphaned run, a light run's denials, an unanswered owner card. In MAIN's
 queue, never a `member` mirror: `routine` names it, `fact` the fact on disk it stands for (its id
 is derived from both), `member` the routine's member only when it has one, `ownerText` its line,
 `shown` once it has rung (a coalesced fact never rings twice).
+`migration` (task her-ozellik-eski-kullaniciyi-..., C4): agent migration work is waiting after an
+update (the installed CLI's `migrations pending --json`). In MAIN's queue only, written by the
+server (`checkMigrationDue`, super/migration-event.ts), never the Super's words; its `sessionId` is
+the Super's own and `migration` names the due task ids. One event line asks the Super to start ONE
+child with `super delegate --migration`; at most one is open, and none while a migration child is
+live, starting or held in the pool.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note', 'progress', 'migration'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -980,6 +1055,9 @@ export interface SuperQueueItem {
   /** A team `done` item that is an answer of a job still going, or a late one (`event=answer`):
    *  it ends nothing, and no ending replaces it. */
   partial?: true;
+  /** W3 C15: a team job's `done` that asks the owner to rate its run (`<member>::<runId>`),
+   *  decided once, when the ending was queued. Its line says `rate=ask` while the run is unrated. */
+  rateRun?: string;
   /** A child's `question` shown to the OWNER from birth (owner 2026-10-27): its card is on his
    *  bar at once, with a button that opens the child's chat, while the Super hears it in its next
    *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
@@ -1000,6 +1078,10 @@ export interface SuperQueueItem {
    *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
   read?: string[];
   /** A `request`'s job (main Super's words: untrusted for the member) or a `reply`'s answer. */
+  /** A `request` that answers one of his messages (plan global-uye-ogrenme C5): that message as the
+   *  ASKING Super's conversation recorded it in the ledger (server-filled, never the Super's text).
+   *  Shown to the member in an `<owner-relay>` block; one relay ledger line is written at delivery. */
+  owner?: { ref: string; turn: string; via: 'composer' | 'phone' | 'telegram'; own: string; at: string; vault: string; session: string };
   text?: string;
   /** A `request`'s per-job model, effort and light flag (`team ask --model/--effort/--light`):
    *  for the child the member opens for it, never the member's own. */
@@ -1012,8 +1094,13 @@ export interface SuperQueueItem {
   acceptedAt?: number;
   /** A `reply`: the member's `ask` item it answers. */
   answers?: string;
+  /** A `reply` that tells the member the Super Agent cancelled its request (`super team cancel`):
+   *  stop its work; the request is closed, nothing more to report. */
+  cancels?: true;
   /** Whose work this item is about (plan-r10 1, owner `wnfvtj`): absent = the owner's (as today). */
   workOrigin?: SuperWorkOrigin;
+  /** A team item whose Super could not be started was told to the owner once: never again. */
+  wakeTold?: true;
   /** A `permission` of a child the owner runs in Bypass (`permissionGoesToSuper`): the Super
    *  decides it first (`super allow`), so it is no owner head, notch row or phone card while this
    *  holds. Escalated (`super queue ask`) or unanswered past SUPER_PERMISSION_GRACE_MS, it loses
@@ -1021,6 +1108,9 @@ export interface SuperQueueItem {
   toSuper?: true;
   /** A result debt was opened for this item when it reached the Super (owed.ts): never twice. */
   owedAt?: number;
+  /** A `gone` whose process ended while its background work still ran (the work died with it)
+   *  and the server could not bring it back: no result, the Super resumes it. Never on another kind. */
+  cut?: true;
   /** An `owed` item's debts (`SuperOwed.id`), fixed when it was queued. */
   owed?: string[];
   /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
@@ -1077,7 +1167,18 @@ export interface SuperQueueItem {
   /** A `member-note` about a request of main's (`--for <item>`) whose team job answers an owner
    *  message: that message's ref, so the Super's text about it stands under it. Server-written. */
   origin?: string;
+  /** A `progress` item's jobs (super-sessiz-kalmaz C3): each a child or a team job, with the ref
+   *  its section opens with (its origin, else `owedRef(item.id)`). Server-written. */
+  progress?: { jobs: ProgressJob[] };
+  /** A `migration` item's due agentTask ids (the installed CLI's list). Server-written. */
+  migration?: string[];
 }
+
+/** One job a `progress` item names: a child (`child`) or a team job (`team`), never both. */
+export interface ProgressJob { child?: string; team?: string; ref: string }
+/** The longest list one progress item holds (a hidden bound on a record field, never a rule:
+ *  the facts decide which jobs are due). */
+export const MAX_PROGRESS_JOBS = 40;
 
 // ─── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1-K7; MIRRORED in
 // dashboard/src/lib/superTypes.ts, pinned by tests/unit/owner-card-types.test.ts) ──────────────
@@ -1452,13 +1553,20 @@ export interface SuperTeamJob {
    *  record after a restart. Set when the job is given, cleared by its done or stuck. */
   open?: true;
   /** A stuck its watch concluded itself: the member left the AI Team, or its turn was lost with
-   *  the server (no record of an ending, nothing running it). */
+   *  the server (no record of an ending, nothing running it); or the Super Agent cancelled it
+   *  (`super team cancel`). Final: nothing about the job is told again. */
   concluded?: TeamJobConclusion;
+  /** The one-line notes about a request job already told to the super (`noteRequestToMain`: quiet
+   *  for 30 minutes, never started, the member off or unapproved). On the record, so a restart
+   *  never tells the same note again (Tilki 2026-11-21: one "has not closed" line per restart). */
+  saidNotes?: TeamSaidNote[];
   /** The newest post of this job's run the super was given (on the chain's first job): every post
    *  reaches it once, whichever event carries it. */
   toldPost?: string;
   /** When its done or stuck was told: a late post is still watched for `TEAM_TRAIL_MS`. */
   toldEndAt?: number;
+  /** W3 C15: its `done` asked the owner to rate its run; no later job of that run asks again. */
+  rateAsked?: true;
   /** A follow-up on this job's own conversation: the job it continues (the chain's root). It has
    *  no card of its own: the member's one card shows the chain. */
   followUpOf?: string;
@@ -1468,12 +1576,23 @@ export interface SuperTeamJob {
   /** A job given to the member's OWN Super (plan-r10 1, Wave 2): the `request` item's id in the
    *  member's record. Its card and status read that record; no thread holds it. */
   request?: string;
+  /** When the sweep first read it `running` (epoch ms): the progress clock's start
+   *  (super-sessiz-kalmaz C4). Kept across `asking`; cleared on `queued`, `done` or `failed`. */
+  liveSince?: number;
+  /** When the Super last told the owner about it, and when a written `progress` delivery last
+   *  named it (epoch ms), as on a child. */
+  toldAt?: number;
+  progressAt?: number;
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
 export type TeamJobEvent = 'done' | 'stuck' | 'question';
 /** Why a team job's watch concluded it stuck (`SuperTeamJob.concluded`). */
-export type TeamJobConclusion = 'gone' | 'lost';
+export type TeamJobConclusion = 'gone' | 'lost' | 'cancelled';
+export const TEAM_JOB_CONCLUSIONS: readonly TeamJobConclusion[] = ['gone', 'lost', 'cancelled'];
+/** A request job's one-time notes (`SuperTeamJob.saidNotes`). */
+export type TeamSaidNote = 'stale' | 'unstarted' | 'off' | 'unapproved';
+export const TEAM_SAID_NOTES: readonly TeamSaidNote[] = ['stale', 'unstarted', 'off', 'unapproved'];
 
 /** What a team job's card and `super state` say, read from the member's thread. */
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
@@ -1520,6 +1639,30 @@ export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
  * takes it; `startedIn`/`startedBranch` name the worktree a `delegate --from` that the window did
  * not confirm may have opened (`maybeStarted`).
  */
+/**
+ * C11 (plan iyilesme-360): what a job was accepted with, resolved once at acceptance (`delegate`,
+ * `pool add`, the capacity keep) and carried by its pool row and its child: the owner message it
+ * answers and the pictures that ride with it (C8, D8). `policy` (C10) is written by the model and
+ * effort check. A row or child without it (made before this build) starts as today.
+ */
+export interface JobContext {
+  origin?: { ref: string; at: number; words: string };
+  /** Absolute paths under the project's `tmp/agent-drops/`, at most 8. */
+  pictures: string[];
+  policy?: JobPolicy;
+}
+/** C10: the settings the job is allowed to run with and what allowed them. */
+export interface JobPolicy {
+  model: string;
+  effort: string;
+  risk?: JobRisk;
+  allowedBy: 'flags' | 'risk' | 'full' | 'words';
+  /** His words that allowed a setting (newest last, at most 4). */
+  grants: Array<{ ref: string; words: string; at: number }>;
+}
+export const JOB_RISKS = ['security', 'money', 'migration', 'contract'] as const;
+export type JobRisk = typeof JOB_RISKS[number];
+
 export interface SuperPoolItem {
   id: string;
   title: string;
@@ -1537,14 +1680,21 @@ export interface SuperPoolItem {
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
   tool?: SuperChildTool;
+  /** `delegate --fast|--full`: written into the worktree when the job starts (lane-intent.ts). */
+  laneIntent?: 'fast' | 'full';
   /** The push, PR or deploy his own message named, checked when the job was kept (outward.ts):
    *  it starts with the job, however late, never re-read from the owed ledger. */
   outward?: OutwardGrant;
+  /** C11: what the job was accepted with; a reused row (same prompt) takes the new one's. */
+  context?: JobContext;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A member Super's job kept at its cap: whose work it does (as its child's `workOrigin`), so
    *  the card of the request it serves shows it waiting. */
   workOrigin?: SuperWorkOrigin;
+  /** A migration child's job kept at the cap (`delegate --migration`): its due task ids, carried
+   *  onto the child by `delegate --from`. Server-written; `super pool add` never sets it. */
+  migration?: string[];
   /** A `delegate --from` went unconfirmed: the child may be running. */
   maybeStarted?: boolean;
   startedIn?: string;
@@ -1576,6 +1726,9 @@ export interface SuperState {
   children: Record<string, SuperChild>;
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
+  /** The cut-return card asked per topic (`super returns ask`, D16): one entry per topic. The same
+   *  `key` answered is never asked again. */
+  returnsAsked?: Record<string, ReturnsAsked>;
   /** The owner's absence, for the return recap (D13). */
   away: { since: number | null; events: number };
   /** Automatic cards the owner closed, not reopened automatically for a while (G5). */
@@ -1659,6 +1812,9 @@ export interface SuperOwed {
   parked?: 'stop' | 'limit';
   parkedAt?: number;
   closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+  /** C8 (plan iyilesme-360 D8): a `msg` debt's pictures (absolute paths under the project's
+   *  `tmp/agent-drops/`, checked at intake and again before any copy). At most 8. */
+  pictures?: string[];
 }
 export const OWED_ID_RE = /^o[1-9][0-9]{0,8}$/;
 /** Closed debts the record keeps (newest). Every open one is kept up to MAX_OWED_OPEN. */
@@ -2120,6 +2276,35 @@ export function floatCount(state: { containers: readonly SuperContainer[]; group
     + state.groups.filter((g) => g.place === 'float').length;
 }
 
+/** Each member card's container id: `containerIdFor('member', ref)`, precomputed so the window can
+ *  draw a missing card with the id the server will give it (a test holds them equal). */
+export const MEMBER_CARD_IDS: Readonly<Record<MemberCardRef, string>> = {
+  routines: 'member-82c37c372770',
+  instructions: 'member-31a808660056',
+  settings: 'member-3cc1d5a427a4',
+  scorecard: 'member-aa68f9a3b402',
+};
+
+/**
+ * The member cards a stage lacks, at their defaults (plan uye-karnesi C7): one pure rule for the
+ * record (`ensureMemberCards`, persisted) and the window (drawn, never saved). A default `float`
+ * card goes to Others once the stage already floats {@link MAX_FLOAT} items. Present cards are never
+ * touched: the owner's layout stands.
+ */
+export function missingMemberCards(state: { containers: readonly SuperContainer[]; groups?: readonly SuperGroup[] }): SuperContainer[] {
+  const out: SuperContainer[] = [];
+  const have = new Set(state.containers.filter((c) => c.kind === 'member').map((c) => c.ref));
+  let floating = floatCount({ containers: state.containers, groups: state.groups ?? [] });
+  for (const ref of MEMBER_CARD_REFS) {
+    if (have.has(ref)) continue;
+    const d = MEMBER_CARD_DEFAULTS[ref];
+    const place: ContainerPlace = d.place === 'float' && floating >= MAX_FLOAT ? 'others' : d.place;
+    if (place === 'float') floating++;
+    out.push({ id: MEMBER_CARD_IDS[ref], kind: 'member', ref, shape: 'square', ...(d.size !== 'small' ? { size: d.size } : {}), place });
+  }
+  return out;
+}
+
 // ─── Identifiers ────────────────────────────────────────────────────────────────
 
 /** A session id as the chat registry and the roster hold it. */
@@ -2128,6 +2313,17 @@ export const CONTAINER_ID_RE = /^[a-z0-9-]{1,40}$/;
 export const QUEUE_ID_RE = /^[a-z0-9-]{1,40}$/;
 /** A child's branch: the only branches `super` verbs ever create or merge into (D12). */
 export const SUPER_BRANCH_RE = /^super\/[a-z0-9-]{1,60}$/;
+
+/** One `super returns ask` card: the report's key, when it was asked, the ask's queue id, and the
+ *  owner's answer once he gave one (`"done"` when the Super closed it with `super queue done`). */
+export interface ReturnsAsked { key: string; at: number; askId: string; answer?: string }
+
+const BASE_RE = /^[A-Za-z0-9._/-]{1,200}$/;
+/** A ref as typed (a base, a branch a worktree moved to): a ref/sha character set, never an
+ *  option, never a range. Import-free here so store.ts and worktrees.ts share it. */
+export function validBase(b: unknown): b is string {
+  return typeof b === 'string' && BASE_RE.test(b) && !b.startsWith('-') && !b.includes('..');
+}
 /** A worktree slug or a merge topic (D12). */
 export const SUPER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
 export const MAX_BRIEF = 200;
@@ -2354,10 +2550,10 @@ export function askSummary(spec: SuperAskSpec): { ownerText: string; options: st
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'allow', 'send', 'queue-list', 'queue-ask', 'queue-done', 'queue-allow', 'merge', 'worktree-list', 'worktree-remove',
-  'pool-add', 'pool-remove', 'pool-list', 'ask',
+  'pool-add', 'pool-remove', 'pool-list', 'ask', 'returns-ask',
   'end', 'resume', 'update', 'adopt',
-  'clean', 'team-ask', 'team-amend',
-  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
+  'clean', 'team-ask', 'team-amend', 'team-cancel',
+  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status', 'note-link',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
   // A member tells the project's Super something on its own (owner 2026-11-19): member only.
@@ -2412,10 +2608,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again. Rev 55 (2026-11-20, hafiza-konu-skill): a brief names the project skill that covers the job; in the same field a project skill comes before a user-level one. Rev 56 (2026-11-21, sirket-yavaslik): a one-screen look or copy job with nothing on the never-list is delegated `--fast`; "tam doğrula" opens `--full` or raises a done job with `super update|resume <child> --full`; the Super never waits on CI or runs a browser. Rev 57 (2026-11-21, telegram-sade): the Telegram rule is short (a bold answer line and at most three sentences, the rest in a folded `**Ayrıntı**`); one turn is one message; a job's status is one `dream-status` block edited in place; a voice day keeps answering by voice. Rev 58 (2026-11-21, super-sessiz-kalmaz): while he waits, the step it is on and a time left ONLY from a real measurement (no measurement, no time; a plan or approval summary never); a deploy started by a merge or push is watched until live or failed; `super state` reads `background` for a child whose background work still runs; `event=progress` gets one line each under its ref. Rev 59 (2026-11-22, uye-karnesi C8): he rates a member's run in words, recorded with `agents rate --quote`.
 
  */
-export const SUPER_BRIEF_REV = 54;
+export const SUPER_BRIEF_REV = 60;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -2479,6 +2675,10 @@ export const MAX_READ_BYTES = 256 * 1024;
 /** After a server restart, a recorded child absent from the registry has this long to register
  *  again before it is reported `gone` (D7). */
 export const READOPT_GRACE_MS = 2 * 60_000;
+/** The same grace for a child the relaunch cut off MID-JOB (`resuming`): its tab may take longer
+ *  than {@link READOPT_GRACE_MS} to come back on a loaded Mac, and a child read as gone that early
+ *  had its job delegated a second time (AC14, owner 2026-11-21: two sessions of one job). */
+export const READOPT_RESUME_GRACE_MS = 10 * 60_000;
 /** A delegated child that opened no chat by now is reported gone, not left `working`. */
 export const CHILD_ARRIVE_MS = 60_000;
 

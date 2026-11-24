@@ -625,7 +625,7 @@ describe('window, sessions, summary', () => {
 
   it('a member\'s delegate on Antigravity is refused 409 before anything starts (Rota is balanced)', async () => {
     const { session } = await askRota();
-    const r = await verb(tokenFor(session, 'm:rota'), 'delegate', { prompt: 'do it', brief: 'x', tool: 'antigravity' });
+    const r = await verb(tokenFor(session, 'm:rota'), 'delegate', { model: 'sonnet', prompt: 'do it', brief: 'x', tool: 'antigravity' });
     expect(r.status).toBe(409);
     expect(r.json.error).toBe('tool_too_wide');
   });
@@ -787,8 +787,8 @@ describe('end review (Wave 2)', () => {
       });
       return minted.token;
     };
-    await verb(tok(session, 'm:rota'), 'delegate', { prompt: 'do it', brief: 'x' });
-    await verb(tok(MAIN), 'delegate', { prompt: 'do it', brief: 'x' });
+    await verb(tok(session, 'm:rota'), 'delegate', { model: 'sonnet', prompt: 'do it', brief: 'x' });
+    await verb(tok(MAIN), 'delegate', { model: 'sonnet', prompt: 'do it', brief: 'x' });
     const [memberFrame, mainFrame] = frames.filter((f) => f.verb === 'delegate');
     expect((memberFrame.args as Record<string, unknown>).crewTicket).toMatch(/^[0-9a-f]{36}$/);
     expect(Object.keys(mainFrame.args as Record<string, unknown>)).not.toContain('crewTicket');
@@ -810,7 +810,7 @@ describe('surum-0402 review (Wave 2 re-check)', () => {
     expect(memberCrewPermissionMode(root, ['rota'], true)).toBe('auto');
     await writeSuper(root, 'm:pera', (s) => { s.session = 'sess-pera-1'; s.enabled = true; });
     const tok = tokenFor('sess-pera-1', 'm:pera');
-    const d = await verb(tok, 'delegate', { prompt: 'do it', brief: 'x' });
+    const d = await verb(tok, 'delegate', { model: 'sonnet', prompt: 'do it', brief: 'x' });
     expect(d.status, JSON.stringify(d.json)).toBe(409);
     expect(d.json.error).toBe('member_not_ready');
     const r = await verb(tok, 'resume', { child: 'kid-none' });
@@ -842,7 +842,7 @@ describe('review 2026-11-02: no window, a member\'s question to main, an off mem
     // After: one line, naming why and when it starts.
     checkQuietRequests(memberKey(), await rota(), born.createdAt + REQUEST_UNSTARTED_MS + 1);
     await vi.waitFor(async () => expect(await unstartedLines(job)).toHaveLength(1), W);
-    expect((await unstartedLines(job))[0].text).toBe('Rota has not started this job: no window is open to start its Super; it starts when the app shows the project.');
+    expect((await unstartedLines(job))[0].text).toBe('Rota has not started this job yet: its Super has not come up yet. It stays in its queue.');
     // Once per request, and the request stays pending and open; main's job stays open.
     checkQuietRequests(memberKey(), await rota(), born.createdAt + 3 * REQUEST_UNSTARTED_MS);
     await _superInboxDrained();

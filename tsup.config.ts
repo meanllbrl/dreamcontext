@@ -2,6 +2,7 @@ import { defineConfig } from 'tsup';
 import { chmodSync, cpSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { t3EsbuildPlugin } from './scripts/t3-aliases.mjs';
+import { writeBuildStamp } from './scripts/build-stamp.mjs';
 
 /**
  * The version to stamp INTO the bundle, read from package.json at build time.
@@ -12,7 +13,7 @@ import { t3EsbuildPlugin } from './scripts/t3-aliases.mjs';
  * the Tauri .app, which ships `Contents/Resources/dist/index.js` with no
  * package.json at ANY candidate path — so every probe missed and the lookup
  * fell through to the '0.0.0' sentinel. '0.0.0' sorts below every migration
- * version, so `pendingMigrations` / `unfinishedAgentTasks` returned nothing and
+ * version, so `pendingMigrations` / `dueAgentTasks` returned nothing and
  * no migration could ever fire through the bundled CLI — which is exactly the
  * first-run-before-npm-install path `resolve_cli` falls back to.
  *
@@ -133,5 +134,7 @@ export default defineConfig({
     if (existsSync('dashboard/dist')) {
       cpSync('dashboard/dist', 'dist/dashboard', { recursive: true });
     }
+    // Which commit this dist came from (kesim-geri-donus K6): install:cut and `super returns` read it.
+    writeBuildStamp('dist');
   },
 });

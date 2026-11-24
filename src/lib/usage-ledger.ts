@@ -37,6 +37,7 @@ import {
   originOfFirstPrompt, parseClaudeRecord, turnKind, parseCodexRecord, type CodexScanState, type LimitHit, type PromptKind, type SessionOrigin, type UsageLine,
 } from './usage-readers.js';
 import { realPath } from './real-path.js';
+import { heldModeFromTranscript } from '../server/chat-mode-drift.js';
 
 export const LEDGER_VERSION = 3;
 /** Rows older than this leave the cache: the widest range the screen shows is 90 days. */
@@ -86,6 +87,13 @@ export interface LedgerFile {
   sends: Array<[number, string]>;
   /** base64 of the Float64 hashes of the keys this file counted. */
   keys: string;
+  /** A main Claude session's chat mode, read from its system-prompt snapshot and the mode notes
+   *  after it (`heldModeFromTranscript`); `''` = read, no snapshot. Absent = not read yet (an
+   *  entry from before this field: {@link backfillSessionFacts} reads it once). */
+  mode?: string;
+  /** Its first turn is a context handoff's continue prompt (`Handoff: `), so it continues another
+   *  session. `false` = read, it does not. Absent = not read yet. */
+  handoffOpening?: boolean;
 }
 
 export interface Ledger {
@@ -266,6 +274,7 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
   let sessionKind: PromptKind | null = null;
   const promptIds = new Set<number>();
   const sendCalls = new Set<string>();
+  const facts = tool === 'claude' && !isSub ? sessionFactsReader() : null;
 
   const addPrompt = (rec: Record<string, unknown>) => {
     const turn = humanTurn(rec);
@@ -317,6 +326,7 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
   };
 
   const claudeLine = (b: Buffer) => {
+    facts?.line(b);
     const usage = b.includes('"usage"');
     const hook = !usage && b.includes('"hook_success"');
     const compact = !usage && !hook && b.includes('"compact_boundary"');
@@ -398,10 +408,76 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
     if (codex.creator) file.account = codex.creator;
   }
   if (origin) file.origin = origin;
+  if (facts) Object.assign(file, facts.result());
   for (const h of counted) ctx.seen.add(h);
   file.keys = encodeKeys(counted);
   file.rows = [...rowsByKey.values()];
   return file;
+}
+
+/** The continue prompt's opening (`handoffContinuePrompt`, both kinds). */
+const HANDOFF_OPENING = 'Handoff: ';
+
+/**
+ * A main session's mode and handoff opening, read line by line while the file streams: only the
+ * last system-prompt snapshot and the lines after it that can move the mode are kept (a few KB),
+ * never the whole transcript.
+ */
+function sessionFactsReader(): { line: (b: Buffer) => void; result: () => { mode: string; handoffOpening: boolean } } {
+  let modeLines: string[] = [];
+  let opening: boolean | null = null;
+  return {
+    line(b: Buffer) {
+      if (b.includes('"prompt_snapshot"')) { modeLines = [b.toString('utf-8')]; return; }
+      if (modeLines.length > 0 && (b.includes('"compact_boundary"') || (b.includes('"hook_additional_context"') && b.includes('dreamcontext-chat-mode:')))) {
+        modeLines.push(b.toString('utf-8'));
+        return;
+      }
+      if (opening === null && b.includes('"type":"user"') && !b.includes('"tool_use_id"')) {
+        let rec: Record<string, unknown>;
+        try { rec = JSON.parse(b.toString('utf-8')) as Record<string, unknown>; } catch { return; }
+        // The raw first text: `humanTurn` drops a continue prompt as a server turn on purpose.
+        if (rec.isMeta === true || rec.isSidechain === true || rec.toolUseResult !== undefined) return;
+        const text = firstPromptText(rec)?.trimStart();
+        if (text && !text.startsWith('/') && !text.startsWith('<')) opening = text.startsWith(HANDOFF_OPENING);
+      }
+    },
+    result() {
+      const held = modeLines.length ? heldModeFromTranscript(modeLines.join('\n')) : null;
+      return { mode: held ? held.held : '', handoffOpening: opening === true };
+    },
+  };
+}
+
+/**
+ * Entries scanned before `mode` / `handoffOpening` existed: read each main Claude file still on
+ * disk ONCE and store a value or the sentinel (`''`, `false`), so no file is read for this again.
+ * Unchanged files only (a changed one is rescanned whole anyway). Returns whether any entry moved.
+ */
+export async function backfillSessionFacts(ledger: Ledger): Promise<boolean> {
+  let changed = false;
+  for (const [path, entry] of Object.entries(ledger.files)) {
+    if (entry.tool !== 'claude' || entry.agent || (entry.mode !== undefined && entry.handoffOpening !== undefined)) continue;
+    const facts = sessionFactsReader();
+    try {
+      let tail: Buffer = Buffer.alloc(0);
+      for await (const chunk of createReadStream(path, { highWaterMark: 1 << 20 })) {
+        const b = tail.length ? Buffer.concat([tail, chunk as Buffer]) : (chunk as Buffer);
+        let start = 0;
+        let nl: number;
+        while ((nl = b.indexOf(10, start)) >= 0) { facts.line(b.subarray(start, nl)); start = nl + 1; }
+        tail = b.subarray(start);
+      }
+      if (tail.length) facts.line(tail);
+      Object.assign(entry, facts.result());
+    } catch {
+      // Pruned or unreadable: the sentinel, so it is never tried again.
+      entry.mode ??= '';
+      entry.handoffOpening ??= false;
+    }
+    changed = true;
+  }
+  return changed;
 }
 
 // ── One scan at a time ───────────────────────────────────────────────────────────────
@@ -495,6 +571,7 @@ async function runScan(home: string, roots: ScanRoot[], state: LedgerState): Pro
 
   // Sessions Claude Code has pruned keep the account they were first seen on.
   let changed = stale.length > 0;
+  if (await backfillSessionFacts(ledger)) changed = true;
   const cutoff = Date.now() - KEEP_MS;
   for (const [path, entry] of Object.entries(ledger.files)) {
     if (entry.last && entry.last < cutoff) { delete ledger.files[path]; changed = true; continue; }

@@ -225,6 +225,8 @@ export interface RoomRequest {
   at: number;
   /** The owner's card for it (his private chat), once sent. */
   cardMessageId?: number;
+  /** The owner asked it himself in the group: his message was the approval, no card went. */
+  own?: true;
 }
 
 export interface RoomFile {
@@ -260,7 +262,8 @@ function isRoomFile(v: unknown, chatId: number): v is RoomFile {
       return !!x && typeof x.id === 'string' && ROOM_REQUEST_ID_RE.test(x.id)
         && ['open', 'held', 'approved', 'refused', 'done'].includes(String(x.status))
         && typeof x.superId === 'string' && Number.isSafeInteger(x.authorId) && typeof x.authorLabel === 'string'
-        && typeof x.words === 'string' && typeof x.summary === 'string' && typeof x.at === 'number';
+        && typeof x.words === 'string' && typeof x.summary === 'string' && typeof x.at === 'number'
+        && (x.own === undefined || x.own === true);
     });
 }
 
@@ -408,7 +411,7 @@ function journalMsgOk(v: unknown): boolean {
 
 function journalOf(v: unknown): JournalEntry[] {
   if (!Array.isArray(v)) return [];
-  const kinds = new Set(['text', 'media', 'callback', 'command']);
+  const kinds = new Set(['text', 'media', 'callback', 'command', 'rate-note']);
   const out: JournalEntry[] = [];
   for (const e of v) {
     if (!e || typeof e !== 'object') continue;
@@ -422,6 +425,7 @@ function journalOf(v: unknown): JournalEntry[] {
       ...(typeof j.ref === 'string' && /^[0-9a-z]{6}$/.test(j.ref) ? { ref: j.ref } : {}),
       ...(typeof j.chatRegistryId === 'string' && j.chatRegistryId.length <= 200 ? { chatRegistryId: j.chatRegistryId } : {}),
       ...(journalMsgOk(j.msg) ? { msg: j.msg as Record<string, unknown> } : {}),
+      ...(j.kind === 'rate-note' && typeof j.askId === 'string' && /^[0-9a-f]{16}$/.test(j.askId) ? { askId: j.askId } : {}),
     });
   }
   return out.slice(-POLL_RING_SIZE);
@@ -466,6 +470,31 @@ export function readTurns(dir: string, home: string = homedir()): TurnsFile {
 }
 export function writeTurns(dir: string, file: TurnsFile, home: string = homedir()): void {
   writeTelegramJson(join(dir, 'turns.json'), { v: 1, turns: file.turns }, home);
+}
+
+/** A bot's quiet-chat state (telegram-sade): its pinned agenda message and the night's results
+ *  waiting for the morning, so a restart neither pins a second agenda nor loses a night result. */
+export interface SadeFile {
+  v: 1;
+  pin?: { messageId: number; html: string };
+  night?: { at: number; md: string }[];
+}
+
+export function readSade(dir: string, home: string = homedir()): SadeFile {
+  const r = readTelegramJson(join(dir, 'sade.json'), home);
+  const v = r.ok && r.value && typeof r.value === 'object' ? (r.value as Record<string, unknown>) : {};
+  const pin = v.pin as { messageId?: unknown; html?: unknown } | undefined;
+  const night = Array.isArray(v.night) ? v.night.filter((e): e is { at: number; md: string } => !!e && typeof e === 'object'
+    && typeof (e as { at?: unknown }).at === 'number' && typeof (e as { md?: unknown }).md === 'string') : [];
+  return {
+    v: 1,
+    ...(pin && Number.isSafeInteger(pin.messageId) && typeof pin.html === 'string' ? { pin: { messageId: pin.messageId as number, html: pin.html } } : {}),
+    ...(night.length ? { night } : {}),
+  };
+}
+
+export function writeSade(dir: string, file: SadeFile, home: string = homedir()): void {
+  writeTelegramJson(join(dir, 'sade.json'), file, home);
 }
 
 export function readForward(dir: string, home: string = homedir()): ForwardFile {

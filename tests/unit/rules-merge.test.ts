@@ -130,3 +130,30 @@ describe('rules-json merge (C2, criterion 2)', () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 });
+
+describe('member rules merge (AC8: a shared project member merges by union)', () => {
+  const mrule = (id: string): RuleRecord => ({ ...rule(id), scope: 'member', member: 'scout' });
+
+  it('classifies agents/<slug>.rules.json, with or without the in-tree prefix; the view is not a store', () => {
+    expect(classifyPath('agents/scout.rules.json')).toBe('member-rules-json');
+    expect(classifyPath('_dream_context/agents/scout.rules.json')).toBe('member-rules-json');
+    expect(classifyPath('agents/../core/x.rules.json')).not.toBe('member-rules-json');
+  });
+
+  it('resolveConflicts writes the union of both sides into the member store and stages it', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'dc-member-merge-'));
+    mkdirSync(join(cwd, '_dream_context', 'agents'), { recursive: true });
+    const rel = '_dream_context/agents/scout.rules.json';
+    const ours = json({ version: 1, rules: [mrule('hhhhhhhhhh')] });
+    const theirs = json({ version: 1, rules: [mrule('iiiiiiiiii')] });
+    writeFileSync(join(cwd, rel), `<<<<<<< ours\n${ours}\n=======\n${theirs}\n>>>>>>> theirs\n`);
+    setFixture(rel, { base: '', ours, theirs });
+    const r = resolveConflicts(cwd, [rel], { home });
+    expect(r.resolved).toEqual([rel]);
+    expect(r.deferredToHuman).toEqual([]);
+    const store = JSON.parse(readFileSync(join(cwd, rel), 'utf-8')) as RulesStoreFile;
+    expect(store.rules.map((x) => x.id).sort()).toEqual(['hhhhhhhhhh', 'iiiiiiiiii']);
+    expect(added).toContain(rel);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});

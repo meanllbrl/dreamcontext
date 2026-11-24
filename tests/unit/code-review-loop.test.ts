@@ -266,7 +266,40 @@ describe('fix by class, re-review from the CLI', () => {
     expect(again.text).toContain('Not reviewed: b.ts');
     await record('reviewer', review([]));
     expect(reviewStatus(deps, T, 'end').state.done).toBe(true);
-    await expect(reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(2), paths: ['a.ts'] })).rejects.toThrow(/is done/);
+    await expect(reviewPacket(deps, T, 'end', 'reviewer', {})).rejects.toThrow(/is done[\s\S]*opens round 2 in this loop/);
+  });
+
+  it('a red final check after the PASS opens the next round in the SAME loop', async () => {
+    await open('review-edge-cases,review-security');
+    await reviewPacket(deps, T, 'end', 'review-edge-cases', { tree: tree(1), paths: ['a.ts'] });
+    await record('review-edge-cases', review([]));
+    await record('review-security', review([]));
+    expect(reviewStatus(deps, T, 'end').state.done).toBe(true);
+    expect(reviewStatus(deps, T, 'end').text).toMatch(/red final check comes back to this loop/);
+    // Without a fix note the round is refused, like any fix round.
+    await expect(reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(2), paths: ['b.ts'] })).rejects.toThrow(/Write the fix note first/);
+    note(['the final check went red: b.ts lost a row']);
+    await expect(reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(1), paths: ['b.ts'] })).rejects.toThrow(/nothing was fixed/);
+    await expect(reviewPacket(deps, T, 'end', 'review-frontend', { tree: tree(2), paths: ['b.ts'] })).rejects.toThrow(/after the final check/);
+    const p = await reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(2), paths: ['b.ts'] });
+    expect(p.opened).toBe(true);
+    expect(p.round).toBe(2);
+    expect(p.text).toContain(`git diff ${tree(1)} ${tree(2)} -- 'b.ts'`);
+    expect(p.text).toContain('the final check went red');
+    expect(p.text).toContain('OBSERVED or inferred');
+    expect(Object.keys(ledger().rounds[1].lenses)).toEqual(['reviewer']);
+    let st = reviewStatus(deps, T, 'end').state;
+    expect(st.done).toBe(false);
+    expect(st.next.kind).toBe('review');
+    // A FAIL here is an ordinary round: its class counts, and the fix goes on in this loop.
+    await record('reviewer', review([{ cls: 'row loss' }]));
+    st = reviewStatus(deps, T, 'end').state;
+    expect(st.next.kind).toBe('revise');
+    expect(st.classCounts['row loss']).toBe(1);
+    note(['sweep: row loss | a.ts, b.ts | b.ts']);
+    expect((await reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(3), paths: ['b.ts'] })).round).toBe(3);
+    await record('reviewer', review([], [['r2-reviewer-1', 'fixed']]));
+    expect(reviewStatus(deps, T, 'end').state.done).toBe(true);
   });
 
   it('an owner addition is the plan\'s, not a code review\'s', async () => {

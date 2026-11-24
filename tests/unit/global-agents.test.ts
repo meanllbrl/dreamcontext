@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createProgram } from '../../src/cli/program.js';
 import { createAgent, createGlobalAgent, getAgent, listAgents, readGlobalAgent, recordAgentLesson, removeAgent } from '../../src/lib/agents/store.js';
 import { GLOBAL_REGISTRY_KEY, globalAgentHome, globalAgentPath, globalProjectDir } from '../../src/lib/agents/scope.js';
-import { appendGlobalJournal, consolidateGlobalMemory, journalDir, readGlobalPattern } from '../../src/lib/agents/global-memory.js';
+import { appendGlobalJournal, consolidateGlobalMemory, foldedDir, journalDir, readGlobalPattern } from '../../src/lib/agents/global-memory.js';
 import { getRunTarget, lockPathFor, outputDirFor, sidecarPathFor } from '../../src/lib/automations/store.js';
 import { threadSlugDir } from '../../src/lib/automations/threads.js';
 import { checkApproval, listRegisteredProjects, readAutomationsRegistry, registerProject } from '../../src/lib/automations/registry.js';
@@ -229,6 +229,16 @@ describe('its memory: a journal, folded by one consolidator at a time (AC-D1-3)'
     expect(pattern).toContain('ask before deleting');
     expect(readFileSync(globalAgentPath('scout'), 'utf-8')).not.toContain('## Pattern');
     expect(readdirSync(journalDir('scout'))).toEqual([]);
+  });
+
+  it('a folded journal file is kept under memory/folded, never deleted (D6: no lesson is lost)', () => {
+    appendGlobalJournal('scout', a.project, { lesson: 'kept one' });
+    appendGlobalJournal('scout', b.project, { lesson: 'kept two' });
+    expect(consolidateGlobalMemory('scout').folded).toBe(2);
+    expect(readdirSync(journalDir('scout'))).toEqual([]);
+    const kept = readdirSync(foldedDir('scout')).map((f) => readFileSync(join(foldedDir('scout'), f), 'utf-8')).join('\n');
+    expect(kept).toContain('kept one');
+    expect(kept).toContain('kept two');
   });
 
   it('a crash between the write and the deletes never folds a lesson twice', () => {

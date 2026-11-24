@@ -132,7 +132,7 @@ describe('super clean', () => {
     for (const d of [home, project, fakeTmp]) rmSync(d, { recursive: true, force: true });
   });
 
-  it('dry run lists, a real run removes only the ended, merged, clean worktree and our old test temp', { timeout: 30_000 }, async () => {
+  it('dry run lists, a real run removes only ended children\'s clean worktrees on a branch (merged or not: D13, the branch keeps the work) and our old test temp', { timeout: 30_000 }, async () => {
     const merged = await createChildWorktree({ projectRoot: project, repo: 'product', slug: 'done-one', home });
     const unmerged = await createChildWorktree({ projectRoot: project, repo: 'product', slug: 'open-one', home });
     writeFileSync(join(unmerged.path, 'work.txt'), 'x\n'); g(unmerged.path, 'add', '.'); g(unmerged.path, 'commit', '-q', '-m', 'work');
@@ -174,6 +174,7 @@ describe('super clean', () => {
     // The sweep plans in the worktree root's real spelling (lsof reports real paths).
     const R = (p: string) => realpathSync(p);
     const mergedReal = R(merged.path);
+    const unmergedReal = R(unmerged.path);
     // No flag is a dry run (an older CLI sent `dryRun: false`: still only a list).
     for (const body of [{}, { dryRun: false }, { dryRun: true }]) {
       const dry = await call(body);
@@ -181,26 +182,31 @@ describe('super clean', () => {
       const plan = dry.json.result as { dryRun: boolean; items: Array<{ path: string; category: string }>; kept: Array<{ path: string; reason: string }> };
       expect(plan.dryRun).toBe(true);
       // Our old test temp is ONE row for all its folders (thousands on a real machine).
-      expect(plan.items.map((i) => i.path).sort()).toEqual([R(merged.path), fakeTmp].sort());
+      expect(plan.items.map((i) => i.path).sort()).toEqual([R(merged.path), R(unmerged.path), fakeTmp].sort());
       expect(plan.items.find((i) => i.category === 'test-tmp')).toMatchObject({ count: 1 });
       expect(plan.items.find((i) => i.category === 'test-tmp')).not.toHaveProperty('remove');
       expect(plan.items.find((i) => i.path === R(merged.path))?.category).toBe('child-worktree');
-      expect(plan.kept.find((k) => k.path === R(unmerged.path))?.reason).toBe('unmerged');
+      expect(plan.items.find((i) => i.path === R(unmerged.path))?.category).toBe('child-worktree');
       expect(plan.kept.find((k) => k.path === R(live.path))?.reason).toBe('live-child');
       expect(existsSync(merged.path)).toBe(true);
       expect(existsSync(ours)).toBe(true);
     }
 
     const real = await call({ apply: true });
-    expect((real.json.result as { removed: string[] }).removed.sort()).toEqual([mergedReal, ours].sort());
+    expect((real.json.result as { removed: string[] }).removed.sort()).toEqual([mergedReal, unmergedReal, ours].sort());
     expect(existsSync(merged.path)).toBe(false);
     expect(existsSync(ours)).toBe(false);
-    // Kept: the branch, unmerged work, a live child's worktree, Chrome's folder.
+    // Kept: both branches (the unmerged one with its commit), a live child's worktree, Chrome's folder.
     expect(g(repo, 'branch', '--list', merged.branch)).toContain(merged.branch);
-    for (const p of [unmerged.path, live.path, chrome]) expect(existsSync(p)).toBe(true);
+    expect(g(repo, 'log', '-1', '--format=%s', unmerged.branch)).toBe('work');
+    for (const p of [live.path, chrome]) expect(existsSync(p)).toBe(true);
+    expect(existsSync(unmerged.path)).toBe(false);
     const s = await store.readSuperState(root);
     expect(s.children.a.worktree).toBeUndefined();
-    expect(s.children.b.worktree).toBe(unmerged.path);
+    expect(s.children.b.worktree).toBeUndefined();
+    // K5: a removal deletes the worktree from the record, never the branch.
+    expect(s.children.a.branch).toBe(merged.branch);
+    expect(s.children.b.branch).toBe(unmerged.branch);
   });
 });
 

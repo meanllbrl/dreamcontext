@@ -126,6 +126,62 @@ export function childDefaultEffort(mode: string): ModelEffort {
   return CHILD_DEFAULT_EFFORT[mode as keyof typeof CHILD_DEFAULT_EFFORT] ?? 'medium';
 }
 
+// ─── C10 (plan iyilesme-360 D19): a Super child's model and effort from the job's facts ──────────
+
+const POLICY_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const POLICY_RISKS = ['security', 'money', 'migration', 'contract'] as const;
+export type PolicyRisk = typeof POLICY_RISKS[number];
+const TR_FOLD: Record<string, string> = { ı: 'i', ç: 'c', ş: 's', ğ: 'g', ü: 'u', ö: 'o', İ: 'i' };
+const foldTr = (s: string): string => s.toLocaleLowerCase('tr').replace(/[ıçşğüöİ]/g, (c) => TR_FOLD[c] ?? c);
+/** His words name Fable. */
+export const FABLE_WORD_RE = /(?<![a-z0-9])fable(?![a-z0-9])/;
+/** His words ask for a higher effort. */
+/** His words ask for a higher effort: "derin düşün", "en yüksek", `xhigh`, or high/max/yüksek said of the
+ *  effort with any Turkish suffix or punctuation between ("max eforla", "effort'u high", "efor: high",
+ *  "yüksek efor ver"), never "high priority" or "max 3 dosya". Folded text. */
+export const EFFORT_WORD_RE = /(?<![a-z0-9])(?:derin dusun\w*|en yuksek|xhigh|(?:high|max|yuksek)[\s:=]+(?:effort|efor)\w*|(?:effort|efor)[\w'’]*[\s:=]+(?:high|max|yuksek))(?![a-z0-9])/;
+export const MODEL_REQUIRED_LINE = 'name the model from the table: `--model sonnet` for a small fix, merge, build or chore; `--model opus` for multi-file develop, a bug, analysis, security, money, migration or plans';
+
+export type PolicyAllowedBy = 'flags' | 'risk' | 'full' | 'words';
+/** `prior`: the mode and effort the child already runs, as the server's record holds them, and what
+ *  allowed that effort. A later change in the same mode that does not raise the effort keeps it. */
+export interface PolicyIn { tool?: string; mode: string; model?: string; effort?: string; risk?: PolicyRisk; full?: boolean; prior?: { mode: string; effort?: string; allowedBy?: PolicyAllowedBy } }
+export type PolicyVerdict =
+  | { ok: true; model: string; effort: string; risk?: PolicyRisk; allowedBy: PolicyAllowedBy; effortLowered?: true; skipped?: true }
+  | { ok: false; error: 'model_required' | 'model_refused' | 'effort_refused'; message: string };
+
+/**
+ * C10: may a Super child run with these settings? `words` are HIS words only (the job's origin and
+ * grants, plus his current turn's message on update/resume: S1). A Claude child needs a model; a
+ * Fable model needs his word; an effort above the mode's default needs `--risk`, `--full` or his
+ * word, or `prior` (the same mode at an effort at least this high). `lowerOnModeSwitch` (a mode change): an unallowed effort is lowered to the
+ * default and said, not refused. `modelKept`: an existing child with no recorded model keeps its
+ * tab's. Codex and Antigravity keep their own defaults. Pure.
+ */
+export function childPolicy(s: PolicyIn, words: readonly string[], opts: { lowerOnModeSwitch?: boolean; modelKept?: boolean } = {}): PolicyVerdict {
+  if (s.tool === 'codex' || s.tool === 'antigravity') return { ok: true, model: s.model ?? '', effort: s.effort ?? '', allowedBy: 'flags', skipped: true };
+  const model = (s.model ?? '').trim();
+  // A running or parked child whose model the record never learned keeps the one its tab runs (update, resume).
+  if (!model && !opts.modelKept) return { ok: false, error: 'model_required', message: MODEL_REQUIRED_LINE };
+  const said = words.map(foldTr);
+  if (/fable/i.test(model) && !said.some((w) => FABLE_WORD_RE.test(w))) {
+    return { ok: false, error: 'model_refused', message: 'Fable runs only when his own words name it: use `--model opus` (architecture or a unit that failed once on Opus: ask him)' };
+  }
+  const def = childDefaultEffort(s.mode);
+  const effort = s.effort && POLICY_EFFORTS.includes(s.effort) ? s.effort : def;
+  const above = POLICY_EFFORTS.indexOf(effort) > POLICY_EFFORTS.indexOf(def);
+  const risk = s.risk && (POLICY_RISKS as readonly string[]).includes(s.risk) ? s.risk : undefined;
+  if (!above) return { ok: true, model, effort, ...(risk ? { risk } : {}), allowedBy: 'flags' };
+  // What allowed the effort the child already runs still allows it: only a raise, or another mode, is checked again.
+  const prior = s.prior && s.prior.mode === s.mode && s.prior.effort ? POLICY_EFFORTS.indexOf(s.prior.effort) : -1;
+  if (prior >= 0 && POLICY_EFFORTS.indexOf(effort) <= prior) return { ok: true, model, effort, ...(risk ? { risk } : {}), allowedBy: s.prior?.allowedBy ?? 'flags' };
+  if (risk) return { ok: true, model, effort, risk, allowedBy: 'risk' };
+  if (s.full) return { ok: true, model, effort, allowedBy: 'full' };
+  if (said.some((w) => EFFORT_WORD_RE.test(w))) return { ok: true, model, effort, allowedBy: 'words' };
+  if (opts.lowerOnModeSwitch) return { ok: true, model, effort: def, allowedBy: 'flags', effortLowered: true };
+  return { ok: false, error: 'effort_refused', message: `\`--effort ${effort}\` is above ${s.mode}'s \`${def}\`: give \`--risk security|money|migration|contract\`, \`--full\`, or drop it (his own words asking for it count)` };
+}
+
 export function factForFamily(family: string): ModelFact | undefined {
   return MODEL_FACTS.find((m) => m.family === family);
 }

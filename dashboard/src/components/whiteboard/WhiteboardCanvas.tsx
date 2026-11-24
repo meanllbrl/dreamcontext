@@ -16,7 +16,8 @@ import { DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES, isCardColor, nearestWidgetS
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
 import { reconcileRemoteScene, sceneSignature } from './sceneSync';
-import { isPictureOf, type BoardPictures } from './boardPictures';
+import { isPictureOf, openViewCentre, type BoardPictures } from './boardPictures';
+import { readViewport } from './boardPlace';
 import { installPictureLod } from './pictureLod';
 import { useBoardPictureLoader } from './useBoardPictureLoader';
 import { WidgetPalette } from './WidgetPalette';
@@ -320,7 +321,10 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
         api.updateScene({ appState: { selectedElementIds } as Pick<AppState, 'selectedElementIds'>, captureUpdate: CaptureUpdateAction.NEVER });
       },
     });
-    loadPictures(initial.data.elements);
+    // Ordered from where the board will open (the saved view, else the fitted content), not from
+    // the canvas's view: it is still Excalidraw's default until its scene is set up.
+    const saved = vault ? readViewport(vault, boardSlug) : null;
+    loadPictures(initial.data.elements, openViewCentre(initial.data.elements, saved, window.innerWidth, window.innerHeight));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => {
     unsubscribers.current.forEach((off) => off());

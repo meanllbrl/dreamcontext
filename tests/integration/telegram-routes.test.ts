@@ -60,7 +60,7 @@ beforeEach(async () => {
   mkdirSync(join(root, 'state'), { recursive: true });
   tg = new FakeTelegram();
   tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
   await hub.start();
   setTelegramHub(hub);
   setOwnerKey(KEY);

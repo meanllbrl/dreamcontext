@@ -14,7 +14,7 @@
 import type { ApiClient } from '../../../api/client';
 import { RequestError } from '../../../api/client';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
-import { MEMBER_SUPER_PREFIX, SUPER_STATE_VERSION, parseSuperId, readSuperStateView, type SuperId, type SuperMemberSummary, type SuperStateView } from '../../../lib/superTypes';
+import { MEMBER_SUPER_PREFIX, SUPER_STATE_VERSION, missingMemberCards, parseSuperId, readSuperStateView, type SuperId, type SuperMemberSummary, type SuperStateView } from '../../../lib/superTypes';
 import type { AgentJob, Task, TaskAgentAction } from '../../../hooks/useTasks';
 import { jobWaitKey, type JobWaitKey } from '../../../lib/taskAgentJob';
 import { fetchRemoteStage } from './remoteStage';
@@ -282,6 +282,17 @@ export function stripRound(job: Pick<AgentJob, 'round' | 'cap' | 'step'> | null 
 }
 
 /**
+ * A member stage's record as the window draws it: the cards a newer build added that the record
+ * does not hold yet appear at their defaults (drawn, never saved; the next write of the record adds
+ * them for real with the same ids). Main's record and a complete one come back as they are.
+ */
+export function withMissingMemberCards(view: SuperStateView | null, isMember: boolean): SuperStateView | null {
+  if (!view || !isMember) return view;
+  const missing = missingMemberCards(view);
+  return missing.length === 0 ? view : { ...view, containers: [...view.containers, ...missing] };
+}
+
+/**
  * The stage of a member that has no record here (plan-r10 1e, 1f): its birth was refused (its
  * approval card, off) or is still on its way. The stage still draws, from the member's manifest and
  * summary: its head, its approval band, its project chip, the refusal line, its own three cards.
@@ -293,11 +304,9 @@ export function memberPlaceholderState(vault: string, saved?: SuperStateView | n
   // left them (K-AC3, G-AC1); a never-born one gets the defaults. Drawn only; a layout change to them
   // waits for the record.
   const kept = (saved?.containers ?? []).filter((c) => c.kind === 'member');
-  const cards = kept.length > 0 ? kept : [
-    { id: 'member-routines', kind: 'member', ref: 'routines', shape: 'square', size: 'large', place: 'float' },
-    { id: 'member-instructions', kind: 'member', ref: 'instructions', shape: 'square', place: 'float' },
-    { id: 'member-settings', kind: 'member', ref: 'settings', shape: 'square', place: 'others' },
-  ];
+  // The saved ones where the owner left them, then whichever are missing at their defaults (a card
+  // a newer build added, plan uye-karnesi C7).
+  const cards = [...kept, ...missingMemberCards({ containers: kept })];
   return readSuperStateView({
     v: SUPER_STATE_VERSION, vault, session: null, enabled: true,
     containers: cards, groups: [], queue: [], children: {}, notes: {}, away: { since: null, events: 0 },

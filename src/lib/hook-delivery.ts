@@ -266,13 +266,24 @@ export async function takeSessionStartPart(
  * `must` is every rule, reminder and owner-bound line; `gate` the closing "before you act" block;
  * the rest is what a turn can lose first, cheapest loss first: peers, recall, then patterns.
  */
-export type PromptBlockKind = 'must' | 'gate' | 'patterns' | 'recall' | 'peers';
+export type PromptBlockKind = 'must' | 'gate' | 'patterns' | 'recall' | 'peers' | 'pastwork';
 
 export interface PromptBlock {
   kind: PromptBlockKind;
   text: string;
   /** A cheaper complete render of this block (patterns: pointers instead of pasted bodies). */
   compact?: string;
+  /** Called once the turn's output is fitted, only when this block reached it whole (a "shown
+   *  once" marker must never be written for a block the fit dropped). */
+  onShown?: () => void;
+}
+
+/** Run each block's `onShown` whose text is in the fitted output (the one place a block counts as delivered). */
+export function markShownBlocks(input: readonly PromptBlock[], fit: FittedPrompt): void {
+  for (const b of input) {
+    if (!b.onShown || !b.text) continue;
+    if (fit.text.includes(b.text)) { try { b.onShown(); } catch { /* the next turn may deliver it again */ } }
+  }
 }
 
 export interface FittedPrompt {
@@ -314,6 +325,11 @@ export function fitPromptContext(input: readonly PromptBlock[], max: number = HO
   for (const b of blocks) {
     if (b.kind === 'patterns' && b.compact !== undefined) b.text = b.compact;
   }
+  if (joined(blocks).length <= max) return { text: joined(blocks), overflow: null };
+
+  // A member's past work has its own share (uye-gecmis-is C5): it goes before anything else is
+  // clipped, so it never pushes the recall block out. Its lines name `agents history --search`.
+  for (const b of blocks) if (b.kind === 'pastwork') b.text = '';
   if (joined(blocks).length <= max) return { text: joined(blocks), overflow: null };
 
   const clipped = new Set<PromptBlock>();
@@ -489,10 +505,57 @@ export function writePrevOwnerTurn(sessionId: string, text: string, home: string
   } catch { /* the next turn is judged without it */ }
 }
 
+// ─── A member's past work already in this context (uye-gecmis-is D10) ─────
+//
+// The same marker file, under their own prefix: `work:in:<trace id>` = delivered, and
+// `work:since:<ms>` = this context's last reset (SessionStart stamps it), so a job of THIS
+// conversation opened since then is already in context. Every other trace can arrive.
+
+const WORK_IN = 'work:in:';
+const WORK_SINCE = 'work:since:';
+
+export interface SessionWork { ids: string[]; since: number | null }
+
+export function sessionWork(sessionId: string, home: string = homedir()): SessionWork {
+  const out: SessionWork = { ids: [], since: null };
+  if (!sessionId.replace(/[^\w-]/g, '')) return out;
+  for (const k of readSeen(seenFile(sessionId, home))) {
+    if (k.startsWith(WORK_IN)) out.ids.push(k.slice(WORK_IN.length));
+    else if (k.startsWith(WORK_SINCE)) { const n = Number(k.slice(WORK_SINCE.length)); if (Number.isFinite(n)) out.since = n; }
+  }
+  return out;
+}
+
+/** Record the traces this turn delivered. Best effort: a repeat costs tokens, a loss costs the trace. */
+export function markSessionWork(sessionId: string, ids: readonly string[], home: string = homedir()): void {
+  if (!sessionId.replace(/[^\w-]/g, '') || ids.length === 0) return;
+  const file = seenFile(sessionId, home);
+  const seen = readSeen(file);
+  const have = new Set(seen);
+  const next = [...seen, ...ids.map((id) => WORK_IN + id).filter((k) => !have.has(k))];
+  try {
+    mkdirSync(join(home, '.dreamcontext', 'prompt-seen'), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ seen: next }), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, file);
+  } catch { /* the next turn may deliver it again */ }
+}
+
 /** Forget what this session was shown (SessionStart: startup, resume, clear, compact), and sweep old markers. */
-export function resetSessionOnce(sessionId: string, home: string = homedir()): void {
+export function resetSessionOnce(sessionId: string, home: string = homedir(), resetAt: number = Date.now(), opts: { memberChat?: boolean } = {}): void {
   const dir = join(home, '.dreamcontext', 'prompt-seen');
   try { if (sessionId.replace(/[^\w-]/g, '')) rmSync(seenFile(sessionId, home), { force: true }); } catch { /* best effort */ }
+  // This context's reset, for its past work (D10): always for a member's chat, else only when the
+  // folder already exists (a machine that never delivered anything keeps no marker).
+  try {
+    if (sessionId.replace(/[^\w-]/g, '') && (existsSync(dir) || opts.memberChat === true)) {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const file = seenFile(sessionId, home);
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ seen: [WORK_SINCE + resetAt] }), { encoding: 'utf-8', mode: 0o600 });
+      renameSync(tmp, file);
+    }
+  } catch { /* the own-conversation filter then holds back every job of this conversation */ }
   const now = Date.now();
   // The act markers (firstActInSession) survive a compaction; only old ones are swept.
   for (const d of [dir, join(home, '.dreamcontext', 'act-seen')]) {

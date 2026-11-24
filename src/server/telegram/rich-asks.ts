@@ -1,11 +1,13 @@
 /**
  * Asks keep their full richness on Telegram (plan M3, P3, P4, N3, T5).
  *
- * One ask = up to 4 questions, one message each, answered together:
- *  - option buttons; a multiSelect toggles (✓) and the message's buttons are re-drawn by the hub
- *    (the record is re-issued per tap, same binding); a single-select marks its pick the same way;
- *  - **Not ekle** under each question: the owner's next text is that question's note;
- *  - under the last question **Gönder** (single use) and **Belirsiz, tekrar sor**;
+ * One ask = up to 4 questions in ONE message (telegram-sade, Doc C3: one card was one bubble per
+ * question), each " (1/2)" when there are several, answered together:
+ *  - option buttons, labelled "1· Mor" when there are several questions; a multiSelect toggles (✓)
+ *    and the message's whole keyboard is re-drawn by the hub (the record is re-issued per tap,
+ *    same binding); a single-select marks its pick the same way;
+ *  - **Not ekle** per question: the owner's next text is that question's note;
+ *  - last **Gönder** (single use), **Belirsiz, tekrar sor** and **Zaten cevapladım**;
  *  - the `--show` / plan-approval cards first, as their own group, when pictures are allowed
  *    (a live Telegram turn or streaming, no secret pending; N3); then each question's option
  *    previews (markup), drawn by the server, each its OWN message right above its question,
@@ -40,7 +42,7 @@ import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
 import { cardItemKey, claimThisTurn, release, turnOf } from './sent-once.js';
 import { superMediaRoots } from './media-roots.js';
-import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
+import { LINES, type ActiveBinding, type EditFailure, type TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
 
@@ -61,7 +63,7 @@ interface RichAsk {
   questions: RichQuestion[];
   picks: Set<string>[];
   notes: string[];
-  /** message id per question, and its HTML text. */
+  /** The ask's one message: its id and HTML text. */
   messages: { messageId: number; html: string }[];
   done: boolean;
 }
@@ -101,20 +103,34 @@ export { withDrawingNotes };
 export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   const asks = new Map<string, RichAsk>();
 
-  function keyboard(a: RichAsk, qi: number): string[][] {
-    const q = a.questions[qi];
-    const rows = q.options.map((o) => [`${a.picks[qi].has(o.label) ? '✓ ' : ''}${o.label}`.slice(0, 60)]);
-    rows.push([a.notes[qi] ? '✎ Notu değiştir' : 'Not ekle']);
-    if (qi === a.questions.length - 1) rows.push(['Gönder', 'Belirsiz, tekrar sor'], ['Zaten cevapladım']);
-    return rows;
+  /** What each button of the ask's one keyboard does, in the order Telegram numbers them. */
+  type Act = { kind: 'option'; qi: number; oi: number } | { kind: 'note'; qi: number } | { kind: 'answer' | 'unclear' | 'already' };
+  function layout(a: RichAsk): { rows: string[][]; acts: Act[] } {
+    const many = a.questions.length > 1;
+    const rows: string[][] = [];
+    const acts: Act[] = [];
+    a.questions.forEach((q, qi) => {
+      const num = many ? `${qi + 1}· ` : '';
+      q.options.forEach((o, oi) => { rows.push([`${num}${a.picks[qi].has(o.label) ? '✓ ' : ''}${o.label}`.slice(0, 60)]); acts.push({ kind: 'option', qi, oi }); });
+      rows.push([`${num}${a.notes[qi] ? '✎ Notu değiştir' : 'Not ekle'}`]);
+      acts.push({ kind: 'note', qi });
+    });
+    rows.push(['Gönder', 'Belirsiz, tekrar sor'], ['Zaten cevapladım']);
+    acts.push({ kind: 'answer' }, { kind: 'unclear' }, { kind: 'already' });
+    return { rows, acts };
   }
 
-  async function sendQuestion(ab: ActiveBinding, a: RichAsk, qi: number, head: { title?: string; lead?: string }, drawn: ReadonlySet<string>): Promise<void> {
-    const q = a.questions[qi];
-    const n = a.questions.length > 1 ? ` (${qi + 1}/${a.questions.length})` : '';
-    const html = formatAskQuestionHtml(withDrawingNotes(q, qi, drawn), { ...head, suffix: n, footer: q.multiSelect ? '<i>Birden fazla seçebilirsin.</i>' : undefined });
-    const rec = await hub.sendButtons(ab, html, keyboard(a, qi), { kind: 'confirm', singleUse: false }, { rich: a.id, q: qi });
-    a.messages[qi] = { messageId: hub.buttonMessageId(rec) ?? 0, html };
+  /** The whole ask as one message: each question its own block, " (1/2)" on each when there are
+   *  several, as its buttons are numbered "1·". */
+  async function sendAsk(ab: ActiveBinding, a: RichAsk, head: { title?: string; lead?: string }, drawn: ReadonlySet<string>): Promise<void> {
+    const n = a.questions.length;
+    const max = Math.floor(3800 / n);
+    const html = a.questions.map((q, qi) => formatAskQuestionHtml(withDrawingNotes(q, qi, drawn), {
+      ...(qi === 0 ? head : {}), max, suffix: n > 1 ? ` (${qi + 1}/${n})` : undefined,
+      footer: q.multiSelect ? '<i>Birden fazla seçebilirsin.</i>' : undefined,
+    })).join('\n\n');
+    const rec = await hub.sendButtons(ab, html, layout(a).rows, { kind: 'confirm', singleUse: false }, { rich: a.id });
+    a.messages = [{ messageId: hub.buttonMessageId(rec) ?? 0, html }];
   }
 
   /** One option's drawing as PNG (owner 2026-11-09: "çizim gözükmüyor"), fitted so nothing is
@@ -250,14 +266,15 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   const drawnById = new Map<string, ReadonlySet<string>>();
   function drawnOf(id: string): ReadonlySet<string> | undefined { return drawnById.get(id); }
 
-  /** Sends a rich ask: its messages (id + HTML, one per question), or false when it does not fit
-   *  (the caller says "Mac'te seni bekliyor"). Throws when a question message did not go. */
-  async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; lead?: string; sessionId: string; itemId?: string }): Promise<false | SentRichAsk> {
+  /** Sends a rich ask: its one message (id + HTML), or false when it does not fit
+   *  (the caller says "Mac'te seni bekliyor"). Throws when the message did not go. */
+  async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; lead?: string; sessionId: string; itemId?: string; again?: boolean }): Promise<false | SentRichAsk> {
     if (!richAskFits(questions)) return false;
     // The ask's --show cards only in a live Telegram turn or streaming (N3); its option drawings
-    // always (they are part of the question), never while a secret is pending.
+    // always (they are part of the question), never while a secret is pending. A card sent again
+    // below (`again`, asks.ts) carries none: they went once, with its first copy.
     const secret = secretPending(opts.sessionId);
-    const cards = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secret;
+    const cards = !opts.again && !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secret;
     const misses: string[] = [];
     const fail = (err: unknown) => { misses.push(`pictures failed: ${redactSecrets(String((err as Error)?.message ?? err)).slice(0, 120)}`); };
     if (cards && opts.itemId) await sendShowCards(ab, opts.sessionId, opts.itemId).catch(fail);
@@ -278,15 +295,34 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const tries = { headless: true };
     const files = previewFiles(ab);
     try {
-      for (let i = 0; i < questions.length; i++) {
-        // Its drawings always (they are part of the question), never while a secret is pending.
-        if (!secret) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries, files).catch(fail);
-        await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
-      }
+      // The drawings always (they are part of the question), never while a secret is pending,
+      // all of them right above the ask's one message, in question order.
+      if (!secret && !opts.again) for (let i = 0; i < questions.length; i++) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries, files).catch(fail);
+      await sendAsk(ab, a, head, drawn);
     } finally {
       logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses, opts.sessionId, secret);
     }
     return { askId: a.id, messages: a.messages.slice() };
+  }
+
+  /** An ask sent before a restart, taken back (asks.ts adoptCopy): a fresh ask on the SAME one
+   *  message, its buttons bound again (no pick, no note: the earlier ones lived in memory). The
+   *  ask's id, or why it was not taken back: `gone` when it cannot be (a shape that does not fit,
+   *  a message Telegram no longer has), else a passing failure to try again; either way the ask
+   *  made here is dropped. */
+  async function adopt(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], messages: readonly { messageId: number; html: string }[]): Promise<string | EditFailure> {
+    const sane = Array.isArray(questions) && questions.length > 0 && questions.every((q) => typeof q?.question === 'string' && Array.isArray(q.options) && q.options.every((o) => typeof o?.label === 'string'));
+    if (!sane || !richAskFits(questions) || messages.length !== 1 || !(messages[0].messageId > 0)) return { gone: true };
+    const a: RichAsk = {
+      id: randomBytes(6).toString('hex'), key: ab.key, target, questions,
+      picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [{ messageId: messages[0].messageId, html: messages[0].html }], done: false,
+    };
+    asks.set(a.id, a);
+    if (asks.size > 200) asks.delete(asks.keys().next().value as string);
+    const r = await hub.rebindButtons(ab, a.messages[0].messageId, a.messages[0].html, layout(a).rows, { kind: 'confirm', singleUse: false }, { rich: a.id });
+    if (r === true) return a.id;
+    asks.delete(a.id);
+    return r;
   }
 
   /** Answered elsewhere: the ask's buttons answer nothing more. */
@@ -340,27 +376,26 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   /** A tap on a rich ask's message. */
   async function onButton(ab: ActiveBinding, data: Obj, idx: number, messageId: number): Promise<string | null> {
     const a = asks.get(String(data.rich));
-    const qi = Number(data.q);
-    if (!a || a.done || a.key !== ab.key || !Number.isInteger(qi) || !a.questions[qi]) return LINES.stale;
-    const q = a.questions[qi];
-    const n = q.options.length;
-    if (idx < n) {
-      const label = q.options[idx].label;
-      const set = a.picks[qi];
+    if (!a || a.done || a.key !== ab.key) return LINES.stale;
+    const act = Number.isInteger(idx) ? layout(a).acts[idx] : undefined;
+    if (!act) return LINES.stale;
+    if (act.kind === 'option') {
+      const q = a.questions[act.qi];
+      const label = q.options[act.oi].label;
+      const set = a.picks[act.qi];
       if (!q.multiSelect && set.has(label) && set.size === 1) return `✓ ${cleanTitle(label, 40)}`; // nothing to redraw
       if (q.multiSelect) { if (set.has(label)) set.delete(label); else set.add(label); } else { set.clear(); set.add(label); }
-      await redraw(ab, a, qi, messageId);
+      await redraw(ab, a, messageId);
       return `✓ ${cleanTitle(label, 40)}`;
     }
-    if (idx === n) {
-      deps.capture.set(ab.key, { kind: 'note', askId: a.id, qi, at: hub.now() });
-      await hub.notice(ab, 'wait', 'Notunu yaz (5 dk): sonraki mesajın bu sorunun notu olacak.');
+    if (act.kind === 'note') {
+      deps.capture.set(ab.key, { kind: 'note', askId: a.id, qi: act.qi, at: hub.now() });
+      const which = a.questions.length > 1 ? ` (${act.qi + 1}. soru)` : '';
+      await hub.notice(ab, 'wait', `Notunu yaz (5 dk): sonraki mesajın bu sorunun notu olacak${which}.`);
       return 'Not ekle';
     }
-    const isLast = qi === a.questions.length - 1;
-    if (!isLast || (idx !== n + 1 && idx !== n + 2 && idx !== n + 3)) return LINES.stale;
     a.done = true;
-    const out = (await submit(ab, a, idx === n + 3 ? 'already' : idx === n + 2 ? 'unclear' : 'answer').catch(() => null)) ?? 'Gönderilemedi, tekrar dene.';
+    const out = (await submit(ab, a, act.kind).catch(() => null)) ?? 'Gönderilemedi, tekrar dene.';
     // Only a delivered answer (or an ask that no longer exists) ends it: a failed send can be
     // tapped again with the same picks.
     if (out === LINES.stale || (typeof out === 'string' && out.startsWith('✓')) || (typeof out === 'string' && out.startsWith('↺'))) asks.delete(a.id);
@@ -368,9 +403,9 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return out;
   }
 
-  /** Re-draws a question's buttons after a toggle: a fresh record on the same message (P4). */
-  async function redraw(ab: ActiveBinding, a: RichAsk, qi: number, messageId: number): Promise<void> {
-    await hub.reissueButtons(ab, messageId, keyboard(a, qi), { kind: 'confirm', singleUse: false }, { rich: a.id, q: qi });
+  /** Re-draws the ask's whole keyboard after a toggle: a fresh record on the same message (P4). */
+  async function redraw(ab: ActiveBinding, a: RichAsk, messageId: number): Promise<void> {
+    await hub.reissueButtons(ab, messageId, layout(a).rows, { kind: 'confirm', singleUse: false }, { rich: a.id });
   }
 
   /** Is the request behind this ask still open where it lives? */
@@ -405,7 +440,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return true;
   }
 
-  return { send, close, onButton, takeNote, drawnOf, _asks: asks };
+  return { send, adopt, close, onButton, takeNote, drawnOf, _asks: asks };
 }
 
 export type RichAsks = ReturnType<typeof wireRichAsks>;

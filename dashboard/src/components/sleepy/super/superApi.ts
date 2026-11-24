@@ -45,7 +45,7 @@ export async function fetchSuperState(api: ApiClient, superId: SuperId = 'main')
 
 /** `POST /api/super/enable` — hand over: adopt these chats. Answers the session to resume or
  *  the one just minted, and the state after the write. */
-export async function enableSuper(api: ApiClient, body: { adopt: string[]; titles: Record<string, string> }, superId: SuperId = 'main'): Promise<{ session: string; state: SuperStateView | null; skipped: SkippedChat[] }> {
+export async function enableSuper(api: ApiClient, body: { adopt: string[]; titles: Record<string, string>; quiet?: true }, superId: SuperId = 'main'): Promise<{ session: string; state: SuperStateView | null; skipped: SkippedChat[] }> {
   api = forSuper(api, superId);
   const r = await api.post<{ session?: unknown; state?: unknown; skipped?: unknown }>('/super/enable', body);
   if (typeof r?.session !== 'string' || !r.session) throw new Error('the server named no Super Agent session');

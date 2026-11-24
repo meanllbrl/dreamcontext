@@ -466,7 +466,7 @@ async function main() {
     const panel = page.locator('.wbx');
     /** The board's ready signal: the editor is past its loading state and shows a canvas or its error card. */
     const boardReady = () => page.evaluate(() => !!document.querySelector('.wbp-editor')
-      && !document.querySelector('.wbp-loading')
+      && !document.querySelector('.wbp-editor .dc-skel')
       && (!!document.querySelector('.wbp-canvas .excalidraw') || !!document.querySelector('.wbp-card-state')));
     const waitBoardReady = (ms = 15000) => until(boardReady, ms);
     /** Make sure the Boards list is shown (it can be hidden; the toggle then sits top-left). */

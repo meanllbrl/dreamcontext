@@ -80,7 +80,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, endSlot, feed, sendVia, quietResume,
+  signInCommand, bare, agentBound, idlePlaceholder, emptyHero, superMember, readOnly, aboveComposer, endSlot, feed, sendVia, quietResume,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -104,6 +104,7 @@ function ChatPaneHostInner({
   /** See ChatPane's `agentBound`: the full pane, bound to one agent (the AI Team page). */
   agentBound?: boolean;
   idlePlaceholder?: string;
+  emptyHero?: import('./chat/Banners').EmptyHero;
   /** The member a phone mirror shows (ChatPane's `superMember`). */
   superMember?: string;
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
@@ -183,6 +184,7 @@ function ChatPaneHostInner({
     bare,
     agentBound,
     idlePlaceholder,
+    emptyHero,
     superMember,
     readOnly,
     aboveComposer,

@@ -10,7 +10,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { imageName, markdownImages, markdownToTelegramHtml, toTelegramMessages } from '../../src/lib/telegram/format.js';
+import { imageName, markdownFileLinks, markdownImages, markdownToTelegramHtml, toTelegramMessages } from '../../src/lib/telegram/format.js';
 import { classifyOutbound, mediaMagicOk, readOutbound } from '../../src/lib/telegram/files.js';
 import { TelegramTransport } from '../../src/lib/telegram/transport.js';
 import { sendAnswerBlocks } from '../../src/server/telegram/blocks.js';
@@ -223,6 +223,39 @@ describe('end to end: the Super answer with pictures reaches the fake bot', () =
       expect(why.body).toContain('Resim: uzak (gönderilmedi: proje klasörünün dışında');
       expect(why.body).toContain('Resim: sahte (gönderilmedi: resim, video ya da PDF değil');
       expect(why.body).toContain('Resim: yok (gönderilmedi: dosya bulunamadı');
+    } finally { bot.server.close(); }
+  });
+
+  it('a linked PDF goes as the document itself, its label the caption; its own line leaves the text (owner 2026-11-21)', async () => {
+    const bot = await fakeBot();
+    try {
+      put(join(ctxRoot, 'tmp', 'super', 'rapor.pdf'), '%PDF-1.4\n% test\n%%EOF\n');
+      const text = '**Hazır.**\n\n[Karşılama: değişenler](_dream_context/tmp/super/rapor.pdf)\n\n`[kod](x.pdf)` ve [site](https://example.com/a.pdf)';
+      expect(markdownFileLinks(text)).toEqual([{ alt: 'Karşılama: değişenler', src: '_dream_context/tmp/super/rapor.pdf', web: false }]);
+      const html = markdownToTelegramHtml(text, { blocks: 'hub' });
+      expect(html).not.toContain('Karşılama: değişenler');
+      expect(markdownToTelegramHtml('[Başlıklı](_dream_context/tmp/super/rapor.pdf "t")', { blocks: 'hub' })).not.toContain('Başlıklı');
+      // Mac mode (no hub to send it) keeps the label as words.
+      expect(markdownToTelegramHtml(text)).toContain('Karşılama: değişenler');
+      const transport = new TelegramTransport({ token: '123:abc', baseUrl: bot.url, timeoutMs: 5000 });
+      const ab = { key: 'k', target: 'super', scope: 'p', contextRoot: ctxRoot, binding: { chatId: 42 }, transport } as never;
+      const hub = { send: (_a: unknown, h: string) => transport.sendMessage(42, h), notice: async () => {}, reply: async () => {}, sendButtons: async () => '', rootOf: (a: { contextRoot: string | null }) => a.contextRoot } as never;
+      await sendAnswerBlocks(hub, ab, text, 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [] });
+      expect(bot.hits.map((h) => h.method)).toEqual(['sendDocument']);
+      expect(bot.hits[0].files).toEqual(['rapor.pdf']);
+      expect(bot.hits[0].body).toContain('Karşılama: değişenler');
+    } finally { bot.server.close(); }
+  });
+
+  it('a linked PDF that cannot go says which and why, never a silent drop', async () => {
+    const bot = await fakeBot();
+    try {
+      const transport = new TelegramTransport({ token: '123:abc', baseUrl: bot.url, timeoutMs: 5000 });
+      const ab = { key: 'k', target: 'super', scope: 'p', contextRoot: ctxRoot, binding: { chatId: 42 }, transport } as never;
+      const hub = { send: (_a: unknown, h: string) => transport.sendMessage(42, h), notice: async () => {}, reply: async () => {}, sendButtons: async () => '', rootOf: (a: { contextRoot: string | null }) => a.contextRoot } as never;
+      await sendAnswerBlocks(hub, ab, '[Yok olan](_dream_context/tmp/yok.pdf)', 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [] });
+      expect(bot.hits.map((h) => h.method)).toEqual(['sendMessage']);
+      expect(bot.hits[0].body).toContain('Dosya: Yok olan (gönderilmedi: dosya bulunamadı');
     } finally { bot.server.close(); }
   });
 

@@ -292,6 +292,28 @@ describe('prepareAgentChat', () => {
     expect(prep.briefing).not.toContain('WHITEBOARD CARD');
   });
 
+  it('the briefing carries the member\'s own active rules (YOUR RULES) and the --scope member directive; an undone rule is absent', () => {
+    makeAgent({ whiteboard: null, learning: true });
+    const at = '2026-11-21T09:00:00.000Z';
+    const rec = (id: string, status: string, headline: string) => ({
+      id, scope: 'member', member: 'board-pilot', created: { at, by: 'agent', person: '' },
+      events: [{ eid: `e-${id}`, at, op: 'create', by: 'agent', conversation: 'c', status, headline, text: headline,
+        quotes: [{ text: 'his words', turn: 't1', via: 'composer', occasion: 'o1' }] }],
+    });
+    mkdirSync(join(contextRoot, 'agents'), { recursive: true });
+    writeFileSync(join(contextRoot, 'agents', 'board-pilot.rules.json'), JSON.stringify({ version: 1, rules: [
+      rec('rmemberaaa', 'active', 'Answer in Turkish always'),
+      rec('rmemberbbb', 'undone', 'Never use tables'),
+    ] }));
+    const prep = prepareAgentChat(contextRoot, 'board-pilot', home);
+    expect(prep.ok).toBe(true);
+    if (!prep.ok) return;
+    expect(prep.briefing).toContain('--- YOUR RULES');
+    expect(prep.briefing).toContain('Answer in Turkish always [rmemberaaa, yours]');
+    expect(prep.briefing).not.toContain('rmemberbbb');
+    expect(prep.briefing).toContain('--scope member');
+  });
+
   it('a home-board agent keeps its scope, and its card env names its home so the board rides every message', () => {
     makeAgent();
     const prep = prepareAgentChat(contextRoot, 'board-pilot', home);

@@ -224,9 +224,9 @@ describe('applySleepConfigPatch — the Sleep line', () => {
     if (!r.ok) throw new Error(`expected ok, got: ${r.error}`);
     return r;
   };
-  const ALL = ['sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-learn'];
+  const ALL = ['sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-learn'];
 
-  it('sets the line and marks all five specialists for re-injection', () => {
+  it('sets the line and marks all four specialists for re-injection', () => {
     const r = okP(applySleepConfigPatch({}, { model: 'claude-sonnet-5-5', effort: 'medium' }));
     expect(r.config.model).toBe('claude-sonnet-5-5');
     expect(r.config.effort).toBe('medium');
@@ -267,14 +267,14 @@ describe('applySleepConfigPatch — the Sleep line', () => {
   it('legacy: mixed pins stay pinned', () => {
     const mixed = Object.fromEntries(ALL.map((n, i) => [n, { model: 'claude-opus-5-5', effort: i === 0 ? 'high' : 'medium' }]));
     const r = okP(applySleepConfigPatch({ specialists: mixed as never }, { model: 'claude-sonnet-5-5' }));
-    expect(Object.keys(r.config.specialists ?? {})).toHaveLength(5);
+    expect(Object.keys(r.config.specialists ?? {})).toHaveLength(4);
   });
 
   it('legacy clearing runs only on the FIRST line write', () => {
     const r1 = okP(applySleepConfigPatch({}, { model: 'claude-sonnet-5-5', effort: 'low' }));
     const uniform = Object.fromEntries(ALL.map((n) => [n, { model: 'claude-opus-5-5', effort: 'medium' }]));
     const r2 = okP(applySleepConfigPatch({ ...r1.config, specialists: uniform as never }, { model: 'claude-haiku-5-5' }));
-    expect(Object.keys(r2.config.specialists ?? {})).toHaveLength(5);
+    expect(Object.keys(r2.config.specialists ?? {})).toHaveLength(4);
   });
 
   it('refuses an unknown model or effort, and null resets the line', () => {

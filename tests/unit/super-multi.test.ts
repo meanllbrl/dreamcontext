@@ -216,7 +216,7 @@ describe('the token\'s super decides the record (403 both ways, 404 unknown)', (
 describe('caps: a member 2, main 15, the vault 15 together', () => {
   it('a member\'s third delegate is held in ITS pool', async () => {
     await writeMember('rota', { session: ROTA, children: youngChildren(2, 'rc') });
-    const r = await verb(tokenFor(ROTA, 'm:rota'), 'delegate', { prompt: 'plan the Friday routes', brief: 'Friday routes' });
+    const r = await verb(tokenFor(ROTA, 'm:rota'), 'delegate', { model: 'sonnet', prompt: 'plan the Friday routes', brief: 'Friday routes' });
     expect(r.status).toBe(409);
     expect(r.json).toMatchObject({ error: 'held', held: true, live: 2, max: 2, reason: 'cap', kept: true });
     const m = await readSuperState(root, 'm:rota');
@@ -227,10 +227,10 @@ describe('caps: a member 2, main 15, the vault 15 together', () => {
   it('the vault-wide ceiling binds main and members together (a young unregistered child counts)', async () => {
     writeMain({ children: youngChildren(14, 'mc') });
     await writeMember('rota', { session: ROTA, children: youngChildren(1, 'rc') });
-    const m = await verb(tokenFor(ROTA, 'm:rota'), 'delegate', { prompt: 'one more route', brief: 'route' });
+    const m = await verb(tokenFor(ROTA, 'm:rota'), 'delegate', { model: 'sonnet', prompt: 'one more route', brief: 'route' });
     expect(m.status).toBe(409);
     expect(m.json).toMatchObject({ error: 'held', reason: 'vault_cap', live: 15, max: 15 });
-    const main = await verb(tokenFor(MAIN), 'delegate', { prompt: 'one more job', brief: 'job' });
+    const main = await verb(tokenFor(MAIN), 'delegate', { model: 'sonnet', prompt: 'one more job', brief: 'job' });
     expect(main.status).toBe(409);
     expect(main.json).toMatchObject({ error: 'held', reason: 'vault_cap', live: 15, max: 15 });
   });
@@ -278,8 +278,8 @@ describe('who may run which team verb', () => {
 
   it('`--for` names the owner or an open request; main has no `--for`', async () => {
     await writeMember('rota', { queue: [{ id: 'q-abc-0000000a', sessionId: ROTA, kind: 'request', state: 'pending', createdAt: 1, text: 'plan Friday' }] });
-    expect((await verb(tokenFor(MAIN), 'delegate', { prompt: 'x', for: 'owner' })).status).toBe(400);
-    expect((await verb(tokenFor(ROTA, 'm:rota'), 'delegate', { prompt: 'x', for: 'q-nope-0000000b' })).status).toBe(404);
+    expect((await verb(tokenFor(MAIN), 'delegate', { model: 'sonnet', prompt: 'x', for: 'owner' })).status).toBe(400);
+    expect((await verb(tokenFor(ROTA, 'm:rota'), 'delegate', { model: 'sonnet', prompt: 'x', for: 'q-nope-0000000b' })).status).toBe(404);
   });
 });
 

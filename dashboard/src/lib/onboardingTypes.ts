@@ -98,6 +98,8 @@ export interface InstallRunStatus {
   awaiting?: AwaitingKind | null;
   progress?: { received: number; total: number | null };
   deviceCode?: DeviceCode;
+  /** `git-install` ended without Git (C11): Apple could not download it, or the window closed. */
+  gitMissing?: 'download-failed' | 'closed';
 }
 
 /** `POST /api/onboarding/fix/cancel` → 200. */

@@ -186,6 +186,37 @@ export function isServerTurnText(text: string): boolean {
   const words = text.trimStart();
   return SERVER_TURNS.some((p) => words.startsWith(p));
 }
+/**
+ * The openings of every text the server or the bridge writes into a member conversation on its
+ * own (plan uye-gecmis-is D3): reset, limit and sign-in continues, the app-restart notes, the card
+ * overflow note, the card feedback note, the card receipts, the bridge's Stop-hook turn and the Super's notes to a running
+ * job. Mirrored, not imported (this module is a leaf): `server-frame-drift.test.ts` checks every
+ * constant it stands for.
+ */
+export const SERVER_CONTINUATION_OPENINGS = [
+  'The usage limit that stopped this chat has reset.',
+  '[dreamcontext] The app was restarted while you were',
+  '[server] ',
+  '[secret submitted',
+  'Checklist: ',
+  'MCP connected: ',
+  'MCP skipped: ',
+  'Stop hook feedback:',
+  '[super answer]',
+  '[super owed]',
+  '[super recap]',
+  '[super handover]',
+  '[super fresh]',
+  '<dreamcontext-card-feedback>',
+  '<super-undelivered>',
+] as const;
+
+/** A text the server wrote by itself into a running conversation: it continues the open job,
+ *  never opens one (work-trace.ts `classifyUserEntry`). */
+export function isServerContinuationText(text: string): boolean {
+  const words = text.trimStart();
+  return isServerTurnText(words) || SERVER_CONTINUATION_OPENINGS.some((p) => words.startsWith(p));
+}
 /** The app's own task brief (dashboard agentPrompt.ts): `isAgentRun`'s role check does not see it. */
 export const APP_BRIEF_OPENINGS = ['You are picking up the task'];
 /** Every `super delegate` brief opens with one of these (routes/super.ts `delegateJob`). */

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { heavyRepoDir } from './builder-tools.js';
 import type { LanePick } from './run-lane.js';
 
@@ -209,8 +209,36 @@ export function wholeSuiteArgs(args: string): string | null {
   return null;
 }
 
+/** What makes a script a browser run: it loads a browser driver (plan sirket-yavaslik D7). */
+export const BROWSER_IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"](?:playwright(?:-core)?|@playwright\/test|puppeteer(?:-core)?)(?:\/[^'"]*)?['"]/;
+const MAX_SCRIPT_READ_BYTES = 256 * 1024;
+/** `node|tsx|bun <file>`: the file a runtime is asked to run, after its flags. */
+const SCRIPT_RUN = /^(?:npx\s+(?:--yes\s+)?|(?:pnpm|yarn)\s+(?:exec\s+|dlx\s+)?|bunx\s+)?(?:node|tsx|ts-node|bun)\s+((?:-\S+\s+)*)(['"]?)([^\s'"]+\.(?:m?[jt]s|c[jt]s|[jt]sx))\2(?=$|\s)/;
+/** A runtime fed inline code: `node -e`, `--eval`, `--input-type`, stdin or a heredoc. */
+const INLINE_RUN = /(?:^|[\s;&|(])(?:node|tsx|bun)\s+(?:[^\n]*\s)?(?:-e|-p|--eval|--print|--input-type(?:=\S+)?|-)(?=\s|$)|(?:^|[\s;&|(])(?:node|tsx|bun)\b[^\n]*<</;
+
+/**
+ * Does this script load a browser driver? A plain file only, never through a symlink, and at most
+ * {@link MAX_SCRIPT_READ_BYTES}; one that cannot be read is no browser (contract C7).
+ */
+export function scriptLoadsBrowser(path: string, cwd: string = process.cwd()): boolean {
+  const full = isAbsolute(path) ? path : resolve(cwd, path);
+  try {
+    const st = lstatSync(full);
+    if (!st.isFile() || st.size > MAX_SCRIPT_READ_BYTES) return false;
+    return BROWSER_IMPORT.test(readFileSync(full, 'utf-8'));
+  } catch {
+    return false;
+  }
+}
+
+/** A runtime given inline code that loads a browser driver, heredoc bodies included. */
+export function inlineBrowserRun(command: string): boolean {
+  return INLINE_RUN.test(command) && BROWSER_IMPORT.test(command);
+}
+
 /** One shell command's kind and identity, or null when it is not a heavy step at all. */
-function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep | null {
+function stepOfSegment(raw: string, scripts: Record<string, string>, cwd?: string): HeavyStep | null {
   const s = raw.trim().replace(/^[({]\s*/, '').replace(ENV_PREFIX, '').replace(WRAPPER, '').replace(REDIRECT, ' ').trim();
   const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)(.*)$/.exec(s);
   // What the script really runs decides: `verify:sleep-debt` here is vitest, not a browser.
@@ -231,6 +259,11 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
     return { kind: 'browser', target, ...(target === 'scripts/verify/look.mjs' && !/\s--build\b/.test(s) ? { scoped: 1 } : {}) };
   }
   if (/^(?:npx\s+)?playwright\s+test\b/.test(s)) return { kind: 'browser', target: 'playwright' };
+  const cli = /^(?:npx\s+(?:--yes\s+)?)?playwright\s+(screenshot|pdf|open|codegen)\b/.exec(s);
+  if (cli) return { kind: 'browser', target: `playwright ${cli[1]}` };
+  // Any node script that loads a browser driver is a browser run, wherever it was written.
+  const script = SCRIPT_RUN.exec(s);
+  if (script && !/(?:^|\s)(?:--check|-c)(?:\s|$)/.test(script[1]) && scriptLoadsBrowser(script[3], cwd)) return { kind: 'browser', target: script[3] };
   if (npm && /^build(?::\S+)?$/.test(npm[1])) return { kind: 'build', target: npm[1] };
   const bundler = /^(?:npx\s+)?(tsup|vite\s+build)\b/.exec(s);
   if (bundler) return { kind: 'build', target: bundler[1] };
@@ -298,12 +331,12 @@ export function shellSegments(raw: string): string[] {
 const RANK: readonly HeavyKind[] = ['browser', 'build', 'suite', 'check'];
 
 /** A command line's heaviest step, or null when it holds none. */
-export function heavyStep(command: string, scripts: Record<string, string> = {}): HeavyStep | null {
-  return heaviest(shellSegments(command), scripts);
+export function heavyStep(command: string, scripts: Record<string, string> = {}, cwd?: string): HeavyStep | null {
+  return heaviest(shellSegments(command), scripts, cwd) ?? (inlineBrowserRun(command) ? { kind: 'browser', target: 'inline browser script' } : null);
 }
 
-function heaviest(segments: string[], scripts: Record<string, string>): HeavyStep | null {
-  const steps = segments.map((s) => stepOfSegment(s, scripts)).filter((k): k is HeavyStep => k !== null);
+function heaviest(segments: string[], scripts: Record<string, string>, cwd?: string): HeavyStep | null {
+  const steps = segments.map((s) => stepOfSegment(s, scripts, cwd)).filter((k): k is HeavyStep => k !== null);
   for (const kind of RANK) {
     const step = steps.find((x) => x.kind === kind);
     if (step) return step;
@@ -349,13 +382,59 @@ export function suiteInCommand(command: string, scripts: Record<string, string> 
 }
 
 /** A command the agent ran straight past the lock: a heavy step outside `builder heavy`. */
-export function directHeavy(command: string): HeavyKind | null {
+export function directHeavy(command: string, cwd?: string): HeavyKind | null {
   const direct = shellSegments(command).filter((s) => !/^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+builder\s/.test(s));
-  return heaviest(direct, {})?.kind ?? null;
+  const step = heaviest(direct, {}, cwd);
+  if (step) return step.kind;
+  // Inline code is read off the whole line (a heredoc body is dropped from the segments), unless
+  // the line hands it to the lock itself.
+  return inlineBrowserRun(command) && !/(?:^|[\s;&|(])(?:npx\s+)?dreamcontext\s+builder\s+heavy\b/.test(command) ? 'browser' : null;
+}
+
+// ─── CI waits (plan sirket-yavaslik D5, D6) ─────────────────────────────────────────────────
+
+/**
+ * A foreground CI watch that should be `dreamcontext ci wait`: `gh run watch`, `gh pr checks
+ * --watch`, or a shell loop that polls `gh run`. Measured 2026-11-21 on the company Mac: 8 of these
+ * hit the tool's 600 s ceiling in a day. Returns the shape it saw, or null.
+ */
+export function ciWatchIn(command: string): string | null {
+  // Segment by segment, quotes whole: a commit message that names `gh run watch` runs nothing.
+  const segs = shellSegments(command).map((x) => x.replace(/^(?:(?:do|then|else|[({])\s+)+/, '').replace(ENV_PREFIX, '').replace(WRAPPER, '').trim());
+  if (segs.some((x) => /^gh\s+run\s+watch\b/.test(x))) return 'gh run watch';
+  if (segs.some((x) => /^gh\s+pr\s+checks\b.*\s--watch\b/.test(x))) return 'gh pr checks --watch';
+  // The loop's own condition is a poll too: `until gh run view 1 | grep -q completed; do ...`.
+  const polls = segs.some((x) => /^gh\s+(?:run\s+(?:view|list)|pr\s+checks|api\s+\S*actions\/runs)\b/.test(x.replace(/^(?:(?:while|until|if)\s+(?:!\s+)?)+/, '')));
+  const loops = segs.some((x) => /^(?:while|until|for)\b/.test(x) || /^sleep\s+\d/.test(x));
+  return polls && loops ? 'a gh polling loop' : null;
+}
+
+/** Any way of waiting on CI, `ci wait` included: a Super never waits on CI itself (D6). */
+export function ciWaitAny(command: string): string | null {
+  if (shellSegments(command).some((x) => /^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+ci\s+wait\b/.test(x.replace(/^(?:(?:do|then|[({])\s+)+/, '')))) return 'dreamcontext ci wait';
+  return ciWatchIn(command);
+}
+
+/** Any browser run, through the lock or not, `dreamcontext shots` included: a Super takes none (D6). */
+export function browserAny(command: string, cwd?: string): boolean {
+  if (shellSegments(command).some((x) => /^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+shots\b/.test(x.replace(/^(?:(?:do|then|[({])\s+)+/, '')))) return true;
+  if (heavyStep(command, {}, cwd)?.kind === 'browser') return true;
+  // Through the lock: what `builder heavy [opts] -- <cmd>` runs is the browser run.
+  return shellSegments(command).some((x) => {
+    const inner = /^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+builder\s+heavy\b.*?\s--\s+(.+)$/.exec(x.trim())?.[1];
+    if (!inner) return false;
+    const bare = /^'(.*)'$/s.exec(inner.trim())?.[1]?.replace(/'\\''/g, "'") ?? inner;
+    return heavyStep(bare, {}, cwd)?.kind === 'browser';
+  });
 }
 
 /** POSIX single quotes, the only form that keeps text inert when pasted back into a shell. */
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/** Any command that changes the working folder, in any position or spelling. */
+const CHDIR = /(?:^|[^\w./-])(?:cd|chdir|pushd|popd)(?![\w./-])/;
+/** Quotes and backslashes removed first: `c''d`, `c\d`, `"c"d` are all `cd` to the shell. */
+const changesFolder = (text: string): boolean => CHDIR.test(text) || CHDIR.test(text.replace(/['"\\]/g, ''));
 
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
@@ -368,9 +447,14 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
   const segments = shellSegments(command);
   const suite = segments.find((seg) => stepOfSegment(seg, {})?.kind === 'suite' && !stepOfSegment(seg, {})?.partial);
   if (suite) {
+    // The leading `cd <bare dir> &&` is where the suite runs: kept. ANY other folder change (mid-chain, `;`,
+    // quoted or computed folder, `{ cd }`, pushd/popd, `builtin cd`) cannot be kept in the suite form, and a
+    // red record belongs to the session folder: dropping it would run the suite in the wrong folder, so the
+    // form quotes the whole command instead. Over-matching (a `cd` word inside an argument) is safe: the whole form.
+    const cd = /^\s*(cd\s+[^\s'"$`;&|(){}\\]+)\s*&&/.exec(command)?.[1];
+    const rest = cd ? command.replace(/^\s*cd\s+[^\s'"$`;&|(){}\\]+\s*&&/, '') : command;
+    if (changesFolder(rest) || (ctx.redOpen && cd)) return `dreamcontext builder heavy -- ${shellQuote(command)}`;
     if (ctx.redOpen) return 'dreamcontext builder test --failed';
-    // A leading `cd <dir> &&` is where the suite runs: kept. A build in the chain runs first, alone.
-    const cd = /^\s*(cd\s+\S+)\s*&&/.exec(command)?.[1];
     const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
     const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
     const first = build ? `dreamcontext builder heavy -- ${shellQuote(`${cd ? `${cd} && ` : ''}${build}`)}, then ` : '';
@@ -381,6 +465,35 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
     return `dreamcontext builder heavy --tail ${tailed[2]} -- ${shellQuote(tailed[1].replace(/\s+2>&1$/, ''))}`;
   }
   return `dreamcontext builder heavy -- ${shellQuote(command)}`;
+}
+
+/**
+ * The first lines of a heavy-step refusal. The hook refuses the WHOLE command, never a part of
+ * it: a compound `append to file && npm test` writes nothing, and an agent that only reads
+ * "heavy step refused" can believe the first half ran (Eco benchmark pilot). So it says plainly
+ * that nothing ran, names the heavy part, and, when the command had other parts, says they did
+ * not run either and must be run on their own first (the suite form runs the suite alone).
+ */
+export function heavyRefusalLead(command: string, kind: HeavyKind, suggestion: string): string {
+  const segments = shellSegments(command);
+  const named = segments.find((seg) => stepOfSegment(seg, {})?.kind === kind) ?? segments.find((seg) => stepOfSegment(seg, {}) !== null) ?? command.trim();
+  const clip = (t: string, n = 80): string => (t.length > n ? `${t.slice(0, n - 3)}...` : t);
+  const lines = [
+    segments.length > 1
+      ? 'NOT RUN: NO part of this command ran: the whole command was refused, so nothing it writes or changes exists yet.'
+      : 'NOT RUN: nothing ran: the whole command was refused.',
+    `The heavy part is \`${clip(named)}\` (${kind}); heavy steps go through the lock and the repeat limit.`,
+  ];
+  if (segments.length > 1 || /\n/.test(command)) {
+    // Never classify the other parts (before or after, `&&` or `||`, a heredoc body, a `tee`):
+    // each guess was wrong for some real command. Either the form quotes the whole command, or
+    // the agent gets its own command back and re-issues what the form does not run.
+    const whole = suggestion.replace(/'\\''/g, "'").includes(command.trim());
+    lines.push(whole
+      ? 'The heavy form below runs the whole command, every part, so run it once and do not repeat any part yourself.'
+      : `Read the heavy form below: whatever it shows (a leading cd, a --tail, a build before a suite, the suite itself) it runs for you, so never repeat that. Anything in your command that it does NOT show did not run and never will unless you run it yourself, keeping the same order and conditions (&&, ||, ;). A cd the form shows applies only inside the form: a part you re-issue must run in that same folder yourself, e.g. (cd <dir> && <part>). Your command was: ${clip(command.trim(), 400)} [end of your command].`);
+  }
+  return lines.join(' ');
 }
 
 /** This repo's package.json scripts; none when it cannot be read. */
@@ -442,8 +555,26 @@ function writeBudget(path: string, file: BudgetFile, nowMs: number): void {
  * Runs this bucket may still start: the limit, plus one once a browser run or build came back
  * red. A suite gets no extra run: its reds are rerun by `builder test --failed`.
  */
-export function allowedRuns(kind: BudgetKind, bucket: BudgetBucket | undefined): number {
-  return BUDGET_LIMITS[kind] + (kind !== 'suite' && (bucket?.reds ?? 0) > 0 ? 1 : 0);
+export function allowedRuns(kind: BudgetKind, bucket: BudgetBucket | undefined, limit: number = BUDGET_LIMITS[kind]): number {
+  return limit + (kind !== 'suite' && (bucket?.reds ?? 0) > 0 ? 1 : 0);
+}
+
+/**
+ * A fast change takes ONE browser run per run, whatever it aims at (plan sirket-yavaslik D4c): the
+ * bucket is the worktree and its recorded base, never the target, the URL or the code tree, so a
+ * review fix does not open a new one. A red still earns one more, and `--because` its one way out.
+ */
+export const FAST_BROWSER_LIMIT = 1;
+export const FAST_BROWSER_TARGET = 'browser';
+
+/** The budget scope of a worktree with a recorded intent: its own, with no `builder open` needed. */
+export function intentScope(toplevel: string, base: string, tree: string | null): BudgetScope {
+  return { branch: `lane:${toplevel}`, run: base.slice(0, 12), phase: 'intent', tree };
+}
+
+/** The one bucket of a fast change's browser runs. */
+export function fastBrowserScope(toplevel: string, base: string): BudgetScope {
+  return { branch: `lane:${toplevel}`, run: base.slice(0, 12), phase: 'fast' };
 }
 
 function fresh(bucket: BudgetBucket | undefined, nowMs: number): BudgetBucket | undefined {
@@ -463,13 +594,16 @@ export const scopeKey = (s: BudgetScope, target: string): string => `${s.branch}
  * with nothing visible changed, and running a verify script the change wrote for itself.
  */
 export function refusal(file: BudgetFile, scope: BudgetScope, kind: BudgetKind, target: string, nowMs: number, lane?: LanePick): string | null {
+  const fast = kind === 'browser' && lane?.lane === 'fast';
+  if (fast && !lane.visible) return `this is a fast change (${lane.reason}) and nothing visible changed, so it takes no browser run`;
   if (kind === 'browser' && lane?.lane === 'light') {
     if (!lane.visible) return `this is a light change (${lane.reason}) and nothing visible changed, so it takes no browser run; if a criterion is about what the owner sees, say so with --because`;
     if (lane.customScripts.includes(target)) return `a light change (${lane.reason}) writes no verify script of its own (${target}); use the shared one: node scripts/verify/look.mjs`;
   }
   const bucket = fresh(file.buckets[scopeKey(scope, target)], nowMs);
-  const allowed = allowedRuns(kind, bucket);
+  const allowed = allowedRuns(kind, bucket, fast ? FAST_BROWSER_LIMIT : undefined);
   if ((bucket?.runs ?? 0) < allowed) return null;
+  if (fast) return `this is a fast change and it already took its ${bucket!.runs} browser run(s) (limit ${allowed}${bucket!.reds > 0 ? ', the extra run after a red included' : ''}): one screenshot proves a look change${bucket!.log ? `; its last red log: ${bucket!.log}` : ''}`;
   const where = scope.tree ? `on this exact code (${treeTag(scope.tree)})` : `in phase "${scope.phase}"`;
   return `${bucket!.runs} run(s) of ${target} already ${where} of ${scope.branch} (limit ${allowed}${bucket!.reds > 0 ? ', the extra run after a red included' : ''})${bucket!.log ? `; its last red log: ${bucket!.log}` : ''}`;
 }

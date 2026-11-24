@@ -86,4 +86,5 @@ export const GOAL_SKILL_OLD_ASSET_SHAS: Readonly<Record<string, readonly string[
 /** Retired core agents with no manifest record to prove them ours, by file name: an unedited copy matches one of these. */
 export const RETIRED_CORE_AGENT_SHAS: Readonly<Record<string, readonly string[]>> = {
   'review-coordinator.md': ['1da49fe302c8dad1946e432466b38755b7e619c49a29a549a16620c6899b999e'],
+  'sleep-migration.md': ['2fa7825091cd54c01e4bedac324a8f03d179f22393dc76e6abd15cda5aa2df6f', '765705ef80436939013771f794c74096fe59cdc2f50fbe67ca657cf007ae86e2', 'ea5eba88d944c2b1385cfc1c19b90c47e95cab3c69b8511a2decc049bae49e6d', '6f1c473a2f2ed9c93b88d4d8a586d9b4b66ff9a33e1bb6ca2e5c6175a6947002', 'dae8053f41e6afd715b113b17bdfc6500a8ed18e731763aa192d23b140c414b4', '38342331b9254cd8a1ebcde3e840a13d5c9419454e0ede8fc03b83f9fc90ec12', '30ce16302144eb17d1ed152faea48247ca8124a07a9d91c4865b8828d3a7393b', '043849c2cb8ec011739ed3836d87c080e087b19e11c0f8857b0a81bd68c4304f'],
 };

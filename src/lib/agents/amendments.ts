@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { AutomationError } from '../automations/types.js';
-import { readLocalJson, updateLocalJson } from '../local-store.js';
+import { readJsonAt, readLocalJson, updateJsonAt, updateLocalJson } from '../local-store.js';
+import { quoteCoversChange } from '../owner-quote.js';
+import { globalAgentHome, memberScope } from './scope.js';
 import { approveAutomation, checkApproval, manifestHash } from '../automations/registry.js';
 import { getRunTarget, readManifestParts, updateAutomation } from '../automations/store.js';
 import { assertOwned } from './owner.js';
@@ -89,7 +91,13 @@ export interface Amendment {
   /** The owner's words this change carries out (`--quote`), as given. */
   quote?: string;
   changes: AmendmentChange[];
+  /** His quoted words were typed in the conversation that made it and are about its lines (D8):
+   *  no daily ceiling counted it. */
+  onHisWord?: true;
   revertedAt?: string;
+  /** Who took it back, when it was not the owner (a member on his quoted word, D8): such a revert
+   *  is no owner hold. */
+  revertedBy?: MemberActor;
 }
 
 interface AmendmentFile {
@@ -114,10 +122,37 @@ function clean(raw: unknown): Amendment[] {
   return Array.isArray(raw) ? raw.filter((a): a is Amendment => !!a && typeof a === 'object' && typeof (a as Amendment).id === 'string') : [];
 }
 
-/** One member's amendments, newest first. Never throws. */
+/** A global member's one log, read by every project (D8): `~/.dreamcontext/agents/<slug>/amendments.json`. */
+export function globalAmendmentsPath(member: string, home?: string): string {
+  return join(globalAgentHome(member, home), 'amendments.json');
+}
+
+/** Is `member` the global agent in the project at `projectRoot` (no project member shadows it). */
+function isGlobalIn(projectRoot: string, member: string, home?: string): boolean {
+  try { return memberScope(join(projectRoot, '_dream_context'), member, home) === 'global'; } catch { return false; }
+}
+
+/** One member's amendments, newest first: a global member's log plus the rows older versions kept
+ *  in this project. Never throws. */
 export function listAmendments(projectRoot: string, member: string, home?: string): Amendment[] {
-  const file = readLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), home);
-  return clean(file.members?.[member]);
+  const local = clean(readLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), home).members?.[member]);
+  if (!isGlobalIn(projectRoot, member, home)) return local;
+  let shared: Amendment[] = [];
+  try { shared = clean(readJsonAt<AmendmentFile>(globalAmendmentsPath(member, home), EMPTY()).members?.[member]); } catch { shared = []; }
+  const seen = new Set(shared.map((a) => a.id));
+  return [...shared, ...local.filter((a) => !seen.has(a.id))].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
+
+/** Change a member's rows in the log they live in: a global member's own log, or this project's. */
+function updateMemberLog(projectRoot: string, member: string, home: string | undefined, mutate: (mine: Amendment[], all: AmendmentFile) => Amendment[], opts: { global?: boolean } = {}): void {
+  const global = opts.global ?? isGlobalIn(projectRoot, member, home);
+  const step = (cur: AmendmentFile): AmendmentFile => {
+    const members = { ...(cur.members ?? {}) };
+    members[member] = mutate(clean(members[member]), cur);
+    return { members };
+  };
+  if (global) updateJsonAt<AmendmentFile>(globalAmendmentsPath(member, home), EMPTY(), step);
+  else updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), step, home);
 }
 
 /** The comparison key of an instruction text, the same normalisation the approval hash applies. */
@@ -184,6 +219,10 @@ function holdsRule(line: string): boolean {
   return GUARD_LINE.test(line) || GUARD_LINE.test(line.toLocaleLowerCase('tr'));
 }
 
+/** The reasons of {@link amendmentRisks} that are about text taken out, not brought in: on his own
+ *  word (D8) and in a rule (D2) a removal is recoverable, so these never hold it. */
+export const REMOVAL_RISKS = /^(?:removing the whole text|replacing most of the text|changing or removing a line)/;
+
 /**
  * Why a change must go to the owner instead, one reason each; empty when it may go through.
  * A filter, not a proof: it stops what a payload usually needs, never what plain words can ask.
@@ -235,6 +274,9 @@ export interface AmendInput {
   self?: string | null;
   /** The owner's words this change carries out ("next time do it like this"), recorded with it. */
   quote?: string;
+  /** Where `quote` was typed, resolved by the caller through G1 (`resolveOwnerQuotes`): `here` = in
+   *  the conversation making this change (relays included). Absent = not resolved, so not proven. */
+  ownerQuote?: { here: boolean };
   /** Other identity fields written in the same change (a session's or an agent's `agents edit`):
    *  judged by `widensAuthority`, never by the text checks. */
   extra?: Omit<AgentIdentityPatch, 'prompt' | 'soul'>;
@@ -355,8 +397,6 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   const agent = getAgent(contextRoot, member, home);
   if (!agent) throw new AmendmentRefused('unknown_member', 404, `no AI Team member "${member}" in this project (\`dreamcontext agents list\`).`);
   const global = agent.scope === 'global';
-  // A global member runs in every project: one project's Super Agent does not reach all of them.
-  if (global && by === 'super') throw new AmendmentRefused('amend_global', 409, `"${member}" is a global agent, used by every project on this Mac: the owner edits it in AI Team.`);
   assertOwned({ owner: agent.owner }, agent.title || member);
 
   const changes: AmendmentChange[] = [];
@@ -374,6 +414,22 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   if (input.soul !== undefined) add('soul', agent.soul, normalizeSoul(input.soul));
   if (input.job !== undefined && input.routine) add('job', currentJob(contextRoot, member, input.routine), input.job.trim(), input.routine);
   if (changes.length === 0 && !hasExtra) throw new AmendmentRefused('amend_no_change', 409, 'nothing changes: the text is already what you sent.');
+
+  // D8: on his quoted word, typed here and about the lines it changes. A filter, not a proof: the
+  // risk screen below still stops a payload that repeats his words.
+  const onHisWord = !!quote && input.ownerQuote?.here === true && changes.length > 0
+    && changes.every((c) => quoteCoversChange(quote, c.before, c.after));
+  // A global member runs in every project: only the member itself changes it, on his word; one
+  // project's Super Agent, another member or a run never does (it relays to the member instead).
+  if (global && !(input.self === member && onHisWord && !hasExtra)) {
+    const why = input.self !== member
+      ? 'only that member itself changes it, on his words (tell it through `super team ask`), or the owner in AI Team'
+      : !quote ? 'it needs his words: pass --quote "<his exact words>" from this conversation'
+        : input.ownerQuote?.here !== true ? 'his quoted words were not typed in this conversation'
+          : hasExtra ? 'only its prompt and soul change on his words; the rest is his, in AI Team'
+            : 'his quoted words are not about the lines this changes';
+    throw new AmendmentRefused('amend_global', 409, `"${member}" is a global agent, used by every project on this Mac: ${why}.`);
+  }
 
   assertApprovedAsItStands(contextRoot, member, home);
 
@@ -399,7 +455,8 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
     : global && by === 'agent' ? ['global'] : [];
   // Made on this Mac, so approved as written (`localWriteStamps`): only a background process's risky
   // text waits for the card. `widened` stays on the trace row, for the owner to read.
-  const stamp = localWriteStamps(by, risks);
+  // A global member's change on his word: injection-shaped text waits for his one card, whoever wrote it.
+  const stamp = global ? risks.every((r) => REMOVAL_RISKS.test(r)) : localWriteStamps(by, risks);
   // `withRestamp` stamps only what was approved as it stood: a member never approved here waits too.
   const approvedBefore = approvedTargets(contextRoot, member, home).length > 0;
 
@@ -413,6 +470,7 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
     why: quote ? `${why} · “${quote}”` : why,
     changes,
     ...(quote ? { quote } : {}),
+    ...(onHisWord ? { onHisWord: true as const } : {}),
     ...(risks.length ? { risks } : {}),
     ...(widened.length ? { widened } : {}),
     ...(stamp && approvedBefore ? {} : { waits: true as const }),
@@ -422,30 +480,31 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   if (changes.length > 0) {
     const unattended = runsUnattended(contextRoot, member);
     // Inside the record's own lock, so two calls cannot both pass the ceiling.
-    updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), (cur) => {
-      const members = { ...(cur.members ?? {}) };
-      const mine = clean(members[member]);
+    updateMemberLog(projectRoot, member, home, (mineHere, cur) => {
+      const members = cur.members ?? {};
+      // A global member's hold reads its old per-project rows too.
+      const mine = global ? [...mineHere, ...listAmendments(projectRoot, member, home).filter((a) => !mineHere.some((m) => m.id === a.id))] : mineHere;
       const held = now.getTime() - AMENDMENT_LIMITS.revertHoldDays * DAY_MS;
       for (const c of changes) {
         const key = textKey(c.after);
-        const same = mine.filter((a) => a.revertedAt).flatMap((a) => a.changes.filter((p) => p.field === c.field && p.routine === c.routine).map((p) => ({ p, at: a.revertedAt as string })));
+        // Only HIS reverts hold a field: a member's own revert on his word is no hold.
+        const same = mine.filter((a) => a.revertedAt && (!a.revertedBy || a.revertedBy === 'owner')).flatMap((a) => a.changes.filter((p) => p.field === c.field && p.routine === c.routine).map((p) => ({ p, at: a.revertedAt as string })));
         if (same.some(({ p }) => textKey(p.after) === key)) throw new AmendmentRefused('owner_reverted', 409, `the owner took this exact ${c.field} back. Do not write it again; tell him what you saw.`);
         if (same.some(({ at }) => Date.parse(at) > held)) throw new AmendmentRefused('owner_reverted', 409, `the owner took a change to this ${c.field} back in the last ${AMENDMENT_LIMITS.revertHoldDays} days, so it is his for now. Tell him what you saw.`);
       }
       const since = now.getTime() - DAY_MS;
-      // The owner's own edits and created members never count against an agent's ceiling.
-      const recent = (list: Amendment[]) => list.filter((a) => Date.parse(a.at) > since && !a.created && a.by !== 'owner').length;
+      // The owner's own edits, created members and changes on his word never count against a ceiling.
+      const recent = (list: Amendment[]) => list.filter((a) => Date.parse(a.at) > since && !a.created && a.by !== 'owner' && !a.onHisWord).length;
       const ceiling = unattended ? AMENDMENT_LIMITS.perUnattendedMemberPerDay : AMENDMENT_LIMITS.perMemberPerDay;
-      if (recent(mine) >= ceiling) {
+      if (!onHisWord && recent(mine) >= ceiling) {
         throw new AmendmentRefused('amend_limit', 429, `"${member}" had ${ceiling} amendment${ceiling === 1 ? '' : 's'} in the last 24 hours${unattended ? ' (it runs unattended, so one is the ceiling)' : ''}. Leave it, or tell the owner.`);
       }
       const all = Object.values(members).reduce((n, list) => n + recent(clean(list)), 0);
-      if (all >= AMENDMENT_LIMITS.perProjectPerDay) {
+      if (!onHisWord && !global && all >= AMENDMENT_LIMITS.perProjectPerDay) {
         throw new AmendmentRefused('amend_limit', 429, `this project had ${AMENDMENT_LIMITS.perProjectPerDay} amendments in the last 24 hours. Tell the owner what is going on.`);
       }
-      members[member] = [entry, ...mine].slice(0, AMENDMENT_LIMITS.keptPerMember);
-      return { members };
-    }, home);
+      return [entry, ...mineHere].slice(0, AMENDMENT_LIMITS.keptPerMember);
+    }, { global });
   }
 
   try {
@@ -492,11 +551,7 @@ export function traceMemberCreate(
     ...(input.waits ? { waits: true as const } : {}),
   };
   try {
-    updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), (cur) => {
-      const members = { ...(cur.members ?? {}) };
-      members[input.member] = [entry, ...clean(members[input.member])].slice(0, AMENDMENT_LIMITS.keptPerMember);
-      return { members };
-    }, opts.home);
+    updateMemberLog(projectRoot, input.member, opts.home, (mine) => [entry, ...mine].slice(0, AMENDMENT_LIMITS.keptPerMember));
   } catch { /* the member exists; its trace is best-effort */ }
   return entry;
 }
@@ -534,11 +589,7 @@ export function ownerEdit(
     ...(risks.length ? { risks } : {}),
   };
   try {
-    updateLocalJson<AmendmentFile>(dirname(contextRoot), FILE, EMPTY(), (cur) => {
-      const members = { ...(cur.members ?? {}) };
-      members[member] = [entry, ...clean(members[member])].slice(0, AMENDMENT_LIMITS.keptPerMember);
-      return { members };
-    }, opts.home);
+    updateMemberLog(dirname(contextRoot), member, opts.home, (mine) => [entry, ...mine].slice(0, AMENDMENT_LIMITS.keptPerMember));
   } catch { /* the edit landed; its trace is best-effort */ }
   return updated;
 }
@@ -555,14 +606,9 @@ function keepWhatLanded(contextRoot: string, member: string, entry: Amendment, h
     return now !== null && textKey(now) === textKey(c.after);
   });
   try {
-    updateLocalJson<AmendmentFile>(dirname(contextRoot), FILE, EMPTY(), (cur) => {
-      const members = { ...(cur.members ?? {}) };
-      const list = clean(members[member]);
-      members[member] = landed.length === 0
-        ? list.filter((a) => a.id !== entry.id)
-        : list.map((a) => (a.id === entry.id ? { ...a, changes: landed } : a));
-      return { members };
-    }, home);
+    updateMemberLog(dirname(contextRoot), member, home, (list) => (landed.length === 0
+      ? list.filter((a) => a.id !== entry.id)
+      : list.map((a) => (a.id === entry.id ? { ...a, changes: landed } : a))));
   } catch {
     // the record keeps every change it named: a revert skips what never landed
   }
@@ -583,7 +629,7 @@ function currentText(contextRoot: string, member: string, c: AmendmentChange, ho
  * CLI outside a session). The member stays as approved as it was. Refused when the text moved on
  * since: reverting would silently throw away the later change, so that one goes first.
  */
-export function revertAmendment(contextRoot: string, member: string, id: string, opts: AmendOptions = {}): Amendment {
+export function revertAmendment(contextRoot: string, member: string, id: string, opts: AmendOptions & { by?: MemberActor } = {}): Amendment {
   const { home } = opts;
   const now = opts.now ?? new Date();
   const projectRoot = dirname(contextRoot);
@@ -604,14 +650,21 @@ export function revertAmendment(contextRoot: string, member: string, id: string,
   }
   applyChanges(contextRoot, member, todo.map((c) => ({ field: c.field, text: c.before, ...(c.routine ? { routine: c.routine } : {}) })), home, now);
   let done = entry;
+  const mark = (list: Amendment[]): Amendment[] => list.map((a) => {
+    if (a.id !== id) return a;
+    done = { ...a, revertedAt: now.toISOString(), ...(opts.by && opts.by !== 'owner' ? { revertedBy: opts.by } : {}) };
+    return done;
+  });
+  // The row lives in one log: a global member's own, or (older rows) this project's. Both are marked.
   updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), (cur) => {
-    const members = { ...(cur.members ?? {}) };
-    members[member] = clean(members[member]).map((a) => {
-      if (a.id !== id) return a;
-      done = { ...a, revertedAt: now.toISOString() };
-      return done;
-    });
-    return { members };
+    if (!clean(cur.members?.[member]).some((a) => a.id === id)) return cur;
+    return { members: { ...(cur.members ?? {}), [member]: mark(clean(cur.members?.[member])) } };
   }, home);
+  if (isGlobalIn(projectRoot, member, home)) {
+    updateJsonAt<AmendmentFile>(globalAmendmentsPath(member, home), EMPTY(), (cur) => {
+      if (!clean(cur.members?.[member]).some((a) => a.id === id)) return cur;
+      return { members: { ...(cur.members ?? {}), [member]: mark(clean(cur.members?.[member])) } };
+    });
+  }
   return done;
 }

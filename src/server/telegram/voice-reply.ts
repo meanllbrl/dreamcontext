@@ -103,7 +103,7 @@ async function speakAndSend(
   }
   try {
     await ab.transport.sendVoice(chatId, { name: 'ozet.ogg', data: r.ogg, contentType: 'audio/ogg' }, {
-      caption: voiceCaptionHtml(v.title),
+      caption: voiceCaptionHtml(v),
       duration: Math.max(1, Math.ceil(r.seconds)),
       ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
     });

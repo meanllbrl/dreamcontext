@@ -205,3 +205,51 @@ describe('the shell commands', () => {
     expect(rs).toContain('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
   });
 });
+
+describe('Auto send (take mode): on sends, off pastes (owner, 2026-11-22)', () => {
+  it('the menu lists the take-mode row where it is available, after the steps and before spoken replies and settings', () => {
+    const items = micMenuItems({ steps: ['permission'], takeModeAvailable: true, readAloudAvailable: true, readAloudOn: false, settingsAvailable: true });
+    expect(items.map((i) => i.kind)).toEqual(['step', 'take-mode', 'read-aloud', 'settings']);
+    // The phone lists nothing: still the plain mic, no caret.
+    expect(micMenuItems({ steps: [], readAloudAvailable: false, readAloudOn: false, settingsAvailable: false })).toEqual([]);
+  });
+
+  it('the mode defaults to send, changes, and tells its listeners', async () => {
+    const m = await import('../../dashboard/src/lib/voice/takeMode');
+    expect(m.takeMode()).toBe('send');
+    const seen: string[] = [];
+    const off = m.onTakeMode((x) => seen.push(x));
+    m.setTakeMode('paste');
+    expect(m.takeMode()).toBe('paste');
+    m.setTakeMode('send');
+    off();
+    expect(seen).toEqual(['paste', 'send']);
+  });
+
+  it('the composer pastes at the caret and never submits in paste mode; the default path still submits', () => {
+    const c = read('dashboard/src/components/sleepy/chat/Composer.tsx');
+    const paste = c.slice(c.indexOf("takeModeRef.current === 'paste'"), c.indexOf('// Chips in the box'));
+    expect(paste).toContain('insertTakeAt(typed, lastCaretRef.current, text)');
+    expect(paste).not.toContain('setVoiceSubmitTick');
+    expect(c.match(/setVoiceSubmitTick\(\(n\) => n \+ 1\)/g)?.length).toBe(2);
+  });
+
+  it('both languages carry the strings, no em dash', () => {
+    const i = read('dashboard/src/context/I18nContext.tsx');
+    for (const k of ['micmenu.autosend', 'micmenu.autosend.d', 'voice.rec.send', 'voice.rec.paste']) {
+      expect(i.split(`'${k}':`).length - 1, k).toBe(2);
+    }
+    expect(/'(micmenu\.autosend|voice\.rec\.(send|paste))[^']*': '[^']*\u2014/.test(i)).toBe(false);
+  });
+});
+
+describe('Auto send row: the switch is the inverse of paste, the stored value is unchanged', () => {
+  it('on means send (the default), off means paste; an old stored "paste" reads as Auto send off', () => {
+    const m = read('dashboard/src/components/sleepy/chat/MicSplit.tsx');
+    expect(m).toContain("aria-checked={takeMode === 'send'}");
+    expect(m).toContain("onTakeMode(takeMode === 'send' ? 'paste' : 'send')");
+    const t = read('dashboard/src/lib/voice/takeMode.ts');
+    expect(t).toContain("const KEY = 'dreamcontext-take-mode'");
+    expect(t).toContain("v === 'paste' ? 'paste' : 'send'");
+  });
+});

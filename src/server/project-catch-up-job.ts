@@ -4,7 +4,8 @@
 // for an `npm i -g` under a running app. With every project current a check reads N small
 // configs and spawns nothing; a failed project is retried at the next server start, not here.
 
-import { basename, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { checkMigrationDue } from '../lib/super/migration-event.js';
 import { activityOf, listChats } from '../lib/assistant/chat-registry.js';
 import { devOrCachedCli, diskBusyReason, runProjectCatchUp, type CatchUpDeps } from '../lib/project-catch-up.js';
 import { selfUpdateLockHeld } from '../lib/version-check.js';
@@ -73,6 +74,8 @@ export function startProjectCatchUpJob(gate: CatchUpJobGate = {}): (() => void) 
     busy: (path, name) => (projectChatBusy(path, name) ? 'an agent session is working' : diskBusyReason(path, Date.now())),
     blocked: () => getUpgradeRun()?.state === 'running' || selfUpdateLockHeld(),
     stopped: () => stopped,
+    // After an update: agent migration work waiting in that project reaches its Super.
+    onUpdated: (path) => { void checkMigrationDue(join(path, '_dream_context')); },
     ...gate.deps,
   };
 

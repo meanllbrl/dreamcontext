@@ -395,3 +395,29 @@ describe('B2: every element with one job (owner 2026-11-14)', () => {
     for (const html of [a, b]) expect(splitTelegramHtml(html)).toHaveLength(1);
   });
 });
+
+describe('local links never reach the phone as markup', () => {
+  it('a link to a local file shows its label only', () => {
+    const md = 'Hazır: [Super ekranı v3 videosu](_dream_context/tmp/super/super-jakob-v3/super-jakob-v3-tg.mp4) aşağıda.';
+    const out = markdownToTelegramHtml(md, { blocks: 'hub' });
+    expect(out).toBe('Hazır: Super ekranı v3 videosu aşağıda.');
+    expect(out).not.toContain('](');
+    expect(out).not.toContain('_dream_context/');
+  });
+  it('absolute, file: and spaced paths too', () => {
+    for (const t of ['/Users/x/a.png', 'file:///Users/x/a.png', '<docs/my file.pdf>', '#bolum']) {
+      expect(markdownToTelegramHtml(`[Şu dosya](${t})`)).toBe('Şu dosya');
+    }
+  });
+  it('an https link stays a link', () => {
+    expect(markdownToTelegramHtml('[site](https://example.com/a)')).toBe('<a href="https://example.com/a">site</a>');
+  });
+  it('a local picture leaks no path in the text', () => {
+    const out = markdownToTelegramHtml('Bak ![ekran](tmp/ekran.png) şuna', { blocks: 'hub' });
+    expect(out).not.toContain('tmp/ekran.png');
+    expect(out).not.toContain('](');
+  });
+  it('a link written in backticks stays as written', () => {
+    expect(markdownToTelegramHtml('`[a](docs/a.md)`')).toBe('<code>[a](docs/a.md)</code>');
+  });
+});

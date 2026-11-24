@@ -144,6 +144,39 @@ describe('review-coordinator (retired 2026-05-26, pruned since 2026-11-12)', () 
   });
 });
 
+describe('sleep-migration (retired 2026-11-22, oto-migration C5)', () => {
+  const MIG_REL = '.claude/agents/sleep-migration.md';
+  const MIG_SHIPPED = '---\nname: sleep-migration\ndescription: retired\n---\n\n# Body as shipped\n';
+  function putRecorded(content: string): void {
+    mkdirSync(join(projectRoot, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(projectRoot, MIG_REL), content);
+    const m = emptyManifest();
+    recordFile(m, MIG_REL, '0.41.23', 'agent', { baselineSha: agentBaselineSha(MIG_SHIPPED) });
+    writeManifest(projectRoot, m);
+  }
+
+  it('is retired, no longer shipped, and every version it shipped has a hash in the real table', async () => {
+    expect([...RETIRED_CORE_AGENTS]).toContain('sleep-migration');
+    expect(existsSync(join(__dirname, '..', '..', 'agents', 'sleep-migration.md'))).toBe(false);
+    const mod = await import('../../src/lib/retired-packs/stopped.js') as unknown as { REAL_RETIRED_CORE_AGENT_SHAS: Record<string, readonly string[]> };
+    expect(mod.REAL_RETIRED_CORE_AGENT_SHAS['sleep-migration.md']?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('update removes an untouched installed copy', () => {
+    putRecorded(MIG_SHIPPED);
+    const notes = pruneRetiredCoreAgents(projectRoot);
+    expect(existsSync(join(projectRoot, MIG_REL))).toBe(false);
+    expect(notes.join('\n')).toContain('Removed the retired sleep-migration agent');
+  });
+
+  it('update keeps an edited copy and says so', () => {
+    putRecorded(MIG_SHIPPED.replace('Body as shipped', 'my own migration notes'));
+    const notes = pruneRetiredCoreAgents(projectRoot);
+    expect(readFileSync(join(projectRoot, MIG_REL), 'utf-8')).toContain('my own migration notes');
+    expect(notes.join('\n')).toContain('because it was edited');
+  });
+});
+
 describe('the package and the install path', () => {
   it('no longer ships agents/sleep-federation.md', () => {
     expect(existsSync(join(__dirname, '..', '..', 'agents', 'sleep-federation.md'))).toBe(false);

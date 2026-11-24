@@ -161,6 +161,18 @@ export function machineHeavySlots(m: MachineRoom = {}): number {
   return Math.min(HEAVY_SLOT_CAP, Math.max(HEAVY_SLOT_FLOOR, n));
 }
 
+/**
+ * Heavy steps the WHOLE machine runs at once, the fast line included (owner, 2026-11-21: load 124
+ * and four type-checks at once in four worktrees, whiteboards would not load). The machine's own
+ * room ({@link machineHeavySlots}) may only lower it; serious heat or a busy load drops it to 1.
+ */
+export const MACHINE_STEP_CAP = 2;
+
+/** The machine's step limit from its own numbers, at most {@link MACHINE_STEP_CAP}. */
+export function machineStepLimit(m: MachineRoom = {}): number {
+  return Math.min(MACHINE_STEP_CAP, machineHeavySlots(m));
+}
+
 /** A slot (or repo lock) past this age whose pid is gone is reclaimed; a live holder never is. */
 export const HEAVY_LOCK_STALE_MS = 5_000;
 
@@ -183,6 +195,11 @@ export function fastSlotPaths(dir: string): string[] {
 /** How many heavy slots a LIVE process holds right now (a dead holder's file does not count). */
 export function heavySlotsHeld(dir: string): number {
   return liveHolders(heavySlotPaths(dir));
+}
+
+/** Every step running on the machine now: heavy slots and fast slots together. */
+export function stepsHeld(dir: string): number {
+  return liveHolders(heavySlotPaths(dir)) + liveHolders(fastSlotPaths(dir));
 }
 
 function liveHolders(paths: string[]): number {
@@ -213,9 +230,9 @@ export const HEAT_RECHECK_MS = 20_000;
  * deadlock). Slots are tried in a loop, each once per poll, with pid liveness (that is what makes
  * the short stale age safe). Null = nothing is held and nothing may run (the caller's exit 75).
  *
- * How many slots may be busy at once is `limit()` (default: `./heat.ts`, 2 at thermal state serious,
- * 1 at critical or at critical memory pressure, else {@link machineHeavySlots}), read at entry and at most every
- * {@link HEAT_RECHECK_MS} while waiting. A slot is taken only while fewer than L are held, and
+ * How many slots may be busy at once is `limit()` (default: `./heat.ts`: 1 at serious or critical heat,
+ * critical memory pressure or a busy load, else {@link machineStepLimit}, never above {@link MACHINE_STEP_CAP}), read at entry and at most every
+ * {@link HEAT_RECHECK_MS} while waiting. A slot is taken only while fewer than L steps (heavy and fast) are held, and
  * only among slots [0, L). A held slot is never revoked. Accepted race: a caller that read L=2 up
  * to 20 s earlier can take slot-1 while another runs on slot-0 under L=1; the next read converges.
  */
@@ -244,7 +261,7 @@ export async function acquireHeavy(cwd: string, opts: {
   const limitOf = opts.limit ?? (async () => (await import('./heat.js')).currentHeavyLimit());
   const readLimit = async (): Promise<number> => {
     let n: number;
-    try { n = clampHeavyLimit(await limitOf()); } catch { n = machineHeavySlots(); }
+    try { n = clampHeavyLimit(await limitOf()); } catch { n = machineStepLimit(); }
     try { opts.onLimit?.(n); } catch { /* informational */ }
     return n;
   };
@@ -260,8 +277,8 @@ export async function acquireHeavy(cwd: string, opts: {
   try { opts.onRepoLock?.(); } catch { /* informational */ }
   for (;;) {
     if (now() - readAt >= HEAT_RECHECK_MS) { limit = await readLimit(); readAt = now(); }
-    // Very hot means one step machine-wide, and a running short check is a step.
-    const free = limit - heavySlotsHeld(opts.slotDir) - (limit === 1 ? liveHolders(fastSlotPaths(opts.slotDir)) : 0);
+    // One budget for the machine: a running short check is a step too.
+    const free = limit - stepsHeld(opts.slotDir);
     // Asked on every poll, a full machine included: asking is the waiter's heartbeat in the line.
     const mine = opts.slotTurn?.(now(), free) ?? true;
     if (free > 0 && mine) {
@@ -284,13 +301,17 @@ export async function acquireHeavy(cwd: string, opts: {
  */
 export async function acquireFastSlot(opts: {
   waitMs: number; paths: string[]; limit: () => number; turn: (nowMs: number) => boolean; pollMs?: number; now?: () => number;
+  /** Steps the machine may still start (its step limit minus every heavy AND fast step running);
+   *  a slot is only tried while this is above 0. Default: no machine budget (tests of the line). */
+  room?: () => number;
 }): Promise<HeavyHold | null> {
   const now = opts.now ?? Date.now;
   const deadline = now() + Math.max(0, opts.waitMs);
   for (;;) {
     const limit = opts.limit();
     if (limit <= 0) return null;
-    if (opts.turn(now())) {
+    // The turn is asked on every poll, a full machine included: it is the waiter's heartbeat.
+    if (opts.turn(now()) && (opts.room?.() ?? 1) > 0) {
       for (const slot of opts.paths.slice(0, limit)) {
         if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
           return { slot, release: () => { releaseFileLock(slot); } };
@@ -302,10 +323,10 @@ export async function acquireFastSlot(opts: {
   }
 }
 
-/** A limit the lock may use: an integer in [1, HEAVY_SLOT_CAP]; junk reads as the machine's own. */
+/** A limit the lock may use: an integer in [1, MACHINE_STEP_CAP]; junk reads as the machine's own. */
 export function clampHeavyLimit(n: unknown): number {
-  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return machineHeavySlots();
-  return Math.min(HEAVY_SLOT_CAP, Math.max(1, Math.floor(n)));
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return machineStepLimit();
+  return Math.min(MACHINE_STEP_CAP, Math.max(1, Math.floor(n)));
 }
 
 function gitPathOf(cwd: string, which: '--git-dir' | '--git-common-dir'): string | null {
@@ -400,4 +421,33 @@ export function classifyBuilderResult(fileText: string | null, taskId: string): 
   if (!sentinel.test(first)) return { verdict: 'unfinished', detail: oneLine(last || '(empty final message)') };
   if (UNFINISHED.test(last)) return { verdict: 'unfinished', detail: oneLine(last) };
   return { verdict: 'reported', detail: oneLine(first) };
+}
+
+// ─── machine-wide browser slots (plan sirket-yavaslik D7) ─────────────────────────────────
+
+/**
+ * At most this many browser runs at once on the machine, every repo together. Measured
+ * 2026-11-21 on the company Mac: 663 browser minutes a day, many runs side by side on one machine.
+ */
+export const BROWSER_SLOTS = 2;
+
+export function browserSlotPaths(dir: string): string[] {
+  return Array.from({ length: BROWSER_SLOTS }, (_, i) => join(dir, `browser-slot-${i}.lock`));
+}
+
+/**
+ * Take one of the machine's browser slots, waiting up to `waitMs`. A browser run holds a heavy slot
+ * AND one of these. Returns its release, or null when none came free in time (the caller exits 75
+ * with its place kept, like any heavy wait).
+ */
+export async function acquireBrowserSlot(opts: { slotDir: string; waitMs: number; pollMs?: number; now?: () => number }): Promise<(() => void) | null> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + Math.max(0, opts.waitMs);
+  for (;;) {
+    for (const slot of browserSlotPaths(opts.slotDir)) {
+      if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) return () => { releaseFileLock(slot); };
+    }
+    if (now() >= deadline) return null;
+    await new Promise((r) => { setTimeout(r, opts.pollMs ?? 500); });
+  }
 }

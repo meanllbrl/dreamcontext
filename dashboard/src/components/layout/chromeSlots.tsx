@@ -16,8 +16,14 @@ export interface ChromeSlots {
   left: HTMLElement | null;
   /** Right of the chip strip, before the window controls: sleep tracker + update badge. */
   right: HTMLElement | null;
-  /** The new shell only: the active project's `Rail`, left of the page frame. */
+  /** The new shell only: the active project's `Rail`, left of the page frame (device shells). */
   rail?: HTMLElement | null;
+  /** The local new shell: the active project's page tabs, in the title bar (tek-kenar C7). */
+  tabs?: HTMLElement | null;
+  /** The local new shell: the active project's board explorer, under its row in the sidebar's
+   *  boards mode (tek-kenar C4), and its New board / New folder above Settings. */
+  boards?: HTMLElement | null;
+  boardsFoot?: HTMLElement | null;
 }
 
 /** What a `Header` sees with no chrome above it (tests, storybook-style mounts): no slots,

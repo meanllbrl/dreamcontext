@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { codexHealth, codexTooOld, type CodexRunner } from '../codex-bin.js';
 import { antigravityInstalled } from '../antigravity-accounts.js';
+import { readAntigravityCatalog } from '../antigravity-models.js';
 import { listInstanceAccounts } from '../instance-accounts.js';
 import { bridgeNode } from './node-floor.js';
 import manifest from '../../vendor/t3/apps/server/src/provider/model-manifest.json' with { type: 'json' };
@@ -125,7 +126,8 @@ export function codexInfo(o: ToolLookup = {}): ToolInfo {
   };
 }
 
-/** The models T3 ships for a driver, current ones first (`model-manifest.json`). */
+/** The models T3 ships for a driver, current ones first (`model-manifest.json`): the fallback
+ *  before the runtime first answered (`antigravity-models.ts`). */
 export function manifestModels(driver: 'antigravity'): ToolModel[] {
   const rows = (manifest as { providers: Record<string, { models: { slug: string; name: string; status: string }[] }> }).providers[driver]?.models ?? [];
   return [...rows]
@@ -133,14 +135,22 @@ export function manifestModels(driver: 'antigravity'): ToolModel[] {
     .map((m) => ({ id: m.slug, label: m.name, efforts: [], defaultEffort: null }));
 }
 
-/** Antigravity's readiness, from disk: T3 manages its install, the token file says signed in. */
+/**
+ * Antigravity's readiness, from disk: T3 manages its install, the token file says signed in. Its
+ * models are what the runtime last reported (`antigravity-models.ts`, refreshed in the
+ * background); the bundled manifest only until the first answer ever lands.
+ */
 export function antigravityInfo(o: ToolLookup = {}): ToolInfo {
   const home = o.home ?? homedir();
   const installed = antigravityInstalled({ home, ...(o.path === undefined ? {} : { path: o.path }) });
   const signedIn = listInstanceAccounts('antigravity', home).some((a) => a.signedIn);
   const nodeOk = (o.node === undefined ? bridgeNode() : o.node) !== null;
-  const models = manifestModels('antigravity');
-  return { tool: 'antigravity', label: 'Antigravity', installed, signedIn, nodeOk, ready: installed && signedIn && nodeOk, defaultModel: models[0]?.id ?? null, models };
+  const live = readAntigravityCatalog(home);
+  const models: ToolModel[] = live
+    ? live.models.map((m) => ({ id: m.id, label: m.label, efforts: [], defaultEffort: null }))
+    : manifestModels('antigravity');
+  const defaultModel = live ? live.defaultModel : models[0]?.id ?? null;
+  return { tool: 'antigravity', label: 'Antigravity', installed, signedIn, nodeOk, ready: installed && signedIn && nodeOk, defaultModel, models };
 }
 
 export function listTools(o: ToolLookup = {}): ToolInfo[] {

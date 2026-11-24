@@ -58,6 +58,13 @@ describe('consentOf: his WHOLE message is a plain yes or no', () => {
     ['evet, geçir', 'allow'],
     ['ok go ahead', 'allow'],
     ['tamam', 'allow'],
+    // D14: how he says it
+    ['onay verdim saysın', 'allow'],
+    ['hadi evet', 'allow'],
+    ['artık onaylıyorum', 'allow'],
+    ['onay verdim mi?', null],
+    ["don't say yes", null],
+    ['hadi', null],
     ['izin verme', 'deny'],
     ['hayır', 'deny'],
     ['hayır, izin verme', 'deny'],

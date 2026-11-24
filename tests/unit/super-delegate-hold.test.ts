@@ -140,7 +140,7 @@ describe('the machine never holds a delegate', () => {
 
   it('delegate --from on that machine starts the pooled job and removes its row', async () => {
     write();
-    const id = result(await verb('pool-add', { prompt: 'Later: the billing route.', brief: 'billing' })).pooled as string;
+    const id = result(await verb('pool-add', { model: 'sonnet', prompt: 'Later: the billing route.', brief: 'billing' })).pooled as string;
     setCapacityFactsForTests(OWNER_READING);
     const r = await verb('delegate', { from: id });
     expect(r.status).toBe(200);
@@ -153,13 +153,13 @@ describe('the machine never holds a delegate', () => {
     setCapacityFactsForTests({ ...ROOMY, claudeSessions: 30, availMemGb: 0.5, diskFreeGb: 12, swapUsedGb: 7, swapTotalGb: 8 });
     mkdirSync(join(process.env.HOME!, '.dreamcontext'), { recursive: true });
     writeFileSync(join(process.env.HOME!, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ lightMode: 'on' }));
-    expect((await verb('delegate', { prompt: 'Fix the theme.' })).status).toBe(200);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Fix the theme.' })).status).toBe(200);
   });
 
   it('null facts start too', async () => {
     write();
     setCapacityFactsForTests({ availMemGb: 9, diskFreeGb: null, load1: 1, totalMemGb: 16, swapUsedGb: null, swapTotalGb: null, claudeSessions: null, heavySteps: null });
-    expect((await verb('delegate', { prompt: 'Fix the settings.' })).status).toBe(200);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Fix the settings.' })).status).toBe(200);
   });
 
   it(`${MAX_LIVE_CHILDREN + 2} parallel delegates on an overloaded machine start exactly ${MAX_LIVE_CHILDREN}: the cap check and the in-flight count are one step`, async () => {
@@ -167,7 +167,7 @@ describe('the machine never holds a delegate', () => {
     // The cap is the only hold, even on the owner's reading. A cold measurement takes time.
     setCapacityFactsForTests(OWNER_READING, { delayMs: 30 });
     answer = { ok: true, result: { sessionId: CHILD_SID } };
-    const rs = await Promise.all(Array.from({ length: MAX_LIVE_CHILDREN + 2 }, (_, i) => verb('delegate', { prompt: `Job ${i}.` })));
+    const rs = await Promise.all(Array.from({ length: MAX_LIVE_CHILDREN + 2 }, (_, i) => verb('delegate', { model: 'sonnet', prompt: `Job ${i}.` })));
     const held = rs.filter((r) => r.json.error === 'held');
     expect(held.length).toBe(2);
     for (const r of held) expect(r.json).toMatchObject({ reason: 'cap', max: MAX_LIVE_CHILDREN });
@@ -177,7 +177,7 @@ describe('the machine never holds a delegate', () => {
   it('the cap answers reason cap, keeps the job in the pool, and names the number', async () => {
     fillCap();
     setCapacityFactsForTests(ROOMY);
-    const r = await verb('delegate', { prompt: 'One more.' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'One more.' });
     expect(r.json).toMatchObject({ error: 'held', reason: 'cap', kept: true, live: MAX_LIVE_CHILDREN, max: MAX_LIVE_CHILDREN });
     expect(String(r.json.message)).toContain(`at most ${MAX_LIVE_CHILDREN}`);
     expect(r.json.hard).toBeUndefined();
@@ -233,7 +233,7 @@ describe('delegate --mcp (lean children, plan r5 D14)', () => {
 
   it('a known server: the window is told the set, and the child record keeps it (Resume reads it)', async () => {
     write();
-    const r = await verb('delegate', { prompt: 'Send "Standup at 10" to Ayla on WhatsApp.', brief: 'whatsapp send', mcp: 'whatsapp' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'Send "Standup at 10" to Ayla on WhatsApp.', brief: 'whatsapp send', mcp: 'whatsapp' });
     expect(r.status).toBe(200);
     expect(commands()[0].args).toMatchObject({ mcp: ['whatsapp'] });
     expect((await readSuperState(root)).children[CHILD_SID]).toMatchObject({ mcp: ['whatsapp'] });
@@ -241,25 +241,25 @@ describe('delegate --mcp (lean children, plan r5 D14)', () => {
 
   it('no --mcp: the window is told an empty set (the child starts with no user server)', async () => {
     write();
-    expect((await verb('delegate', { prompt: 'Fix the theme.' })).status).toBe(200);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Fix the theme.' })).status).toBe(200);
     expect(commands()[0].args).toMatchObject({ mcp: [] });
     expect((await readSuperState(root)).children[CHILD_SID].mcp).toBeUndefined();
   });
 
   it('an unknown or malformed name is refused, naming the known ones; nothing starts', async () => {
     write();
-    const r = await verb('delegate', { prompt: 'x', mcp: 'posthog' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'x', mcp: 'posthog' });
     expect(r.status).toBe(400);
     // The stores keep names sorted (mcp-store.ts), so the known list reads alphabetically.
     expect(r.json).toMatchObject({ error: 'unknown_mcp', known: ['fathom', 'whatsapp'] });
-    expect((await verb('delegate', { prompt: 'x', mcp: '__proto__' })).json.error).toBe('invalid_args');
-    expect((await verb('pool-add', { prompt: 'x', mcp: 'posthog' })).json.error).toBe('unknown_mcp');
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'x', mcp: '__proto__' })).json.error).toBe('invalid_args');
+    expect((await verb('pool-add', { model: 'sonnet', prompt: 'x', mcp: 'posthog' })).json.error).toBe('unknown_mcp');
     expect(commands()).toHaveLength(0);
   });
 
   it('a pooled job keeps its set and starts with it', async () => {
     write();
-    const id = result(await verb('pool-add', { prompt: 'Later: the meeting notes.', mcp: 'fathom' })).pooled as string;
+    const id = result(await verb('pool-add', { model: 'sonnet', prompt: 'Later: the meeting notes.', mcp: 'fathom' })).pooled as string;
     expect((await readSuperState(root)).pool[0]).toMatchObject({ mcp: ['fathom'] });
     expect((await verb('delegate', { from: id })).status).toBe(200);
     expect(commands()[0].args).toMatchObject({ mcp: ['fathom'] });

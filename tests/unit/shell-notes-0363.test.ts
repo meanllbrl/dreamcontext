@@ -56,7 +56,7 @@ describe('note 1 and the one-home rule: a Super session never enters a chat wind
   });
 
   it('opening the Super in the new shell adopts no chat; classic still adopts', () => {
-    expect(src(SURFACE)).toContain('adoptionBody(windowed || adoptNone ? [] : tabs, before?.session)');
+    expect(src(SURFACE)).toContain('adoptionBody(windowed || adoptNone ? [] : tabs, before?.session, quiet)');
     expect(adoptionBody([{ id: 'a', claudeId: '11111111-1111-4111-8111-111111111111', title: 't', kind: 'chat' }], null).adopt).toHaveLength(1);
   });
 
@@ -114,6 +114,9 @@ describe('note 4: the drawer button stays on the page', () => {
     expect(drawerTogglePanel({ chatOpen: false, page: 'brain' })).toBe('page');
     expect(drawerTogglePanel({ chatOpen: false, page: 'tasks' })).toBe('chat-drawer');
     expect(drawerTogglePanel({ chatOpen: true, page: 'whiteboards' })).toBe('chat-drawer');
+    // tek-kenar D6: the local new shell's one sidebar is what the button drives on every page.
+    expect(drawerTogglePanel({ chatOpen: false, page: 'whiteboards', local: true })).toBe('chat-drawer');
+    expect(drawerTogglePanel({ chatOpen: false, page: 'brain', local: true })).toBe('chat-drawer');
   });
   it('the bridge never opens Chat by itself', () => {
     const i = src('dashboard/src/ProjectInstance.tsx');
@@ -173,7 +176,7 @@ describe('note 8: New project in the shell', () => {
     expect(src('dashboard/src/components/layout/newshell/ChatDrawer.tsx')).toContain('data-testid="drawer-new-project"');
     expect(src('dashboard/src/components/layout/newshell/ProjectPicker.tsx')).toContain('data-testid="ns-picker-new-project"');
     expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain('<Onboarding');
-    expect(src('dashboard/src/pages/onboarding/Handoff.tsx')).toContain('landHere(project.name');
+    expect(src('dashboard/src/pages/onboarding/Onboarding.tsx')).toContain("landHere(name, start ?? 'existing');");
   });
 });
 

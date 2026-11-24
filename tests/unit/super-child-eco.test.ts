@@ -152,6 +152,9 @@ describe('PreToolUse carries the nudge (built CLI)', () => {
 
   it.skipIf(!existsSync(CLI))('Eco off: a Bash call prints nothing at all', () => {
     writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '1', contextHandoff: { enabled: false } }));
+    // Eco is this Mac's one switch (eco-her-proje): the isolated HOME says off.
+    mkdirSync(join(projectRoot, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(projectRoot, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ ecoMode: false }));
     expect(run(bash(transcript(900_000))).stdout).toBe('');
   });
 });

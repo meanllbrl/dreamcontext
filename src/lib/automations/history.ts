@@ -90,8 +90,11 @@ function lineFor(e: ThreadEntry & { source: string }, agentSlug: string, perItem
   if (text.length > perItem) text = `${text.slice(0, Math.max(0, perItem - 1)).trimEnd()}…`;
   const where = e.source === TALK_SOURCE ? ' (in a chat with you)' : e.source === agentSlug ? '' : ` (in ${e.source})`;
   // An app's words are never the owner's, whoever typed them (dreamcontext-apps plan r19).
+  // A Super relay row opens with a Super envelope (the markers `ownerWords` cuts at): it is the
+  // Super Agent's turn, never the owner's (uye-gecmis-is D13).
+  const relay = /^\s*(\[super |<super-)/.test(plainPostText(e.text));
   const who = e.kind === 'user'
-    ? e.via === 'app' ? `the app ${e.app ?? ''} (not the owner)${where}` : `the owner${where}`
+    ? e.via === 'app' ? `the app ${e.app ?? ''} (not the owner)${where}` : relay ? `the Super Agent${where}` : `the owner${where}`
     : `you${where}`;
   return `${stamp(e.at)} · ${who}: ${text}`;
 }

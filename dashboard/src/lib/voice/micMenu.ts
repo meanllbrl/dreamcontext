@@ -51,6 +51,8 @@ export function micSetupSteps(i: MicStepsInput): MicStep[] {
 export type MicMenuItem =
   | { kind: 'step'; step: MicStep }
   | { kind: 'read-aloud'; on: boolean }
+  /** What a finished take does: send it, or paste it into the composer. Always listed. */
+  | { kind: 'take-mode' }
   | { kind: 'settings' };
 
 export interface MicMenuInput {
@@ -58,13 +60,16 @@ export interface MicMenuInput {
   /** Spoken replies exist in this chat (the Assistant and the Super Agent; never the phone). */
   readAloudAvailable: boolean;
   readAloudOn: boolean;
+  /** The take-mode row is listed (the desktop; the hands-free phone keeps its plain mic). */
+  takeModeAvailable?: boolean;
   /** Settings can be opened from here (not the phone's device shell, not an app frame). */
   settingsAvailable: boolean;
 }
 
-/** The menu, top to bottom: the missing steps first, then spoken replies, then Voice settings. */
+/** The menu, top to bottom: the missing steps first, then what a take does (send or paste), then spoken replies, then Voice settings. */
 export function micMenuItems(i: MicMenuInput): MicMenuItem[] {
   const items: MicMenuItem[] = i.steps.map((step) => ({ kind: 'step', step }));
+  if (i.takeModeAvailable) items.push({ kind: 'take-mode' });
   if (i.readAloudAvailable) items.push({ kind: 'read-aloud', on: i.readAloudOn });
   if (i.settingsAvailable) items.push({ kind: 'settings' });
   return items;

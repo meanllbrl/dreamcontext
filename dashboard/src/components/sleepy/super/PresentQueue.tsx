@@ -5,14 +5,17 @@ import type { Rect } from './superLayout';
  * The presentation queue's control in the top band while the owner is OFF the queue (task
  * super-sahnesinde-sunum-sirasi, D2, D10): "N waiting · names · Continue". A queued presentation
  * on screen is named by the presentation frame's tabs instead (StageParts `PresentFrame`, owner
- * 2026-11-15, option C). `short` (a narrow band) drops the names; the count and the button stay.
+ * 2026-11-15, option C). `short` (a narrow band) drops the names; the count and the buttons stay.
+ * The ✕ takes the first waiting one off the queue unseen (owner 2026-11-18, "şu takılı kalıyor").
  */
-export function PresentQueue({ rect, short, waiting, onResume }: {
+export function PresentQueue({ rect, short, waiting, onResume, onDismiss }: {
   rect: Rect;
   short: boolean;
   /** The waiting presentations' names, in order. */
   waiting: readonly string[];
   onResume: () => void;
+  /** Takes the first waiting presentation off the queue. */
+  onDismiss: () => void;
 }) {
   const { t } = useI18n();
   const n = waiting.length;
@@ -27,6 +30,10 @@ export function PresentQueue({ rect, short, waiting, onResume }: {
           {!short && n > 0 && <span className="super-pq-names" title={waiting.join(', ')}>{`· ${waiting.join(', ')}`}</span>}
         </span>
         <button type="button" className="super-pq-go" data-testid="super-pq-resume" onClick={onResume}>{t('super.pq.resume')}</button>
+        <button type="button" className="super-pq-x" data-testid="super-pq-dismiss" onClick={onDismiss}
+          aria-label={t('super.pq.dismiss').replace('{name}', waiting[0] ?? '')} title={t('super.pq.dismiss').replace('{name}', waiting[0] ?? '')}>
+          <span aria-hidden>✕</span>
+        </button>
       </div>
     </div>
   );

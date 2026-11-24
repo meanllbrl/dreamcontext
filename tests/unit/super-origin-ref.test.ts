@@ -182,7 +182,7 @@ describe('owner message → team ask → done event → the answer links to his 
 describe('delegate records the origin too, and every result of one job links to the same message', () => {
   it('delegate in his turn: the child carries origin; its done and its later stuck both say it', async () => {
     ownerWrites(ASK);
-    const out = await verb('delegate', { prompt: 'Answer the Orbit inbox', brief: 'Orbit inbox', mode: 'basic' });
+    const out = await verb('delegate', { model: 'sonnet', prompt: 'Answer the Orbit inbox', brief: 'Orbit inbox', mode: 'basic' });
     expect(out.status).toBe(200);
     const s = await stored();
     expect(s.children['child-orbit']).toMatchObject({ awaited: true, origin: msgRef(ASK) });
@@ -214,10 +214,10 @@ describe('delegate records the origin too, and every result of one job links to 
   it('delegate in an event turn has none; --origin gives it one', async () => {
     ownerWrites(ASK);
     markSuperEventTurn(SUPER, true);
-    expect((await verb('delegate', { prompt: 'Answer the Orbit inbox', mode: 'basic' })).status).toBe(200);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Answer the Orbit inbox', mode: 'basic' })).status).toBe(200);
     expect((await stored()).children['child-orbit'].origin).toBeUndefined();
     expect((await stored()).children['child-orbit'].awaited).toBeUndefined();
-    expect((await verb('delegate', { prompt: 'Answer it again', mode: 'basic', origin: 'nope' })).status).toBe(400);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Answer it again', mode: 'basic', origin: 'nope' })).status).toBe(400);
   });
 });
 

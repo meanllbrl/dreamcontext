@@ -4,6 +4,9 @@ import { closeSync, lstatSync, openSync, readFileSync, readSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { isLayoutRender, layoutRenderWarning } from '../../lib/whiteboards/render-mark.js';
 import { request } from 'node:http';
+import { execFile } from 'node:child_process';
+import { resolveLinkedRepos } from '../../lib/linked-repos.js';
+import type { InstalledEntry } from '../../lib/super/returns.js';
 import { windowEnv } from './window.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
@@ -126,6 +129,8 @@ function print(r: CallResult): void {
     const e = (result.cardError ?? {}) as { message?: unknown; todo?: unknown };
     process.stderr.write(`CARD NOT OPENED: ${String(e.message ?? 'the owner cannot see this child')}. Next: ${String(e.todo ?? '`super state`')}\n`);
   }
+  // `super end` that ended nothing, or not all: said on stderr, a refusal inside an ok answer is easy to miss.
+  if (result && typeof result.warning === 'string' && result.notEnded === true) process.stderr.write(`END REFUSED: ${result.warning}\n`);
   if (result && result.started === false) process.stderr.write(`CHILD DID NOT START: ${String(result.startError)}\n`);
 }
 
@@ -213,6 +218,8 @@ const FOR_HELP = 'A member\'s Super only: whose work this is, `owner` or one of 
 const ORIGIN_HELP = 'The owner message this job answers (its <owner-msg ref>); only outside his turn: in his turn it is recorded by itself. Its results come to you awaited=owner origin=<ref>';
 
 /** `--outward` on `delegate`: the one outward step his own message named (owner, 2026-11-12). */
+/** `--rule <id>` (iyilesme-360 D5): his ACTIVE standing rule as his word for a staging step. */
+const RULE_HELP = 'With --outward: the id of his ACTIVE standing rule that reads "staging\'e kendin push et" (instead of --origin); it covers only one plain `git push <remote> <ref>:staging`: no flag, no `&&`/`;`/`|`, redirection, quotes or substitution; a PR, a deploy or anything else is refused (outward_out_of_scope)';
 const OUTWARD_HELP = 'The push, PR or deploy the owner\'s OWN message named, in one line (e.g. "push release/x to origin, open a PR to development"); the child may run exactly that, never a force-push or a default-branch merge. Needs his message: his turn, or --origin <ref>. Kept with the job: its pool row and a --succeeds successor carry it';
 
 const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
@@ -223,28 +230,38 @@ export function registerSuperCommand(program: Command): void {
     .description('The project\'s Super Agent: delegate to child chats, arrange their cards, answer the queue (only from the Super Agent chat)');
 
   s.command('state')
-    .description('Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
+    .description('Children (each with its live status: working | idle | background | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
     .option('--brief', 'Only the children and the open queue (plus pool, live team jobs, warnings): what a fresh session needs before it acts')
     .action((opts: { brief?: boolean }) => (opts.brief
       ? callSuper('state', {}).then((r) => print(briefCallResult(r)))
       : run('state', {})));
 
+  const RISK_HELP = 'What makes a higher effort earn it: security | money | migration | contract (develop `high`, a critical plan `xhigh`); without it, `--full` or his own words, an effort above the mode\'s default is refused (`effort_refused`)';
   const job = (c: Command): Command => c
     .option('--brief <line>', 'The one-line reminder its row and card show')
     .option('--mode <mode>', 'basic | plan | develop', 'basic')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--risk <kind>', RISK_HELP)
     .option('--worktree <repo>', 'Give it its own worktree of this linked repo, on branch super/<slug>')
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
     .option('--task <slug>', 'Link its row to this task (state/<slug>.md)')
-    .option('--mcp <names>', 'The MCP servers it may use, comma-separated (`super state` lists them); a child gets none of the others')
-    .option('--tool <tool>', 'The tool the child runs on: claude (default), codex or antigravity');
-  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; task?: string; mcp?: string; tool?: string };
-  const jobBody = (o: JobOpts) => ({ prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp, tool: o.tool });
+    .option('--mcp <names>', 'The MCP servers it starts with, comma-separated (`super state` lists them); its briefing names the others, which it asks for on its own mcp card')
+    .option('--tool <tool>', 'The tool the child runs on: claude (default), codex or antigravity')
+    .option('--fast', 'With --worktree: a one-screen look or copy job with nothing on the never-list (price, shown amount, payment, paywall, trial, A/B, redirect, analytics, auth, data, endpoint, store): one short read and one screenshot. The diff still decides; money never takes it')
+    .option('--full', 'With --worktree: the owner asked for full verification (tam doğrula); the whole chain whatever the diff');
+  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; risk?: string; worktree?: string; slug?: string; base?: string; task?: string; mcp?: string; tool?: string; fast?: boolean; full?: boolean };
+  /** The lane flags, checked here: both together, or either without a worktree, is a usage error. */
+  const laneOf = (o: JobOpts): { laneIntent?: 'fast' | 'full' } | { error: string } => {
+    if (o.fast && o.full) return { error: '--fast and --full together: pick one' };
+    if ((o.fast || o.full) && !o.worktree) return { error: '--fast and --full need --worktree: the lane lives in the worktree' };
+    return o.fast ? { laneIntent: 'fast' } : o.full ? { laneIntent: 'full' } : {};
+  };
+  const jobBody = (o: JobOpts) => { const lane = laneOf(o); return { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, ...(o.risk !== undefined ? { risk: o.risk } : {}), worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp, tool: o.tool, ...('laneIntent' in lane ? lane : {}) }; };
 
   job(s.command('delegate')
-    .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`)`)
+    .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`). With --worktree/--slug, refused (\`worktree_busy\`, naming the child) while a live child already works in that worktree`)
     .option('--prompt <text>', 'The child\'s first message, complete and self-contained')
     .option('--from <pool id>', 'Start a job the pool kept (`super pool list`), exactly as it was kept')
     .option('--force', 'With --from: start a job whose earlier start went unconfirmed')
@@ -252,16 +269,25 @@ export function registerSuperCommand(program: Command): void {
     .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone')
     .option('--origin <ref>', ORIGIN_HELP)
     .option('--outward <step>', OUTWARD_HELP)
-    .option('--for <item|owner>', FOR_HELP))
-    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; for?: string }) => {
+    .option('--rule <id>', RULE_HELP)
+    .option('--for <item|owner>', FOR_HELP)
+    .option('--migration', 'The project\'s Super Agent only: start the ONE migration session for the agent migration work an update left (its `migration` event). The server builds its prompt and brief; refused with --prompt, --from, --worktree, --slug, --succeeds, --mcp or --tool'))
+    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; rule?: string; for?: string; migration?: boolean }) => {
       const behind = serverBehindLine(await serverVersion(), dreamcontextVersion());
       if (behind) process.stderr.write(behind);
       const note = o.note !== undefined ? { note: o.note } : {};
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
+      if (o.migration) {
+        const mixed = (['prompt', 'from', 'worktree', 'slug', 'succeeds', 'mcp', 'tool'] as const).filter((k) => o[k] !== undefined);
+        if (mixed.length) return usage(`--migration builds the whole job; drop ${mixed.map((k) => `--${k}`).join(', ')}`);
+        return run('delegate', { migration: true, model: o.model, effort: o.effort, ...note, ...origin });
+      }
       const forWho = o.for !== undefined ? { for: o.for } : {};
-      const outward = o.outward !== undefined ? { outward: o.outward } : {};
-      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho });
+      const outward = { ...(o.outward !== undefined ? { outward: o.outward } : {}), ...(o.rule !== undefined ? { rule: o.rule } : {}) };
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho, ...(o.risk !== undefined ? { risk: o.risk } : {}) });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
+      const lane = laneOf(o);
+      if ('error' in lane) return usage(lane.error);
       return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho });
     });
 
@@ -359,7 +385,7 @@ export function registerSuperCommand(program: Command): void {
       run('allow', { child, requestId, deny: o.deny === true, why: o.why }));
 
   s.command('end [children...]')
-    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
+    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks: the answer then carries `refused: true` (several children: `notEnded` and a `warning`), and nothing was ended')
     .option('--idle', 'List the idle children you started; add --yes to end them all')
     .option('--yes', 'With --idle: end every listed child')
     .option('--force', 'ONLY when the owner asked: kill it even while it works, asks or runs background tasks, or when it is his own chat. Answers ended only once its process is gone')
@@ -369,24 +395,30 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('resume <child>')
-    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others')
+    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others. Refused (`worktree_busy`, naming it) while another live child works in its worktree')
     .option('--mode <mode>', 'basic | plan | develop')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--risk <kind>', RISK_HELP)
     .option('--force', 'ONLY when the owner asked: reopen his own (adopted) chat')
     .option('--origin <ref>', ORIGIN_HELP)
-    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean; origin?: string }) =>
-      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
+    .option('--full', 'The owner said "tam doğrula" on a finished fast job: its worktree\'s lane becomes full (never back) and it is told to take the same diff through the whole chain')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; risk?: string; force?: boolean; origin?: string; full?: boolean }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, ...(o.risk !== undefined ? { risk: o.risk } : {}), force: o.force === true, ...(o.full ? { full: true } : {}), ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
   s.command('update <child>')
     .description('Change a RUNNING child\'s mode, model or effort (the window\'s own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`')
     .option('--mode <mode>', 'basic | plan | develop')
     .option('--model <id>', 'Model id or alias (from its next turn)')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--risk <kind>', RISK_HELP)
+    .option('--origin <ref>', ORIGIN_HELP)
     .option('--force', 'ONLY when the owner asked: change his own (adopted) chat')
-    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean }) => {
-      if (!o.mode && !o.model && !o.effort) return usage('name what changes: --mode, --model or --effort');
-      return run('update', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true });
+    .option('--full', 'The owner said "tam doğrula" on a running fast job: its worktree\'s lane becomes full (never back) and it is told to take the same diff through the whole chain. On its own')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; risk?: string; origin?: string; force?: boolean; full?: boolean }) => {
+      if (o.full) return (o.mode || o.model || o.effort) ? usage('run --full on its own, then --mode, --model or --effort in a second call') : run('update', { child, full: true, force: o.force === true });
+      if (!o.mode && !o.model && !o.effort) return usage('name what changes: --mode, --model, --effort or --full');
+      return run('update', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true, ...(o.risk !== undefined ? { risk: o.risk } : {}), ...(o.origin !== undefined ? { origin: o.origin } : {}) });
     });
 
   s.command('adopt <chat>')
@@ -399,7 +431,8 @@ export function registerSuperCommand(program: Command): void {
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks, and then "waits" says it is not read yet). A parked child is woken first, in the same command: "delivered" says how it arrived')
     .option('--origin <ref>', ORIGIN_HELP)
-    .action((child: string, text: string, o: { origin?: string }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
+    .option('--keep', 'Send the text alone, without the hand-off-first line a big idle child gets: for its own question, or a reply that needs the live conversation')
+    .action((child: string, text: string, o: { origin?: string; keep?: boolean }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}), ...(o.keep === true ? { keep: true } : {}) }));
 
   const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread; a member tells the Super Agent something (team tell)');
   team.command('ask <member> <job>')
@@ -421,6 +454,11 @@ export function registerSuperCommand(program: Command): void {
     .description('A member\'s Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project\'s Super Agent has no requests)')
     .action((item: string, result: string) => run('team-done', { item, result }));
 
+  team.command('cancel <job>')
+    .description('The project\'s Super Agent only: close a team job you gave that will not end by itself (its member was deleted, it is no longer wanted, it sits "working" with nothing behind it). Its card reads failed ("Cancelled by the Super Agent"), nothing about it is told again, and the member\'s own request closes with it; nothing is deleted. A member gone from the AI Team is concluded by itself. Refused: `unknown_team` (404), `already_closed` (409, its done or stuck was told), `main_only` (403)')
+    .option('--why <line>', 'Why, in a line: the member\'s request carries it as its result')
+    .action((job: string, o: { why?: string }) => run('team-cancel', { job, ...(o.why ? { why: o.why } : {}) }));
+
   team.command('tell <message>')
     .description('An AI Team member only (its own chat, which is its Super): tell the project\'s Super Agent something on your own, whether or not it gave you a job (the owner says "tell the Super"). It hears it as one event (event=member-note), as your words, never the owner\'s, and acts on it or tells the owner when it needs him; nothing goes to Telegram by itself. Refused: `member_only` (403, from the project\'s Super Agent), `super_off` (409, it is not running: tell the owner yourself), `unknown_item` (404, a --for that is not its request to you)')
     .option('--for <item>', 'One of the Super Agent\'s requests to you (`super state`), when the message is about that job')
@@ -431,7 +469,7 @@ export function registerSuperCommand(program: Command): void {
     .action((item: string, text: string) => run('team-answer', { item, text }));
 
   team.command('amend <member>')
-    .description('Correct a member\'s instructions after a mistake or the owner\'s feedback: only its prompt, soul or a routine\'s job. The project\'s Super Agent corrects any member; a member\'s own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
+    .description('Correct a member\'s instructions after a mistake or the owner\'s feedback: only its prompt, soul or a routine\'s job. The project\'s Super Agent corrects any member; a member\'s own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. On his word (--quote with his words typed in this chat, about the lines it changes) no daily ceiling counts it, and the reply\'s first field is `AMENDED <id>`: repeat it to him. A global member (every project) changes only from its OWN Super, on his word; a project\'s Super relays to it with `team ask` instead. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global` (a global member, not on its own word from him)')
     .requiredOption('--why <line>', 'The mistake this fixes, in a line the owner reads')
     .option('--quote <words>', 'The owner\'s exact words this carries out ("next time do it like this"): shown with the change')
     .option('--prompt-file <path>', 'A file with its whole new prompt')
@@ -481,10 +519,16 @@ export function registerSuperCommand(program: Command): void {
     .requiredOption('--prompt <text>', 'The job\'s first message, complete and self-contained (at most 16 KB)')
     .option('--note <line>', 'Your note on its row')
     .option('--origin <ref>', ORIGIN_HELP)
-    .option('--outward <step>', OUTWARD_HELP))
-    .action((o: JobOpts & { note?: string; origin?: string; outward?: string }) => run('pool-add', {
-      ...jobBody(o), note: o.note, ...(o.origin !== undefined ? { origin: o.origin } : {}), ...(o.outward !== undefined ? { outward: o.outward } : {}),
-    }));
+    .option('--outward <step>', OUTWARD_HELP)
+    .option('--rule <id>', RULE_HELP))
+    .action((o: JobOpts & { note?: string; origin?: string; outward?: string; rule?: string }) => {
+      const lane = laneOf(o);
+      if ('error' in lane) return usage(lane.error);
+      return run('pool-add', {
+        ...jobBody(o), note: o.note, ...(o.origin !== undefined ? { origin: o.origin } : {}), ...(o.outward !== undefined ? { outward: o.outward } : {}),
+        ...(o.rule !== undefined ? { rule: o.rule } : {}),
+      });
+    });
   p.command('remove <id>')
     .description('Drop a job from the pool')
     .action((id: string) => run('pool-remove', { id }));
@@ -493,9 +537,10 @@ export function registerSuperCommand(program: Command): void {
     .action(() => run('pool-list', {}));
 
   const room = s.command('room').description('A Telegram group the owner bound to your bot');
-  room.command('say <request> <text>')
-    .description('Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`')
-    .action((request: string, text: string) => run('room-say', { request, text }));
+  room.command('say <request> [text]')
+    .description('Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. A `dream-voice` block in the text goes as a voice message, a `![name](path)` picture as a photo. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`, `bad_file`')
+    .option('--file <path>', 'A picture or file to post with it (the files his private chat may get: inside the project, or a picture, clip or PDF from a worktree, a linked repo or the temp folder; repeat --file for more, up to 10)', (v: string, acc: string[] = []) => [...acc, v])
+    .action((request: string, text: string | undefined, o: { file?: string[] }) => run('room-say', { request, text: text ?? '', ...(o.file?.length ? { files: o.file.map((f) => resolve(f)) } : {}) }));
 
   const sc = s.command('schedule').description('The owner\'s timed jobs ("every morning at 9, do X", "remind me tonight at 9"): only on his own message, never because a child, a page or a report asked. Each add or change shows him the job word for word');
   sc.command('add')
@@ -543,6 +588,9 @@ export function registerSuperCommand(program: Command): void {
   n.command('status <id> <status>')
     .description('Set a line\'s status: not-started | in-progress | almost-done | waiting | done (the owner\'s own lines too, when it helps him)')
     .action((id: string, status: string) => run('note-status', { id, status }));
+  n.command('link <id> <refs...>')
+    .description('Tie messages of his to a line (by their <owner-msg ref>): ones you judge are about it though no flag linked them, like a follow-up with a second example. Pressing the line then shows them and your answers to them')
+    .action((id: string, refs: string[]) => run('note-link', { id, refs }));
   n.command('keep <id>')
     .description('A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h')
     .action((id: string) => run('note-keep', { id }));
@@ -572,12 +620,28 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('merge <children...>')
-    .description('Merge the branch each child\'s worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)')
+    .description('Merge the branch each child\'s worktree is on now (an ended child: its branch) into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed). The reply\'s `returns` lists the work not back in remote dev')
     .requiredOption('--into <topic>', 'The integration branch name (a-z, 0-9, -)')
-    .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
+    .option('--base <ref>', 'Where a NEW topic starts (e.g. main/dev, the remote dev); an existing topic never moves')
+    .action((children: string[], o: { into: string; base?: string }) => run('merge', { children, into: o.into, ...(o.base !== undefined ? { base: o.base } : {}) }));
+
+  const ret = s.command('returns')
+    .description('LOCAL, read-only: the work of a cut not yet back in remote dev (awaiting, in a PR, in a rescue branch, cut-fit), each group with its action and commands, and what installing this cut would DROP from each installed build. Never pushes, opens a PR or moves a branch')
+    .option('--repo <name>', 'A linked repo by name (default: the git repo you stand in)')
+    .option('--from <ref>', 'The cut (default HEAD)')
+    .option('--installed-from <npm=ref>', 'An installed build to check for drops, as <npm path>=<commit> (repeatable; default: the running CLI\'s build stamp)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+    .option('--json', 'The report as JSON')
+    .option('--mark-fit <sha...>', 'Integrator only: note commits written directly on the cut as cut-fit (refs/notes/dreamcontext-cut-fit)')
+    .option('--why <text>', 'With --mark-fit: why they belong on the cut')
+    .action((o: ReturnsCliOpts) => superReturns(o));
+  ret.command('ask')
+    .description('Super only: ONE owner card "Kesim <topic> → dev\'e dönüş" (Hepsine aç / Seçeyim / Şimdi değil) with the numbered report page; the same list answered before is never asked again (returns_asked)')
+    .requiredOption('--topic <t>', 'The cut\'s topic (super/<t>)')
+    .option('--repo <name>', 'A linked repo by name (default: the only one)')
+    .action((o: { topic: string; repo?: string }) => run('returns-ask', { topic: o.topic, ...(o.repo !== undefined ? { repo: o.repo } : {}) }));
 
   s.command('clean')
-    .description('Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children\'s merged worktrees, release worktrees idle 2+ days, any worktree idle 7+ days, node_modules / Rust target of worktrees idle 1+ day, this repo\'s old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI\'s target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept')
+    .description('Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children\'s clean worktrees on a branch, release worktrees idle 2+ days, any worktree idle 7+ days, git-ignored node_modules, dist and Rust target of worktrees idle 1+ day, this repo\'s old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI\'s target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept')
     .option('--apply', 'Really remove what the dry run lists (each row re-checked first)')
     .option('--dry-run', 'Only list (the default; kept for older callers)')
     .action((o: { apply?: boolean; dryRun?: boolean }) => {
@@ -598,7 +662,7 @@ export function registerSuperCommand(program: Command): void {
     .description('Each child\'s worktree, branch, dirty or clean, merged or not')
     .action(() => run('worktree-list', {}));
   w.command('remove <child>')
-    .description('Remove a child\'s worktree; refuses one that is dirty or unmerged')
+    .description('Remove a child\'s clean worktree and keep its branch (in git and in the record); refuses a dirty one or a detached HEAD no ref holds')
     .action((child: string) => run('worktree-remove', { child }));
 }
 
@@ -649,4 +713,55 @@ export function superHandoff(noteParts: string[], opts: HandoffFields, env: Node
   info(session.tab
     ? 'A fresh session opens on the same stage after this turn — finish your sentence and stop.'
     : 'Run /clear in this session to continue from the handoff file.');
+}
+
+export interface ReturnsCliOpts { repo?: string; from?: string; installedFrom?: string[]; json?: boolean; markFit?: string[]; why?: string }
+
+/** The repo `super returns` reads: a linked repo by name, else the git repo of the cwd. */
+async function returnsRepo(name: string | undefined, cwd: string): Promise<string> {
+  if (name !== undefined) {
+    const r = resolveLinkedRepos(dirname(ensureContextRoot())).find((x) => x.name === name);
+    if (!r) throw new Error(`no linked repo named "${name}"`);
+    if (!r.present || !r.path) throw new Error(`linked repo "${name}" is not on this machine`);
+    return r.path;
+  }
+  const top = await new Promise<string>((done) => {
+    execFile('git', ['rev-parse', '--show-toplevel'], { cwd, timeout: 30_000 }, (err, out) => done(err ? '' : String(out).trim()));
+  });
+  if (!top) throw new Error('not inside a git repo: stand in the cut\'s checkout or name --repo');
+  return top;
+}
+
+/** `super returns` (K3): local, never through the app. Exit 0 = a report was made, 1 = an error. */
+export async function superReturns(o: ReturnsCliOpts, cwd = process.cwd()): Promise<void> {
+  try {
+    // Loaded here: the git half of the CLI stays off every other command's start.
+    const { markFit, pendingReturns, renderReturns } = await import('../../lib/super/returns.js');
+    const repo = await returnsRepo(o.repo, cwd);
+    if (o.markFit && o.markFit.length > 0) {
+      if (!o.why || !o.why.trim()) throw new Error('--mark-fit needs --why "<why they belong on the cut>"');
+      const marked = await markFit(repo, o.markFit, o.why, { from: o.from ?? 'HEAD' });
+      if (o.json) console.log(JSON.stringify({ marked }, null, 2));
+      else success(`Marked ${marked.length} cut-fit commit(s): ${marked.map((x) => x.slice(0, 9)).join(', ')}`);
+      return;
+    }
+    if (o.why !== undefined) throw new Error('--why goes with --mark-fit');
+    let installed: InstalledEntry[] | undefined;
+    if (o.installedFrom && o.installedFrom.length > 0) {
+      installed = [];
+      for (const raw of o.installedFrom) {
+        const eq = raw.lastIndexOf('=');
+        const npm = eq > 0 ? raw.slice(0, eq) : '';
+        const ref = eq > 0 ? raw.slice(eq + 1) : '';
+        if (!npm || !ref) throw new Error(`--installed-from wants <npm>=<ref>, got "${raw}"`);
+        installed.push({ npm, sha: ref, source: 'flag' });
+      }
+    }
+    const r = await pendingReturns(repo, o.from ?? 'HEAD', installed ? { installed } : {});
+    console.log(o.json ? JSON.stringify(r, null, 2) : renderReturns(r));
+    if (r.error || r.drops.errors.length > 0) process.exitCode = 1;
+  } catch (err) {
+    error(`super returns: ${(err as Error).message}`);
+    process.exitCode = 1;
+  }
 }

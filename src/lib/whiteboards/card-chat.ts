@@ -1,4 +1,5 @@
 import { dirname } from 'node:path';
+import { buildMemberRulesBlock } from '../member-rules-block.js';
 import { approvedTarget } from '../automations/registry.js';
 import { getRunTarget, isSafeAutomationSlug } from '../automations/store.js';
 import { identityOnly } from '../agents/compose.js';
@@ -14,6 +15,7 @@ import { levelBrief, levelChatMode, levelPermissionArgs } from '../agents/permis
 import { resolveWhiteboardPath } from './store.js';
 import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from '../automations/history.js';
 import { isValidWhiteboardSlug } from './validate.js';
+import { buildOwnerBlock, ownerBriefingSection, type OwnerRef } from '../agents/owner-block.js';
 
 /**
  * AN AGENT CARD'S OWN CONVERSATION (owner, 2026-10-05: "the card is a session of that
@@ -57,9 +59,11 @@ export function parseCardRef(agent: unknown, board: unknown): CardRef | null {
  * is and where it is talking, its scope, its approved instructions, then its notes (marked as
  * notes) and the learning directive last.
  */
-export function cardChatBriefing(m: AutomationManifest, board: string, scope: BoardScope | null, home: BoardScope | null = null): string {
+export function cardChatBriefing(m: AutomationManifest, board: string, scope: BoardScope | null, home: BoardScope | null = null, owner?: OwnerRef | null): string {
   const soul = buildSoulBlock(m);
   const pattern = buildPatternBlock(m);
+  // The owner's lines and lessons under their fingerprinted header (plan uye-karnesi D9).
+  const owned = ownerBriefingSection(buildOwnerBlock(owner, null));
   const learning = buildTurnLearningDirective(m);
   return [
     'WHITEBOARD CARD CONVERSATION',
@@ -79,6 +83,7 @@ export function cardChatBriefing(m: AutomationManifest, board: string, scope: Bo
     '--- END WHO YOU ARE ---',
     ...(soul ? ['', soul] : []),
     ...(pattern ? ['', pattern] : []),
+    ...(owned ? ['', owned] : []),
     ...(learning ? ['', learning] : []),
   ].join('\n');
 }
@@ -176,7 +181,7 @@ export function prepareCardChat(contextRoot: string, card: CardRef, home?: strin
   return prepareEnvelope(
     contextRoot, target, () => cardEnv,
     // The home view counts only on the agent's OWN board: on another board it is a visitor there.
-    (m, scope, homeView) => cardChatBriefing(m, card.board, scope, homeView?.board === card.board ? homeView : null),
+    (m, scope, homeView) => cardChatBriefing(m, card.board, scope, homeView?.board === card.board ? homeView : null, { projectRoot: dirname(contextRoot), member: card.agent, home }),
     home,
   );
 }
@@ -195,9 +200,10 @@ export function parseChatAgent(agent: unknown): string | null {
 }
 
 /** An agent's system-prompt append in a Chat tab. Same order as the card's, for the same reason. */
-export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = '', home: BoardScope | null = null): string {
+export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = '', home: BoardScope | null = null, owner?: OwnerRef | null, rules: string = ''): string {
   const soul = buildSoulBlock(m);
   const pattern = buildPatternBlock(m);
+  const owned = ownerBriefingSection(buildOwnerBlock(owner, null));
   const learning = buildTurnLearningDirective(m);
   return [
     'AGENT CONVERSATION',
@@ -229,7 +235,10 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
     ...(soul ? ['', soul] : []),
     '',
     levelBrief(m.autonomy ?? DEFAULT_AGENT_AUTONOMY),
+    // His corrections of how this member works (D4): rules in force, never among the notes.
+    ...(rules ? ['', rules] : []),
     ...(pattern ? ['', pattern] : []),
+    ...(owned ? ['', owned] : []),
     ...(learning ? ['', learning] : []),
     ...(recent ? ['', recent] : []),
   ].join('\n');
@@ -302,7 +311,7 @@ export function prepareAgentChat(
     contextRoot,
     target,
     (scope): Record<string, string> => (scope ? { [CARD_AGENT_ENV]: slug, [CARD_BOARD_ENV]: scope.board } : {}),
-    (m, scope, homeView) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null), homeView),
+    (m, scope, homeView) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null), homeView, { projectRoot: dirname(contextRoot), member: slug, home }, buildMemberRulesBlock(contextRoot, slug, home)),
     home,
   );
   // The level decides the mode, on the server, from the approved manifest: the pane's own

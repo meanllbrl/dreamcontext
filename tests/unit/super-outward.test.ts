@@ -45,7 +45,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState, msgRef, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, markSuperEventTurn, noteSuperOwnerMsg } from '../../src/lib/super/inbox.js';
 import { openMessageDebt, openResultDebt, ownerMessageGist } from '../../src/lib/super/owed.js';
-import { outwardLine, sanitizeOutward } from '../../src/lib/super/outward.js';
+import { RULE_GONE_LINE, messageCovers, outwardLine, ruleCovers, sanitizeOutward } from '../../src/lib/super/outward.js';
 import { handleSuperVerb, worktreePreamble } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { promptOwnerText } from '../../src/lib/agents/team-roster.js';
@@ -90,7 +90,7 @@ async function verb(name: string, body: Record<string, unknown>): Promise<{ stat
 }
 /** What agent-chat.ts writeOwnerTurn does for an owner message to the Super. */
 const ownerWrites = (text: string) => { markSuperEventTurn(SUPER, false); noteSuperOwnerMsg(SUPER, msgRef(text)); };
-const job = { prompt: 'Read and follow _dream_context/tmp/super-prompts/orbit-release/brief.md', brief: 'Orbit release · basic sonnet/medium', mode: 'basic' };
+const job = { model: 'sonnet', prompt: 'Read and follow _dream_context/tmp/super-prompts/orbit-release/brief.md', brief: 'Orbit release · basic sonnet/medium', mode: 'basic' };
 
 describe('delegate --outward: his own message named the push, PR or deploy', () => {
   it('in his turn: the child is told the step, his words and the limits', async () => {
@@ -167,9 +167,14 @@ describe('delegate --outward: his own message named the push, PR or deploy', () 
     ownerWrites(ASK);
     expect((await verb('delegate', { ...job, outward: STEP })).status).toBe(200);
     markSuperEventTurn(SUPER, true);
-    const next = await verb('delegate', { prompt: 'Carry on the Orbit release from its handoff file', brief: 'Orbit release 2', mode: 'basic', succeeds: 'child-1' });
+    const next = await verb('delegate', { model: 'sonnet', prompt: 'Carry on the Orbit release from its handoff file', brief: 'Orbit release 2', mode: 'basic', succeeds: 'child-1' });
     expect(next.status).toBe(200);
     expect(sent.prompts[1]).toContain(`you may run exactly it: «${STEP}».`);
+    // C3: both children carry the delegating Super chat's key, the successor through --succeeds.
+    const kids = (await readSuperState(root)).children;
+    expect(kids['child-1'].delegatedBy).toEqual([SUPER]);
+    const heir = Object.values(kids).find((k) => k.sessionId !== 'child-1');
+    expect(heir?.delegatedBy).toEqual([SUPER]);
   });
 
   it('without --outward the child gets no grant', async () => {
@@ -213,5 +218,145 @@ describe('the lines the child is born with', () => {
     openMessageDebt(s, ASK, Date.now(), msgRef(ASK));
     expect(ownerMessageGist(s, msgRef(ASK))).toBe(ASK);
     expect(ownerMessageGist(s, 'zz9zz9')).toBeNull();
+  });
+});
+
+describe('a standing rule grants one plain staging push only (D5, criterion 5)', () => {
+  const RULE = 'staging\'e kendin push et, PR aç ve deploy et';
+  const PUSH = 'git push origin super/x:staging';
+  // Super for the owner, 22 Nov r7: only one plain `git push <remote> <ref>:staging`; anything else is a card.
+  it('one plain push onto staging is covered', () => {
+    expect(ruleCovers(PUSH, RULE, null).ok).toBe(true);
+    expect(ruleCovers('git push main HEAD:staging', RULE, null).ok).toBe(true);
+    expect(ruleCovers(`  ${PUSH}  `, RULE, null).ok).toBe(true);
+  });
+  it('a joined, redirected, flagged, quoted or substituted step, a PR or a deploy is refused', () => {
+    for (const step of [
+      'git push -u origin super/x:staging', 'git push --set-upstream origin super/x:staging', 'git push origin super/x:refs/heads/staging',
+      `${PUSH} && gh pr create --base staging --fill`, `npm run build && ${PUSH}`, `cd ../wt && ${PUSH}`, `${PUSH}; git push origin HEAD:main`,
+      `${PUSH} | tee log`, `${PUSH} > out.txt`, `${PUSH} 2>&1`, `(${PUSH})`, `${PUSH} &`, `git push origin $(echo x):staging`,
+      'git push origin `echo x`:staging', 'git push origin "super/x":staging', `${PUSH}\ngit push origin HEAD:main`,
+      'gh pr create --base staging --fill', 'npx firebase deploy --only hosting -P acme-staging', 'firebase hosting:channel:deploy preview --site acme-stg',
+      'git -C ../wt push origin super/x:staging', 'git push https://example.invalid/r.git super/x:staging', 'git push origin :staging',
+      'git push origin x:staging y:other', 'git push origin main staging', 'git push --force origin x:staging', 'git push origin +x:staging',
+      'git push origin x:staging-prod', 'git push origin HEAD:main:staging', 'git push  origin x:staging']) {
+      const v = ruleCovers(step, RULE, null);
+      expect(v.ok, step).toBe(false);
+      if (!v.ok) expect(v.error).toBe('outward_out_of_scope');
+    }
+  });
+  it('a rule whose words name no push or staging grants nothing', () => {
+    expect(ruleCovers(PUSH, 'kısa yaz', null).ok).toBe(false);
+  });
+  // r5 (owner: "sabit cümle"): only the fixed sentence or its push part grants; his prose is never read for permission.
+  it('a rule grants only by the fixed sentence with its push part', () => {
+    expect(ruleCovers(PUSH, "staging'e kendin push et", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "Staging’e kendin push et.", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "staging'e kendin deploy et ve push et", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "staging'e kendin PR aç", null).ok).toBe(false);
+    expect(ruleCovers(PUSH, "staging'e kendin deploy et", null).ok).toBe(false);
+  });
+  it('a rule he said again grants only when every saying grants the push', () => {
+    expect(ruleCovers(PUSH, "staging'e kendin push et / Staging'e kendin push et.", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "staging'e kendin push et, PR aç / staging'e kendin PR aç", null).ok).toBe(false);
+    expect(ruleCovers(PUSH, "staging'e kendin push et / ama önce bana sor", null).ok).toBe(false);
+  });
+  it('any other wording grants nothing: bans, conditions, permissions in prose, another target', () => {
+    for (const words of [
+      "staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", "staging'e push serbest, canlıya dokunma",
+      "staging'e her zaman push yapabilir", "always push to staging yourself", "staging'e push etmeli", "staging'e kendin push et ama önce bana sor",
+      "PR açabilirsin ama staging'e push etme", "staging'e push etme, sadece PR aç", "staging ve main'e asla push etme", "staging'e pushlama",
+      "çocuk staging'e push etmesin", "staging'e push yapmasın", "staging'e push etmemelisin", "staging'e push etmeyeceksin", "staging'e push'lama",
+      "you must not push to staging", "no pushing to staging", "never push to staging", "staging'e push etmeden önce testleri koş",
+      "staging'e push etmeden önce benden izin al", "staging'e push için önce benden izin iste", "staging'e push etmek için izin almalısın",
+      "staging'e push'a izin vermiyorum", "staging'e push yapılmasına izin vermiyorum", "staging'e push için izin verilmez",
+      "staging'e kendin push etmiyorsun, bana sor", "kendi branch'ine push edebilirsin, staging'e dokunma", "feature dalına push edebilirsin ama staging'e asla",
+      "ben onaylarsam staging'e kendin push et", "staging'e kendin push etme", "PR açabilirsin"]) {
+      expect(ruleCovers(PUSH, words, null).ok, words).toBe(false);
+    }
+    const v = ruleCovers(PUSH, "staging'e push serbest", null);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.message).toContain("staging'e kendin push et, PR aç ve deploy et");
+  });
+  // r4 security minors: escapes, braces, a git alias, heads/main and a combined -uf never pass the message path.
+  it('a backslash, a brace, a git alias, heads/main or a combined force flag is refused on the message path', () => {
+    for (const step of ['git push origin ma\\in', 'git push origin HEAD:ma\\in', 'git push origin HEAD:{main,x}', 'git -c alias.x=push x origin HEAD:main',
+      'git push origin HEAD:heads/main', 'git push -uf origin super/x', 'git push -fu origin super/x']) {
+      expect(messageCovers(step, 'pushla').ok, step).toBe(false);
+    }
+    expect(messageCovers('git push -u origin super/x', 'pushla').ok).toBe(true);
+    expect(messageCovers('git -C ../wt push origin HEAD:refs/heads/main', 'push it').ok).toBe(false);
+    expect(messageCovers('git -C ../wt merge feature', 'push it').ok).toBe(false);
+  });
+  // r3 edge-cases-1: quotes are removed before the message path reads a push, as the shell removes them.
+  it('a quoted main, refspec, force or +refspec is refused on the message path; substitution too', () => {
+    for (const step of ['git push origin "main"', "git push origin 'HEAD:refs/heads/main'", 'git push origin super/x "--force"', 'git push origin "+super/x:feature"',
+      'cd "$(git push --force origin HEAD:main)" && git push -u origin super/x', 'git push origin $(echo main)']) {
+      expect(messageCovers(step, 'pushla ve PR aç').ok, step).toBe(false);
+    }
+    expect(messageCovers('git push -u origin super/x && gh pr create --base main --title "push to main fix"', 'pushla ve PR aç').ok).toBe(true);
+  });
+  it('the child line says staging only; the gone line and both strip from his words', () => {
+    const g = { source: 'rule' as const, step: 'git push origin x:staging', rule: 'abc123def0', words: RULE };
+    const line = outwardLine(g);
+    expect(line).toContain('The server checked that rule abc123def0 is his active standing rule; staging only, never production, release, publish or merge.');
+    expect(promptOwnerText(`${line}\n\n${RULE_GONE_LINE}\n\nShip it.`)).toBe('Ship it.');
+    expect(sanitizeOutward(g)).toEqual(g);
+    expect(sanitizeOutward({ ...g, merge: { pr: 1, method: 'squash' } })).toBeUndefined();
+    expect(sanitizeOutward({ ...g, rule: 'NOT A RULE' })).toBeUndefined();
+  });
+});
+
+describe('his PR merge (D13, criterion 12)', () => {
+  const MERGE = "pr'ı birleştir, squash olsun";
+  it('only the one gh pr merge shape, and only when his words name merging', () => {
+    expect(messageCovers('gh pr merge 41 --squash', MERGE)).toEqual({ ok: true, merge: { pr: 41, method: 'squash' } });
+    expect(messageCovers('gh pr merge 41 --rebase --delete-branch', 'mergele')).toEqual({ ok: true, merge: { pr: 41, method: 'rebase', deleteBranch: true } });
+    for (const step of ['gh pr merge 41', 'gh pr merge 41 --squash --admin', 'gh pr merge 41 --auto --squash', 'git merge feature/x', 'merge feature/x into main']) {
+      expect(messageCovers(step, MERGE).ok, step).toBe(false);
+    }
+    expect(messageCovers('gh pr merge 41 --squash', 'push the branch and open a PR').ok).toBe(false);
+    expect(messageCovers('git push --force origin x', 'push it').ok).toBe(false);
+    expect(messageCovers('git push origin HEAD:main', 'push it').ok).toBe(false);
+  });
+  // r1 edge-cases-1: a PR's base is no push target; the push's own refspecs decide.
+  it('a push of the branch plus a PR into main is granted; a push onto main anywhere in its args is not', () => {
+    for (const step of ['git push -u origin super/x && gh pr create --base main', 'push super/x to origin and open a PR to main',
+      'git push origin super/x, then gh pr create --base master', 'git push -u origin super/x && gh pr create --base main --fill']) {
+      expect(messageCovers(step, 'push et, main\'e PR aç').ok, step).toBe(true);
+    }
+    for (const step of ['git push origin main feature', 'git push origin main', 'git push origin x:main && gh pr create --base main',
+      'git push --mirror origin', 'git push origin --delete main', 'push to main']) {
+      expect(messageCovers(step, 'push it').ok, step).toBe(false);
+    }
+  });
+  // r1 security minor / edge-cases minor: a merge said not to happen is no merge.
+  it('his "do not merge" grants no merge; a step saying not to merge is a plain push', () => {
+    for (const words of ["41'i birleştirme, önce ben bakacağım", "don't merge yet", 'merge etme']) {
+      expect(messageCovers('gh pr merge 41 --squash', words).ok, words).toBe(false);
+    }
+    expect(messageCovers('gh pr merge 41 --squash', 'birleştirmeni istiyorum, squash').ok).toBe(true);
+    expect(messageCovers('push and open a PR, do not merge', 'push et').ok).toBe(true);
+  });
+  it('a merge grant says the exact command and keeps no "never merge" clause; its preamble too', () => {
+    const g = { step: 'gh pr merge 41 --squash', ref: msgRef(MERGE), words: MERGE, merge: { pr: 41, method: 'squash' as const } };
+    const line = outwardLine(g);
+    expect(line).toContain('you may run exactly `gh pr merge 41 --squash`');
+    expect(line).not.toContain('never merge into the default branch');
+    const pre = worktreePreamble({ path: '/Users/me/.claude-worktrees/orbit', branch: 'super/orbit', repo: '/Users/me/orbit' }, g);
+    expect(pre).toContain('Never merge locally; merge only as the next line says.');
+    expect(promptOwnerText(`${pre}\n\n${line}\n\nMerge it.`)).toBe('Merge it.');
+  });
+  it('in his turn the route grants it; a bare merge is refused', async () => {
+    const s = { ...emptySuperState(), session: SUPER, enabled: true };
+    openMessageDebt(s, MERGE, Date.now(), msgRef(MERGE));
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(s));
+    resetSuperIndex();
+    markSuperEventTurn(SUPER, false); noteSuperOwnerMsg(SUPER, msgRef(MERGE), { words: MERGE });
+    expect((await verb('delegate', { ...job, outward: 'gh pr merge 41' })).json.error).toBe('outward_out_of_scope');
+    const ok = await verb('delegate', { ...job, outward: 'gh pr merge 41 --squash' });
+    expect(ok.status).toBe(200);
+    expect(sent.prompts[0]).toContain('you may run exactly `gh pr merge 41 --squash`');
+    expect((await readSuperState(root)).children['child-1'].outward).toMatchObject({ merge: { pr: 41, method: 'squash' } });
   });
 });

@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { keyPath } from './real-path.js';
 
@@ -43,6 +43,24 @@ export function readVaultFileSafe(root: string, rel: string): string | null {
     return readFileSync(abs, 'utf-8');
   } catch {
     return null;
+  }
+}
+
+/** At most `maxBytes` from the start of `rel` under `root` (same guards as {@link readVaultFileSafe}),
+ *  a split UTF-8 character at the cut dropped; null when unsafe or unreadable. Never throws. */
+export function readVaultHeadSafe(root: string, rel: string, maxBytes: number): string | null {
+  const abs = safeVaultPath(root, rel);
+  if (!abs || !(maxBytes > 0)) return null;
+  let fd: number | null = null;
+  try {
+    fd = openSync(abs, 'r');
+    const buf = Buffer.alloc(maxBytes);
+    const n = readSync(fd, buf, 0, maxBytes, 0);
+    return buf.subarray(0, n).toString('utf-8').replace(/\uFFFD+$/, '');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) try { closeSync(fd); } catch { /* closed */ }
   }
 }
 

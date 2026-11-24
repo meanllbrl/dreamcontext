@@ -43,11 +43,23 @@ export function deniedForEveryone(path: string): boolean {
   return /^\/api\/automations\/threads\/say(\/|$)/.test(path)
     || /^\/api\/automations\/[^/]+\/thread\/reply(\/|$)/.test(path)
     || /^\/api\/apps(\/|$)/.test(path)
+    // Live links (tunel-paylasim C10): no app lists, opens, reads back or closes a share.
+    || /^\/api\/shares(\/|$)/.test(path)
     // The quick edit spends the owner's Claude account and writes his boards (plan
     // tahta-hizli-duzenle D14). Anchored, so a board slugged `quick-edit` stays readable.
     || /^\/api\/whiteboards\/quick-edit\/status$/.test(path)
     || /^\/api\/whiteboards\/[^/]+\/quick-edit(\/|$)/.test(path);
 }
+
+/**
+ * Live links (tunel-paylasim C10): while an app has a live link (`starting`/`open`) and its AI
+ * switch is off, its BACKEND may make only these dashboard writes through `/__dc/api/*`. A closed
+ * ALLOW-list, default deny: an agent run, a question's answer and any write route added later
+ * answer `409 shared_live` without anyone touching this list. The two allowed keys are rebuilt by
+ * {@link narrowPageBody}, as for a page. `GET /api/recall/haiku` runs a Claude call with no tools
+ * (`--tools ''`), so reads stay open.
+ */
+export const SHARED_BACKEND_WRITES: ReadonlySet<string> = new Set(['POST /api/tasks', 'PATCH /api/tasks/:slug']);
 
 export interface RouteMatcher {
   match(method: string, url: string): { method: string; path: string } | null;

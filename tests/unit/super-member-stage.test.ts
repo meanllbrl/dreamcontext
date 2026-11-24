@@ -258,9 +258,12 @@ describe('observed run fixes (super-members.mjs)', () => {
     const v = memberPlaceholderState('acme');
     expect(v).not.toBeNull();
     expect(v).toMatchObject({ vault: 'acme', session: null, enabled: true, queue: [], children: {} });
-    // Its own three cards stand on it (plan r4 G3): an off member is turned on from its stage.
-    expect(v!.containers.map((c) => [c.kind, c.ref, c.place])).toEqual([['member', 'routines', 'float'], ['member', 'instructions', 'float'], ['member', 'settings', 'others']]);
-    expect(surface).toMatch(/const stageView = superState \?\? memberPlaceholder;/);
+    // Its own cards stand on it (plan r4 G3): an off member is turned on from its stage. The
+    // Scorecard (plan uye-karnesi C7) floats medium, after the three.
+    expect(v!.containers.map((c) => [c.kind, c.ref, c.place])).toEqual([['member', 'routines', 'float'], ['member', 'instructions', 'float'], ['member', 'settings', 'others'], ['member', 'scorecard', 'float']]);
+    // A live member record lacking a newer card draws it at its default (plan uye-karnesi C7).
+    expect(surface).toMatch(/const memberStageState = useMemo\(\(\) => withMissingMemberCards\(superState, memberOf\(activeSuperId\) !== null\)/);
+    expect(surface).toMatch(/const stageView = memberStageState \?\? memberPlaceholder;/);
     expect(surface).toMatch(/const handedOver = superView === 'super' && !!stageView && !isMobile;/);
     expect(surface).toMatch(/\{handedOver && stageView && \(\s*<SuperSurface/);
     // The placeholder is a view only: never written to the record store.
@@ -276,10 +279,13 @@ describe('observed run fixes (super-members.mjs)', () => {
         { id: 'w1', kind: 'web', ref: 'https://example.com', shape: 'square', place: 'float' },
       ] as never,
     });
-    expect(saved!.containers.map((c) => [c.ref, c.place])).toEqual([['routines', 'others'], ['settings', 'float']]);
+    // The saved cards where he left them, first and untouched; a card the record lacks (a newer
+    // build's, plan uye-karnesi C7) is drawn after them at its default.
+    expect(saved!.containers.map((c) => [c.ref, c.place])).toEqual([['routines', 'others'], ['settings', 'float'], ['instructions', 'float'], ['scorecard', 'float']]);
     expect(saved!.containers[0]).toMatchObject({ shape: 'tall', size: 'wide' });
+    expect(saved!.containers[1]).toMatchObject({ pos: { x: 0.4, y: 0.2 } });
     // No record (never born): the defaults.
-    expect(memberPlaceholderState('acme', null)!.containers).toHaveLength(3);
+    expect(memberPlaceholderState('acme', null)!.containers).toHaveLength(4);
     // The surface reads the record on an off or unapproved refusal, and only draws it.
     expect(surface).toMatch(/if \(refusal === 'off' \|\| refusal === 'unapproved'\) \{\s*const saved = await fetchSuperState\(scopedApi, sid\);/);
     expect(surface).toMatch(/memberPlaceholderState\(vault \?\? '', memberSaved\?\.slug === slug \? memberSaved\.state : null\)/);

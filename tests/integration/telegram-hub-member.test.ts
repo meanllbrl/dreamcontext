@@ -64,7 +64,7 @@ beforeEach(async () => {
   resetSuperIndex();
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'ua_bot');
   births = []; refuse = null;
-  hub = new TelegramHub({
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0,
     home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }],
     openLink: () => {}, injectorWaitMs: 300,
     memberSuper: async (r, slug) => {
@@ -118,7 +118,7 @@ describe("a slept member Super wakes from its own bot with no window (owner 2026
 });
 
 describe("a member's bot talks to the member's own Super", () => {
-  it('a message births its Super, reaches its injector under a ref; the answer comes back whole', async () => {
+  it('a message births its Super, reaches its injector under a ref; a long answer keeps its start open and folds the rest (telegram-sade)', async () => {
     const h = reg.registerChat({ sessionId: MSID, conversationId: null, vault: 'acme', mode: 'super' });
     const { inj, sent } = fakeInjector();
     reg.registerChatInjector(MSID, inj);
@@ -128,12 +128,15 @@ describe("a member's bot talks to the member's own Super", () => {
     const { ref, body } = parseTelegramPrefix(sent[0]);
     expect(body).toBe('bütçeyi kontrol et');
     expect((await readSuperState(root, superIdOfMember(SLUG))).session).toBe(MSID);
-    // A long answer: past FOLD_AT, it would have folded on the old member path.
-    const long = Array.from({ length: 8 }, (_, i) => `Kampanya ${i + 1}: harcama yerinde, ROAS hedefin üstünde, bütçe aynı kalsın; yarın tekrar bakarım.`).join('\n\n');
+    // A long answer (past the ~1,200 visible characters an unmarked answer may show whole): its start stays open, the rest folds, nothing is lost (owner 2026-11-21,
+    // "Hepsini uygula", replacing the 2026-11-14 "a member's answer never folds").
+    const long = Array.from({ length: 16 }, (_, i) => `Kampanya ${i + 1}: harcama yerinde, ROAS hedefin üstünde, bütçe aynı kalsın; yarın tekrar bakarım.`).join('\n\n');
     assistant(h, `<!-- re:${ref} -->\n${long}`);
     await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Kampanya 8'))).toBe(true));
     const answer = tg.texts().filter((t) => t.includes('Kampanya'));
-    expect(answer.join('\n')).not.toContain('expandable');
+    expect(answer).toHaveLength(1);
+    expect(answer[0].startsWith('Kampanya 1:')).toBe(true);
+    expect(answer[0]).toContain('<blockquote expandable>');
   });
 
   it('a refused member is told why in Turkish and nothing is injected', async () => {
@@ -189,6 +192,8 @@ describe("a member's bot talks to the member's own Super", () => {
     await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
     const [refA, refB] = sent.map((t) => parseTelegramPrefix(t).ref);
     assistant(h, `<!-- re:${refB} -->\nİkinciye cevap.`);
+    // Written apart in time (one turn's texts written together go as one message, telegram-sade).
+    await vi.waitFor(() => expect(tg.texts()).toContain('İkinciye cevap.'));
     assistant(h, `<!-- re:${refA} -->\nBirinciye cevap.`);
     await vi.waitFor(() => expect(tg.texts()).toContain('Birinciye cevap.'));
     const sentOf = (t: string) => tg.sent().find((c) => String(c.params.text) === t)!;

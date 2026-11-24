@@ -1,7 +1,7 @@
 import { closeAllForTakeback } from './owed.js';
 import { randomUUID } from 'node:crypto';
 import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds, superDecidesPermission } from '../assistant/chat-registry.js';
-import { isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
+import { holdsIdentity, isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
@@ -69,6 +69,10 @@ export async function enableSuper(
   const vault = superVaultName(contextRoot);
   const titles = body.titles && typeof body.titles === 'object' && !Array.isArray(body.titles) ? body.titles as Record<string, unknown> : {};
   const asked = cleanIds(body.adopt);
+  // C8a (plan ilk-acilis): an onboarding landing turns the Super on QUIETLY: everything below
+  // happens, except the new `handover` item, so it queues no new turn until the owner writes.
+  // Only the strict boolean `true` counts; anything else is a plain enable.
+  const quiet = body.quiet === true;
   const candidates = adoptableChats(asked, vault);
   const skipped: SkippedChat[] = [];
   const skip = (id: string, reason: SkippedChat['reason']) => {
@@ -88,12 +92,12 @@ export async function enableSuper(
     // A chat a remote screen holds or is opening is never adopted (the Mac window must hold
     // every child: only its own tab socket carries the Super's answer and send).
     const adopt = candidates.filter((sid) => sid !== session && !(isPhoneHeld(sid) && (skip(sid, 'phone_held'), true)));
-    // A child kept from an earlier hand-over: still open, still running, or holding a worktree
-    // the super agent may still merge.
+    // A child kept from an earlier hand-over: still open, still running, or holding its work's
+    // identity (a worktree or a branch not yet home, K9): the super agent may still merge it.
     const kept: Record<string, SuperChild> = {};
     for (const [sid, c] of Object.entries(s.children)) {
       const live = getChat(sid);
-      if (adopt.includes(sid) || (live && live.status !== 'gone') || c.worktree) kept[sid] = c;
+      if (adopt.includes(sid) || (live && live.status !== 'gone') || holdsIdentity(c)) kept[sid] = c;
     }
     for (const sid of adopt) {
       if (!Object.prototype.hasOwnProperty.call(kept, sid)) kept[sid] = { sessionId: sid, brief: titleFor(sid, titles), adopted: true, startedAt: now };
@@ -125,13 +129,15 @@ export async function enableSuper(
     delete s.released;
     s.away = { since: null, events: 0 };
     s.queue = s.queue.filter((q) => !(q.kind === 'handover' && q.state === 'pending'));
-    s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
+    if (!quiet) s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
     for (const sid of adopt) queueWhatItAsks(s, sid, now);
   }, { onDemoted: (ids) => { for (const id of ids) skip(id, 'phone_held'); } });
   await reconcileRows(contextRoot);
   // What a member asked him while nobody was handed over (no mirror is made then) reaches him now.
   await syncAllMemberMirrors(contextRoot).catch(() => undefined);
   void pumpSuper(contextRoot);
+  // A new Super session: agent migration work waiting after an update gets its one event.
+  void import('./migration-event.js').then((m) => m.checkMigrationDue(contextRoot)).catch(() => undefined);
   return { session: state.session as string, state, skipped };
 }
 

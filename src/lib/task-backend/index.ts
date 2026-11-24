@@ -66,7 +66,7 @@ export function getTaskSyncStatus(
 ): TaskSyncStatus {
   const cfg = config !== undefined ? config : readSetupConfig(dirname(contextRoot));
   const ledger = new SyncLedger(contextRoot);
-  const state = ledger.readSyncState();
+  const state = ledger.peekSyncState();
   const conflictsDir = ledger.conflictsDir();
   return {
     backend: cfg?.taskBackend ?? 'local',

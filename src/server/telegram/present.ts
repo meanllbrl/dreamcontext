@@ -130,10 +130,12 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
   onSent?.([...pics, ...docsSent]);
   const album = pics.length >= 2;
   const fallback = unsent.map((m) => notSentLine('', m.title, NOT_SENT.refused));
-  if (lines.length || fallback.length || !pics.length || moreLine.length) {
+  const rows = [...lines.map((l) => (l.kind === 'text' ? l.line : l.title)), ...fallback];
+  // Only when it has a line to carry: "Sunum:" never goes alone (Doc 2026-11-21, C5: 35 lone
+  // headings when the cards went as PDFs, whose own captions name them).
+  if (rows.length || moreLine.length) {
     // One card per line; a numbered list when nothing went as a picture (the whole presentation
     // is this message), never the old "Başlık: a · b · c" run-on.
-    const rows = [...lines.map((l) => (l.kind === 'text' ? l.line : l.title)), ...fallback];
     const numbered = !pics.length && rows.length > 1;
     const text = [
       pics.length ? '' : `<b>${escapeHtml(`${word}:`)}</b>`,

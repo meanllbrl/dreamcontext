@@ -25,6 +25,7 @@ import { readHandoffLog, readLimitHistory, readSleepRuns, type LimitPoint, type 
 import type { LimitHit } from './usage-readers.js';
 import { currentLedger, rowAccount, scanProgress, type Ledger, type LedgerFile, type LedgerRow, type ScanProgress } from './usage-ledger.js';
 import { listVaults, type Vault } from './vaults.js';
+import { superEffect, type SuperEffect } from './usage-super-effect.js';
 import { ecoPlusDefault, ecoPlusHistoryPath } from './context-watch.js';
 
 export type StatsRange = '24h' | '7d' | '30d' | '90d';
@@ -202,6 +203,8 @@ export interface StatsWire {
     ecoPartial: boolean;
     /** Per bucket, in dollars: sleep is measured, memory and saved are ESTIMATES. */
     trend: { sleep: number[]; memory: number[]; saved: number[] };
+    /** Does the Super Agent raise or lower token use (usage-super-effect.ts). */
+    superEffect: SuperEffect;
   };
   limits: ToolLimits[];
   notCounted: Array<{ id: string; name: string }>;
@@ -355,6 +358,31 @@ export function superSends(files: Record<string, LedgerFile>): Set<string> {
     if (i >= 0) claimed.add(`${to.path}|${i}`);
   }
   return claimed;
+}
+
+/** Every session a Super record names (children, former children; main and member records), with
+ *  the child's mode where the record keeps it. A torn or missing record names nothing. */
+function superRecordFacts(vaults: Vault[]): { named: Set<string>; namedMode: Map<string, string> } {
+  const named = new Set<string>();
+  const namedMode = new Map<string, string>();
+  const read = (path: string) => {
+    let rec: { children?: Record<string, { sessionId?: unknown; mode?: unknown }>; formerChildren?: unknown };
+    try { rec = JSON.parse(readFileSync(path, 'utf-8')) as typeof rec; } catch { return; }
+    for (const c of Object.values(rec.children ?? {})) {
+      if (typeof c?.sessionId !== 'string' || !c.sessionId) continue;
+      named.add(c.sessionId);
+      if (typeof c.mode === 'string' && c.mode) namedMode.set(c.sessionId, c.mode);
+    }
+    if (Array.isArray(rec.formerChildren)) for (const id of rec.formerChildren) if (typeof id === 'string' && id) named.add(id);
+  };
+  for (const v of vaults) {
+    const state = join(v.path, '_dream_context', 'state');
+    read(join(state, '.super-agent.json'));
+    let members: string[] = [];
+    try { members = readdirSync(join(state, '.super', 'members')); } catch { /* no member Supers */ }
+    for (const n of members) if (n.endsWith('.json')) read(join(state, '.super', 'members', n));
+  }
+  return { named, namedMode };
 }
 
 // ── The one read ─────────────────────────────────────────────────────────────────────
@@ -806,6 +834,15 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   }).sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0) || b.tokens - a.tokens);
 
   const firstRun = recorded.map((r) => r.startedAt).sort()[0] ?? null;
+  const facts = superRecordFacts(vaults);
+  const effectFiles: Record<string, LedgerFile> = {};
+  for (const v of views) if (shown(v)) effectFiles[v.path] = v.f;
+  const effect = superEffect({
+    files: effectFiles, models: ledger.models, named: facts.named, namedMode: facts.namedMode,
+    handoffs: vaults.flatMap((v) => readHandoffLog(join(v.path, '_dream_context'))),
+    rangeStart, rangeEnd,
+    cost: (model, t) => { const { price } = resolvePrice(model, book); if (!price) return 0; const c = costParts(price, t); return c[0] + c[1] + c[2] + c[3]; },
+  });
   return {
     scanning: scanProgress(home),
     range: q.range, buckets, hourly,
@@ -839,6 +876,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
       memory: { ...memory, inputShare: claudeInput ? (memory.first + memory.carried) / claudeInput : 0 },
       answer,
       projects: projectRows, ecoFrom, ecoPartial: ecoFrom === null || ecoFrom > rangeStart, trend,
+      superEffect: effect,
     },
     limits: [{ id: 'claude', name: 'Claude Code', accounts: claudeLimits }, { id: 'codex', name: 'Codex', accounts: codexLimits }],
     notCounted: NOT_COUNTED,

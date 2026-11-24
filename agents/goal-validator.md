@@ -9,7 +9,6 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 25
 color: cyan
 skills:
   - dreamcontext-agent-core

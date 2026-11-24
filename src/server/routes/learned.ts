@@ -15,14 +15,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendError, sendJson, parseJsonBody } from '../middleware.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import {
-  RULE_ID_RE, RulesStoreError, deriveRule, dropRule, findRecord, keepRule, personalRulesVisible, personalStoreRef,
-  projectStoreRef, readStore, undoRule, type RuleView, type StatusChange, type StoreRef,
+  RULE_ID_RE, RulesStoreError, dropRule, keepRule, locateIn, personalRulesVisible, undoRule, visibleStores,
+  type RuleLocator, type RuleView, type StatusChange, type StatusOpts, type StoreRef,
 } from '../../lib/rules-store.js';
 
 /** What the card shows: read from the record, never from the block the agent wrote. */
 export interface LearnedCardFacts {
   id: string;
-  scope: 'me' | 'project';
+  scope: 'me' | 'project' | 'member';
+  /** A member rule's member slug. */
+  member: string | null;
   status: RuleView['status'];
   headline: string;
   text: string;
@@ -37,20 +39,21 @@ export interface LearnedCardFacts {
   hot: boolean;
 }
 
-/** Which store holds `id`: the personal one (when this vault shows it) or the project's. */
-export function locateRule(contextRoot: string, id: string, home?: string): { ref: StoreRef; view: RuleView; replacedHeadline: string | null } | null {
-  const refs: StoreRef[] = [];
-  if (personalRulesVisible(contextRoot, home).visible) refs.push(personalStoreRef(home));
-  refs.push(projectStoreRef(contextRoot, home));
-  for (const ref of refs) {
-    const store = readStore(ref);
-    const rec = findRecord(store, id);
-    if (!rec) continue;
-    const view = deriveRule(rec);
-    const old = view.replaces ? findRecord(store, view.replaces) : undefined;
-    return { ref, view, replacedHeadline: old ? deriveRule(old).headline : null };
-  }
-  return null;
+/**
+ * The card's locator (C1): this project, his personal store when this vault shows it, and every
+ * member store on this Mac (each slug checked by `memberStoreRefs`). The CLI builds the same one.
+ */
+export function cardLocator(contextRoot: string, home?: string): RuleLocator {
+  return visibleStores(contextRoot, home, { personal: personalRulesVisible(contextRoot, home).visible });
+}
+
+/** Which store holds `id`, and the headline of the rule it replaced, in whichever store that lives. */
+export function locateRule(contextRoot: string, id: string, home?: string): { ref: StoreRef; view: RuleView; replacedHeadline: string | null; locate: RuleLocator } | null {
+  const locate = cardLocator(contextRoot, home);
+  const found = locateIn(locate, id);
+  if (!found) return null;
+  const old = found.view.replaces ? locateIn(locate, found.view.replaces) : null;
+  return { ref: found.ref, view: found.view, replacedHeadline: old ? old.view.headline : null, locate };
 }
 
 export function learnedCardFacts(view: RuleView, replaced: string | null, restored: RuleView | null = null): LearnedCardFacts {
@@ -58,6 +61,7 @@ export function learnedCardFacts(view: RuleView, replaced: string | null, restor
   return {
     id: view.id,
     scope: view.scope,
+    member: view.member ?? null,
     status: view.status,
     headline: view.headline,
     text: view.text,
@@ -98,7 +102,7 @@ export async function handleLearnedGet(
 }
 
 type Tap = 'undo' | 'keep' | 'drop';
-const TAPS: Record<Tap, (ref: StoreRef, id: string, actor: { by: 'owner'; conversation: string }) => StatusChange> = {
+const TAPS: Record<Tap, (ref: StoreRef, id: string, actor: { by: 'owner'; conversation: string }, opts: StatusOpts) => StatusChange> = {
   undo: undoRule, keep: keepRule, drop: dropRule,
 };
 
@@ -111,7 +115,8 @@ function tapHandler(op: Tap) {
       const conversation = typeof body?.sessionId === 'string' ? body.sessionId.slice(0, 128) : 'card';
       const found = locateRule(contextRoot, params.id!);
       if (!found) { sendError(res, 404, 'not_found', `No rule ${params.id} here.`); return; }
-      const change = TAPS[op](found.ref, params.id!, { by: 'owner', conversation });
+      // His tap on his own page: the owner's gate (a keep of a flagged member rule is his to make).
+      const change = TAPS[op](found.ref, params.id!, { by: 'owner', conversation }, { locate: found.locate, gate: { actor: { owner: true }, quote: { text: '', here: true } } });
       if (!change.ok) { sendError(res, 409, 'refused', change.reason); return; }
       sendJson(res, 200, { card: learnedCardFacts(change.rule, found.replacedHeadline, change.restored ?? null) });
     } catch (err) { storeError(res, err); }
