@@ -279,6 +279,30 @@ describe('the terminal entry carries the published line', () => {
   });
 });
 
+describe('an app\'s run names its app to its child (uye-gecmis-is G2)', () => {
+  it('the live run child carries DREAMCONTEXT_RUN_APP; an owner run does not', async () => {
+    const manifest = createAutomation(contextRoot, { slug: 'digest', title: 'Digest', days: 'daily', at: '18:00', prompt: 'Say hello.' });
+    approveAutomation(projectRoot, manifest, NOW, home);
+    const envs: Array<Record<string, string | undefined>> = [];
+    const run = async (app: boolean) => {
+      const child = Object.assign(new EventEmitter(), { pid: 7, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => {} });
+      const spawnImpl = vi.fn((_c: string, _a: string[], o: { env?: Record<string, string | undefined> }) => { envs.push(o.env ?? {}); return child; }) as unknown as SpawnImpl;
+      const done = runAutomation(contextRoot, 'digest', {
+        now: () => NOW, home, spawnImpl, killImpl: vi.fn(), notify: () => {}, force: true,
+        ...(app ? { ask: 'summarise the funnel', app: { slug: 'funnel-desk', name: 'Funnel desk', brief: '', root: projectRoot, actions: [] } } : {}),
+      });
+      await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalled());
+      child.stdout.emit('data', Buffer.from(JSON.stringify({ session_id: 's', result: 'ok', is_error: false, permission_denials: [], subtype: 'success' })));
+      child.emit('close', 0);
+      await done;
+    };
+    await run(true);
+    await run(false);
+    expect(envs[0]!.DREAMCONTEXT_RUN_APP).toBe('funnel-desk');
+    expect(envs[1]!.DREAMCONTEXT_RUN_APP).toBeUndefined();
+  });
+});
+
 describe('a run whose runner is gone', () => {
   it('counts as alive while its child lives, and not once it is gone', () => {
     const side = { slug: 'line-watch', runnerPid: 999_999, childPid: process.pid, fireAt: RUN, startedAt: RUN, timeoutAt: LATER };

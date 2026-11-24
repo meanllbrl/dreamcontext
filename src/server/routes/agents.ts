@@ -23,6 +23,8 @@ import { agentSyncSwitchOn, createdLocally, loginFromEmail } from '../../lib/age
 import { lastAuthorEmail as gitLastAuthorEmail } from '../../lib/git-sync/git.js';
 import {
   agentUsage,
+  agentUsageScan,
+  type AgentUsageScan,
   createAgent,
   createGlobalAgent,
   getAgent,
@@ -206,6 +208,7 @@ export function summarizeAgent(
   target: AutomationManifest,
   agent: AgentManifest | null,
   home?: string,
+  scan?: AgentUsageScan,
 ): AgentSummary {
   const projectRoot = dirname(contextRoot);
   const global = target.agentScope === 'global';
@@ -218,7 +221,7 @@ export function summarizeAgent(
   const readOnly = !toRun.approved && toRun.reason === 'not_owner';
   const where = readOnly ? { here: true as const } : placement(contextRoot, target.slug, target.owner ?? null, home);
   const owner = agent?.owner ?? target.owner ?? null;
-  const usage = agentUsage(contextRoot, target.slug);
+  const usage = agentUsage(contextRoot, target.slug, scan);
   const now = new Date();
   return {
     slug: target.slug,
@@ -277,7 +280,9 @@ export function summarizeAgent(
 /** Every agent's summary, sorted by slug (the store's order). */
 export function listAgentSummaries(contextRoot: string, home?: string): AgentSummary[] {
   const agents = new Map(listAgents(contextRoot).map((a) => [a.slug, a]));
-  return listAgentTargets(contextRoot).map((t) => summarizeAgent(contextRoot, t, agents.get(t.slug) ?? null, home));
+  // One pass over the boards and tasks for every member, never one per member.
+  const scan = agentUsageScan(contextRoot);
+  return listAgentTargets(contextRoot).map((t) => summarizeAgent(contextRoot, t, agents.get(t.slug) ?? null, home, scan));
 }
 
 function str(v: unknown): string | undefined {

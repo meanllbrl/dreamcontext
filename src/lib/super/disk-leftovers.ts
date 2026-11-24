@@ -107,6 +107,24 @@ export async function rustTargets(root: string, depth = 3): Promise<string[]> {
   return found;
 }
 
+/** `dist/` build dirs a few levels down a worktree (never inside `node_modules` or `target`). The
+ *  sweep strips one only when git ignores it (a tracked `dist` is source). */
+export async function distDirs(root: string, depth = 3): Promise<string[]> {
+  const found: string[] = [];
+  const walk = async (d: string, left: number): Promise<void> => {
+    let entries: import('node:fs').Dirent[];
+    try { entries = await fsp.readdir(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.isSymbolicLink()) continue;
+      if (e.name === 'dist') { found.push(join(d, e.name)); continue; }
+      if (left <= 0 || e.name === 'node_modules' || e.name === 'target' || e.name.startsWith('.')) continue;
+      await walk(join(d, e.name), left - 1);
+    }
+  };
+  await walk(root, depth);
+  return found;
+}
+
 export interface LeftoverPlaces {
   /** `~/.claude-worktrees`. */
   worktrees: string;

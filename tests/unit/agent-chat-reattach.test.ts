@@ -159,6 +159,31 @@ describe('agent-chat detach / reattach', () => {
     expect(ws3.frames().some((f) => f.type === 'control_request')).toBe(false);
   });
 
+  it('tells the window which requests stay open whenever one leaves, whoever settled it (split "asking", 2026-11-22)', () => {
+    const { ws, child, id } = startPinned({ prompt: 'job' });
+    const question = (rid: string, tu: string) => ({
+      type: 'control_request', request_id: rid,
+      request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', tool_use_id: tu, input: { questions: [{ question: 'Go?', options: [{ label: 'Yes' }, { label: 'No' }] }] } },
+    });
+    const open = (w: FakeWs) => w.frames().filter((f) => f.type === '_meta' && f.subtype === 'open_requests').map((f) => f.requestIds);
+    child.print(question('q-1', 'tu-1'));
+    child.print(question('q-2', 'tu-2'));
+    // Answered on another surface: the answer frame reaches the process, this window hears it.
+    ws.emit('message', JSON.stringify({ type: 'answer', requestId: 'q-1', behavior: 'allow', updatedInput: {} }));
+    expect(open(ws).at(-1)).toEqual(['q-2']);
+    // The CLI closed the other one itself (its tool_result): gone too.
+    child.print({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-2', content: 'x' }] } });
+    expect(open(ws).at(-1)).toEqual([]);
+    // A turn end says "nothing open" even when nothing was held, and a new socket hears it after the replay.
+    child.print(question('q-3', 'tu-3'));
+    child.print({ type: 'result', subtype: 'success', is_error: false, result: 'ok' });
+    expect(open(ws).at(-1)).toEqual([]);
+    ws.drop();
+    const ws2 = new FakeWs();
+    findLiveChat(id)!.adopt(asWs(ws2));
+    expect(open(ws2)).toEqual([[]]);
+  });
+
   it('adopting while the old socket still looks open (half-open) terminates the old one', () => {
     const { ws, id } = startPinned();
     const ws2 = new FakeWs();
@@ -174,6 +199,43 @@ describe('agent-chat detach / reattach', () => {
     ws.drop();
     expect(child.stdin.end).toHaveBeenCalledTimes(1);
     expect(findLiveChat(id)).toBeNull();
+  });
+
+  // Owner 2026-11-23: three Super children whose turn ended over a running background job (a
+  // browser check, a benchmark, a test run) were ended while detached; the job died with them.
+  it('a detached child whose turn ended over running background work is not reaped; once the work ends, its idle clock starts', () => {
+    const { ws, child } = startPinned({ prompt: 'job' });
+    ws.drop();
+    child.print({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1', task_type: 'monitor', description: 'browser check run 4' }] });
+    child.print({ type: 'result', subtype: 'success', result: 'Bekliyorum.' });
+    vi.advanceTimersByTime(DETACH_IDLE_MS * 3);
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    child.print({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+    vi.advanceTimersByTime(DETACH_IDLE_MS - 1);
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('background work that never ends still meets the 4 h cap', () => {
+    const { ws, child } = startPinned({ prompt: 'job' });
+    ws.drop();
+    child.print({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1', task_type: 'local_bash', description: 'npm run dev' }] });
+    child.print({ type: 'result', subtype: 'success', result: 'ok' });
+    vi.advanceTimersByTime(DETACH_BUSY_CAP_MS - 60_000);
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000 + 1);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('a supersede of a detached child with background work waits for the new process to be accepted', () => {
+    const a = startPinned();
+    a.ws.drop();
+    a.child.print({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1', task_type: 'local_bash', description: 'Run tests' }] });
+    const settle = findLiveChat(a.id)!.supersede();
+    expect(a.child.stdin.end).not.toHaveBeenCalled();
+    settle(false);
+    expect(a.child.stdin.end).not.toHaveBeenCalled();
   });
 
   it('a respawn supersedes: a detached child drains now, an attached one at its close', () => {

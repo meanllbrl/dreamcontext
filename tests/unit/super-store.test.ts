@@ -81,6 +81,22 @@ describe('read and write', () => {
     await expect(readSuperState(root)).rejects.toMatchObject({ reason: 'outside' });
   });
 
+  it('a brain with no state/ (a fresh brain cloned from GitHub) reads empty and a write makes the folder', async () => {
+    rmSync(join(root, 'state'), { recursive: true });
+    expect(await readSuperState(root)).toEqual(emptySuperState());
+    expect(() => statSync(join(root, 'state'))).toThrow();
+    await updateSuperState(root, (s) => { s.session = 'sess-super'; s.enabled = true; });
+    expect(statSync(join(root, 'state')).isDirectory()).toBe(true);
+    expect((await readSuperState(root)).enabled).toBe(true);
+  });
+
+  it('a dangling state/ link is refused, never followed into a new folder', async () => {
+    rmSync(join(root, 'state'), { recursive: true });
+    symlinkSync(join(dir, 'nowhere'), join(root, 'state'));
+    await expect(updateSuperState(root, () => undefined)).rejects.toMatchObject({ reason: 'outside' });
+    expect(() => statSync(join(dir, 'nowhere'))).toThrow();
+  });
+
   it('a garbled file reads as the empty state (never a crash)', async () => {
     writeFileSync(join(root, SUPER_STATE_REL), '{ not json');
     expect(await readSuperState(root)).toEqual(emptySuperState());
@@ -88,17 +104,25 @@ describe('read and write', () => {
 });
 
 describe('hostile fields are dropped (D2)', () => {
-  it('a worktree outside ~/.claude-worktrees, nested, relative or traversing is dropped with its branch', () => {
+  it('a worktree outside ~/.claude-worktrees, nested, relative or traversing is dropped ALONE: the branch stays (K9, kesim-geri-donus C19)', () => {
     const good = join(home, '.claude-worktrees', 'acme-login');
     for (const worktree of ['/etc', join(home, 'projects', 'x'), join(home, '.claude-worktrees'), join(home, '.claude-worktrees', 'a', 'b'),
       'relative/path', join(home, '.claude-worktrees', '..', 'x'), `${good}\u0000`]) {
       const s = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { worktree, branch: 'super/acme-login' }) } }), { home });
       expect(s.children['c-1'], worktree).toBeDefined();
       expect(s.children['c-1'].worktree, worktree).toBeUndefined();
-      expect(s.children['c-1'].branch, worktree).toBeUndefined();
+      expect(s.children['c-1'].branch, worktree).toBe('super/acme-login');
     }
     const kept = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { worktree: good, branch: 'super/acme-login' }) } }), { home });
     expect(kept.children['c-1']).toMatchObject({ worktree: good, branch: 'super/acme-login' });
+  });
+
+  it('delegatedBy keeps unique non-empty string keys, at most 8 (C3, iyilesme-360)', () => {
+    const keys = ['pin-super', 'pin-super', '', 7, 'x'.repeat(201), ...Array.from({ length: 10 }, (_, i) => `k${i}`)];
+    const s = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { delegatedBy: keys }) } }), { home });
+    expect(s.children['c-1'].delegatedBy).toEqual(['pin-super', 'k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6']);
+    const none = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { delegatedBy: 'pin-super' }) } }), { home });
+    expect(none.children['c-1'].delegatedBy).toBeUndefined();
   });
 
   it('a branch outside super/* is dropped with its worktree', () => {

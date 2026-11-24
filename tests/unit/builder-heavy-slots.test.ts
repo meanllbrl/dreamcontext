@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  HEAVY_LOCK_BUSY_EXIT, HEAVY_SLOT_CAP, acquireHeavy, machineHeavySlots, heavyLockPath, heavySlotPaths, heavySlotsHeld,
+  HEAVY_LOCK_BUSY_EXIT, HEAVY_SLOT_CAP, acquireHeavy, machineHeavySlots, machineStepLimit, heavyLockPath, heavySlotPaths, heavySlotsHeld,
 } from '../../src/lib/builder-tools.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { builderHeavy, type BuilderDeps } from '../../src/cli/commands/builder.js';
@@ -196,10 +196,12 @@ describe('machine heavy slots under heat', () => {
     const two = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('two'), limit: async () => 2 });
     expect(two!.slot).toBe(paths[0]);
     expect(await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('full'), limit: async () => 2 })).toBeNull();
-    const five = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('five'), limit: async () => 5 });
-    expect(five!.slot).toBe(paths[1]);
-    two!.release(); five!.release();
+    // The limit never passes MACHINE_STEP_CAP (2): asking for 5 still finds the machine full.
+    expect(await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('five'), limit: async () => 5 })).toBeNull();
     releaseFileLock(paths[3]);
+    const next = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('five'), limit: async () => 5 });
+    expect(next!.slot).toBe(paths[1]);
+    two!.release(); next!.release();
   });
 
   it('a limit that throws, is NaN or 0 reads as the default', async () => {
@@ -207,7 +209,7 @@ describe('machine heavy slots under heat', () => {
       const seen: number[] = [];
       const a = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('a'), limit, onLimit: (n) => seen.push(n) });
       const b = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('b'), limit, onLimit: (n) => seen.push(n) });
-      expect(seen).toEqual([machineHeavySlots(), machineHeavySlots()]);
+      expect(seen).toEqual([machineStepLimit(), machineStepLimit()]);
       expect(a && b).toBeTruthy();
       a!.release(); b!.release();
     }

@@ -25,7 +25,7 @@ import { insightPath } from '../../src/lib/lab/store.js';
 import { createWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
+import { _resetChatRegistry, getChat, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
@@ -131,6 +131,31 @@ describe('super answer — questions only, current only', () => {
     windowReply = { ok: false, error: 'not_connected' };
     const r = await verb('answer', { child: 'c1', requestId: 'req-1', choices: ['postgres'] });
     expect(r.json.error).toBe('not_connected');
+    expect((await readSuperState(root)).queue[0].state).not.toBe('done');
+  });
+
+  it('a message written while the question is open (the server\'s own `super send` turn) leaves it answerable (field 2026-11-22)', async () => {
+    makeVault({ queue: [{ id: 'q-1', sessionId: 'c1', kind: 'question', requestId: 'req-1', state: 'delivered', createdAt: 1 }] });
+    const c1 = reg('c1');
+    ask(c1, 'req-1');
+    // No window answered `super send`: the server wrote the words into the CLI, which still
+    // holds the question open and reads them only after it.
+    c1.userSent('Devam: finish the plan', { server: true });
+    expect(getChat('c1')?.status).toBe('asking');
+    const r = await verb('answer', { child: 'c1', requestId: 'req-1', choices: ['postgres'] });
+    expect(r.status).toBe(200);
+    expect((r.json.result as { answered?: boolean }).answered).toBe(true);
+  });
+
+  it('a label the card does not offer is refused by name, never as `no_window`, and reaches no window', async () => {
+    makeVault({ queue: [{ id: 'q-1', sessionId: 'c1', kind: 'question', requestId: 'req-1', state: 'delivered', createdAt: 1 }] });
+    ask(reg('c1'), 'req-1');
+    windowReply = { ok: false, error: 'no_window' };
+    const r = await verb('answer', { child: 'c1', requestId: 'req-1', choices: ['postgr'] });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toBe('unknown_choice');
+    expect(String(r.json.message)).toContain('"postgres"');
+    expect(commands()).toHaveLength(0);
     expect((await readSuperState(root)).queue[0].state).not.toBe('done');
   });
 

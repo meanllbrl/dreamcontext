@@ -57,6 +57,8 @@ const ASSISTANT = 'laptop-only: the dreamcontext Assistant belongs to this Mac\'
 const INSTALL = 'laptop-only: installs, updates or downloads software on this Mac';
 const SECRET = 'laptop-only: writes or reveals a secret, key or token';
 const SIGN_IN = 'laptop-only: signs an account in or out on this Mac';
+const SCORECARD_SETUP = 'laptop-only: criteria, goal and adopting a held lesson are set at the machine';
+const SCORECARD_RETRY = 'laptop-only: re-running a check or a lesson draft is started at the machine; a note rated from the phone still drafts its lesson';
 const OTHER_PROJECTS = 'laptop-only: lists, opens, registers or changes other projects on this Mac (the phone reaches only the projects chosen at start)';
 const LAUNCHER = 'laptop-only: launcher administration (projects, logos, app updates, its settings)';
 const SETTINGS = 'laptop-only: Settings (the phone shows no Settings page)';
@@ -64,6 +66,7 @@ const VOICE = 'laptop-only: this Mac\'s microphone, speaker and voice setup';
 const DESKTOP = 'laptop-only: acts on the Mac\'s desktop (Finder, Terminal, Downloads, macOS banners, file grants)';
 const BRAIN_WRITE = 'laptop-only: brain sync writes (git remote, fetch, sync) run from the laptop';
 const ONBOARDING = 'laptop-only: first-run setup of this Mac';
+const LIVE_LINK = 'laptop-only: live links (a public link to one app or board) are opened, listed and closed on the laptop';
 
 // ─── Allow reasons ──────────────────────────────────────────────────────────
 
@@ -95,6 +98,12 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'DELETE /api/handsfree/mac/tunnel/fixed': deny(MAC_ADMIN),
   'POST /api/handsfree/mac/uninstall': deny(MAC_ADMIN),
   'POST /api/admin/shutdown': deny(SERVER_ADMIN),
+  // Live links: opening a public link is the owner's own click on the laptop; the list, the
+  // reveal and the close stay there too (shares are this Mac's, never the phone's).
+  'GET /api/shares': deny(LIVE_LINK),
+  'POST /api/shares': deny(LIVE_LINK),
+  'POST /api/shares/:id/reveal': deny(SECRET),
+  'POST /api/shares/:id/close': deny(LIVE_LINK),
 
   // Tasks
   'GET /api/tasks': allow(READ),
@@ -162,6 +171,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // Recall
   'GET /api/recall/haiku': allow('a recall query over this project; side-effect free'),
   'GET /api/recall': allow('a recall query over this project; side-effect free'),
+  'POST /api/agents/work/select': deny('laptop-only: a member\'s hook asks the running app'),
   'POST /api/recall/prompt': deny('laptop-only: an agent hook on this Mac hands its prompt recall to the running app (the phone has GET /api/recall)'),
   'GET /api/recall/options': deny(SETTINGS),
   'GET /api/recall/cloud/status': deny(SETTINGS),
@@ -297,6 +307,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/seen': deny(SUPER),
   'POST /api/super/owed/drop': deny(SUPER),
   'POST /api/super/pad': deny(SUPER),
+  'GET /api/super/first-read': deny(SUPER),
+  'POST /api/super/first-read': deny(SUPER),
   'POST /api/super/pad/add': deny(SUPER),
   'POST /api/super/pad/remove': deny(SUPER),
   // The Super never reads past days through it: it has `super state`.
@@ -404,6 +416,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/onboarding/readiness': deny(ONBOARDING),
   'POST /api/onboarding/fix': deny(ONBOARDING),
   'POST /api/onboarding/fix/cancel': deny(ONBOARDING),
+  'POST /api/onboarding/agents': deny(ONBOARDING),
+  'GET /api/onboarding/github-probe': deny(ONBOARDING),
   'POST /api/agent/prompt': filtered(`${CHAT}: hands an opening prompt to a new chat (the body's vault is checked with isMacExposed)`),
   // A photo or any file from the phone (task hands-free-phone-shows-every-picture…, any type since
   // 2026-10-27): an image is decided by its bytes and named by the server; another file keeps its
@@ -555,6 +569,16 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/board-scope': allow('the owner answers whether an old board agent stays limited to its board, as on the laptop; a session cannot call it'),
   'POST /api/agents/:slug/place': allow(PROJECT_WRITE),
   'GET /api/agents/:slug/stage': allow('read: an agent\'s stage (its live work, reports, files, routines); side-effect free'),
+  'GET /api/agents/:slug/scorecard': filtered('read: one member\'s scorecard, narrowed to the chosen projects on a phone; side-effect free'),
+  'POST /api/agents/:slug/scorecard/rate': allow('he rates a run, or takes a lesson out of the prompt, from the phone as on the laptop'),
+  'POST /api/agents/:slug/scorecard/lessons/:id/undo': allow('he rates a run, or takes a lesson out of the prompt, from the phone as on the laptop'),
+  'POST /api/agents/:slug/scorecard/criteria': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/goal': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/lessons/:id/use': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/verdict': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/fresh': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/check': deny(SCORECARD_RETRY),
+  'POST /api/agents/:slug/scorecard/draft': deny(SCORECARD_RETRY),
   'GET /api/agents/:slug/history': allow('read: one page of an agent\'s runs and talks (the stage pane); side-effect free beyond pruning its own machine-local index of glances'),
   'GET /api/agents/:slug/amendments': allow('read: what the Super Agent changed in a member, with the text before and after; side-effect free'),
   'GET /api/agents/:slug/permissions': allow('read: a member\'s autonomy level and the "Always allowed" rules the owner gave it, secrets redacted; side-effect free'),

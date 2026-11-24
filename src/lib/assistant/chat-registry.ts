@@ -354,15 +354,28 @@ function pruneOrigins(e: ChatEntry): void {
 export interface OwnerReceiptMark { kind: OwnerCardKind; id: string }
 
 /**
- * A background roster entry that reads as a server or a watch left running (a dev server, a
- * Monitor, a tail, a tunnel): it has no end the child waits for, so it does not hold the row
- * past the quiet bar. Everything else (a script, a test run, a background agent) is a job.
+ * What STARTS a server or a follow that never ends by itself: a dev server, `npm run dev`, a
+ * `tail -f`, a `--watch`, a tunnel. Read against the whole entry text, which is the bare command
+ * when the call had no description, so a word in a flag or a path never counts (field 2026-11-22:
+ * `builder heavy --tail 80 -- node scripts/verify/…` read as a `tail`, the row went done 10 min
+ * into a running browser check, and the owner was told a result that did not exist).
  */
-export function persistentBackground(t: { task_type?: unknown; description?: unknown }): boolean {
+const SERVER_START = /(?:\bdev[- ]?server\b|\b(?:start|run|launch|boot)s?\s+(?:the\s+|a\s+|an\s+)?(?:[\w-]+\s+)?server\b(?!\s+(?:tests?|checks?|build|specs?)\b)|\bserver\.(?:m?js|ts|py)\b|\bhttp[-.]server\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)\b|\bvite\s+(?:dev|preview|--port)\b|\bnext\s+(?:dev|start)\b|\btail\s+-[fF]\b|--watch\b|\bwatch\s+mode\b|\bdaemon\b|\btunnel\b|\bngrok\b|\bkeep[- ]alive\b)/i;
+
+/**
+ * A background roster entry that reads as a server or a follow left running: it has no end the
+ * child waits for, so it does not hold the row past the quiet bar. Everything else is a job the
+ * child waits on: a script, a test run, a background agent, and a Monitor (it ends when its
+ * source does or at its expiry, and a child that arms one ends its turn to wait for its events:
+ * owner 2026-11-23, a child that said "bekliyorum" over a Monitor was reported done). A job holds
+ * the row up to BACKGROUND_JOB_MAX_MS.
+ */
+export function persistentBackground(t: { task_type?: unknown; description?: unknown; persistent?: unknown }): boolean {
+  if (t.persistent === true) return true;
   const type = typeof t.task_type === 'string' ? t.task_type : '';
+  if (/agent/i.test(type)) return false;
   const desc = typeof t.description === 'string' ? t.description : '';
-  if (/monitor|watch/i.test(type)) return true;
-  return /\b(?:dev[- ]?server|server|serve|serving|watch(?:er|ing)?|monitor(?:ing)?|tail|preview|listen(?:er|ing)?|daemon|tunnel|localhost|port \d+|npm (?:run )?(?:dev|start)|vite|next dev|keep[- ]alive)\b/i.test(desc);
+  return SERVER_START.test(desc);
 }
 
 /** Be told of every {@link ChatChange}. Returns the unsubscribe. A listener that throws is
@@ -884,6 +897,14 @@ export function registerChat(init: {
       if (topLevel && (frame.type === 'assistant' || frame.type === 'stream_event') && (e.status === 'idle' || e.status === 'starting')) {
         setStatus(e, 'working');
       }
+      // Whether the text just written was the turn's last word or a line before a tool call
+      // (telegram-sade: only the turn's answer reaches his phone, as ONE message).
+      // An `assistant` frame says it AFTER its own text went out (below), so the text it carries
+      // is the one a tool call follows.
+      if (topLevel && frame.type === 'stream_event') {
+        const hint = turnHintOf(frame);
+        if (hint) emitTurnHint(e.sessionId, hint);
+      }
       if (topLevel && frame.type === 'user') {
         for (const id of blockIds(frame, 'tool_result')) openTools.delete(id);
         syncTools();
@@ -931,6 +952,8 @@ export function registerChat(init: {
           if (e.lastAssistantText.length > TEXT_RING) e.lastAssistantText.splice(0, e.lastAssistantText.length - TEXT_RING);
           e.updatedAt = new Date().toISOString();
         }
+        const hint = turnHintOf(frame);
+        if (hint) emitTurnHint(e.sessionId, hint);
         return;
       }
       if (frame.type === 'result' && topLevel) {
@@ -984,7 +1007,13 @@ export function registerChat(init: {
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
         else if (text.trim() && opts?.server !== true) unheard.set(e.sessionId, [...(unheard.get(e.sessionId) ?? []), { text: text.slice(0, UNHEARD_CHARS), at: Date.now() }].slice(-UNHEARD_MAX));
       }
-      setStatus(e, 'working');
+      // A message written while the CLI still holds a request open (the server's own turn when no
+      // window answered `super send`) waits in the CLI behind that request: the chat is still
+      // asking. Field 2026-11-22: flipped to `working`, `super answer` refused the very question
+      // the child sat on as stale, and nothing could unblock it. The request leaves as it always
+      // does (answered, cancelled, its tool_result, the turn's result).
+      if (pendingRequestIds(e).length) setStatus(e, 'asking');
+      else setStatus(e, 'working');
     },
     interrupted() {
       if (dead) return;
@@ -1124,6 +1153,7 @@ export function _resetChatRegistry(): void {
   waitOrigins.clear();
   waitTurns.clear();
   assistantListeners.clear();
+  turnHintListeners.clear();
   userSentListeners.clear();
   injectors.clear();
   injectorListeners.clear();
@@ -1148,6 +1178,34 @@ export function onChatAssistantText(fn: (sessionId: string, text: string) => voi
 function emitAssistantText(sessionId: string, text: string): void {
   for (const fn of [...assistantListeners]) {
     try { fn(sessionId, text); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+/** What a top-level frame says about the text before it: a tool call follows (`tool`), or the
+ *  model ended its message (`end`). Null = nothing either way. */
+export function turnHintOf(frame: Record<string, unknown>): 'tool' | 'end' | null {
+  if (frame.type === 'assistant') {
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    return Array.isArray(content) && content.some((b) => (b as { type?: unknown })?.type === 'tool_use') ? 'tool' : null;
+  }
+  if (frame.type !== 'stream_event') return null;
+  const ev = frame.event as { type?: unknown; content_block?: { type?: unknown }; delta?: { stop_reason?: unknown } } | undefined;
+  if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use') return 'tool';
+  if (ev?.type === 'message_delta' && ev.delta?.stop_reason === 'end_turn') return 'end';
+  return null;
+}
+
+const turnHintListeners = new Set<(sessionId: string, hint: 'tool' | 'end') => void>();
+
+/** Be told when a chat's model starts a tool call or ends its message (telegram-sade's one answer). */
+export function onChatTurnHint(fn: (sessionId: string, hint: 'tool' | 'end') => void): () => void {
+  turnHintListeners.add(fn);
+  return () => { turnHintListeners.delete(fn); };
+}
+
+function emitTurnHint(sessionId: string, hint: 'tool' | 'end'): void {
+  for (const fn of [...turnHintListeners]) {
+    try { fn(sessionId, hint); } catch { /* a listener's failure is its own */ }
   }
 }
 

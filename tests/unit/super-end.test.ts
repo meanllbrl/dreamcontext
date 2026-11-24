@@ -475,6 +475,54 @@ describe('end review round 1 fixes', () => {
     expect(s.children.e1).toBeUndefined();
   });
 
+  it('C19 a worktree-less ended child holding its branch stays past 31+ newer plain ended ones, with its identity', async () => {
+    const children: SuperState['children'] = {
+      gone: { sessionId: 'gone', brief: 'cut work', adopted: false, startedAt: 1, endedAt: 1, branch: 'super/gone', repo: 'acme', lastBranch: 'super/gone-2', movedTo: 'fix/x' },
+    };
+    for (let i = 0; i < MAX_ENDED_CHILDREN + 2; i++) children[`e${i}`] = { sessionId: `e${i}`, brief: `e${i}`, adopted: false, startedAt: 2, endedAt: 100 + i };
+    makeVault({ children });
+    const s = await readSuperState(root);
+    expect(s.children.gone).toMatchObject({ branch: 'super/gone', repo: 'acme', lastBranch: 'super/gone-2', movedTo: 'fix/x' });
+    expect(s.children.gone.worktree).toBeUndefined();
+    expect(Object.values(s.children).filter((c) => c.endedAt !== undefined && !c.branch)).toHaveLength(MAX_ENDED_CHILDREN);
+    // An unrelated write and a read keep every identity field.
+    const { updateSuperState } = await import('../../src/lib/super/store.js');
+    await updateSuperState(root, (d) => { d.children.e5 && (d.children.e5.brief = 'touched'); });
+    const again = await readSuperState(root);
+    expect(again.children.gone).toMatchObject({ branch: 'super/gone', repo: 'acme', lastBranch: 'super/gone-2', movedTo: 'fix/x' });
+  });
+
+  it('C19 each identity field is kept by its own check: a hostile worktree drops only itself, a hostile branch drops both', async () => {
+    const ok = join(process.env.HOME as string, '.claude-worktrees', 'acme-ok');
+    makeVault({ children: {
+      a: { sessionId: 'a', brief: 'a', adopted: false, startedAt: 1, endedAt: 1, worktree: '/etc/passwd', branch: 'super/a' },
+      b: { sessionId: 'b', brief: 'b', adopted: false, startedAt: 1, endedAt: 1, worktree: ok, branch: 'main' },
+      c: { sessionId: 'c', brief: 'c', adopted: false, startedAt: 1, endedAt: 1, branch: 'super/c', repo: 'bad repo!', lastBranch: 'fix/no', movedTo: '--upload-pack=x' },
+    } as unknown as SuperState['children'] });
+    const s = await readSuperState(root);
+    expect(s.children.a).toMatchObject({ branch: 'super/a' });
+    expect(s.children.a.worktree).toBeUndefined();
+    expect(s.children.b?.branch).toBeUndefined();
+    expect(s.children.b?.worktree).toBeUndefined();
+    expect(s.children.c).toMatchObject({ branch: 'super/c' });
+    expect(s.children.c.repo).toBeUndefined();
+    expect(s.children.c.lastBranch).toBeUndefined();
+    expect(s.children.c.movedTo).toBeUndefined();
+  });
+
+  it('C15 returnsAsked survives a write and a read; a bad entry drops alone', async () => {
+    const key = 'a'.repeat(64);
+    makeVault({ returnsAsked: {
+      'yerel-23kas': { key, at: 5, askId: 'q-1', answer: 'Hepsine aç' },
+      'Bad Topic': { key, at: 5, askId: 'q-2' },
+      'other': { key: 'nothex', at: 5, askId: 'q-3' },
+    } } as unknown as Partial<SuperState>);
+    const { updateSuperState } = await import('../../src/lib/super/store.js');
+    await updateSuperState(root, () => undefined);
+    const s = await readSuperState(root);
+    expect(s.returnsAsked).toEqual({ 'yerel-23kas': { key, at: 5, askId: 'q-1', answer: 'Hepsine aç' } });
+  });
+
   it('M6 resume records what the window started (a parked tab comes back as parked) and says what it ignored', async () => {
     makeVault();
     const proj = join(process.env.HOME as string, '.claude', 'projects', 'acme');
@@ -489,7 +537,7 @@ describe('end review round 1 fixes', () => {
       },
       vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
     }).token;
-    const r = await verb('resume', { child: 'c2', mode: 'develop', effort: 'high' });
+    const r = await verb('resume', { child: 'c2', mode: 'develop', effort: 'high', risk: 'migration' });
     expect(r.status).toBe(200);
     expect(r.json.result).toMatchObject({ mode: 'basic', model: 'opus' });
     expect(String((r.json.result as { note?: string }).note)).toMatch(/mode, effort/);

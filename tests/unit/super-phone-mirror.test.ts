@@ -505,7 +505,7 @@ describe('a mirror\'s lifetime (review r1)', () => {
     // D4) and must not come back to carry it.
     expect(src).toMatch(/const frame = Buffer\.from\(JSON\.stringify\(json\), 'utf-8'\);\s*mirrorFrames\.add\(frame\);/);
     expect(src).toMatch(/onWsMessage\(serverBuiltFrame\(json, 'phone-mirror'\)\);/);
-    expect(src).toMatch(/const fromMirror = typeof raw !== 'string' && mirrorFrames\.has\(raw\);[\s\S]{0,1500}?switchGate = switchGate\.then\(\(\) => \(fromMirror && detached \? Promise\.resolve\(false\) : maybeSwitchAccount\(text\)\)/);
+    expect(src).toMatch(/switchGate = switchGate\.then\(\(\) => \(o\.fromMirror && detached \? Promise\.resolve\(false\)/);;
     expect(src).not.toMatch(/mirrorFrameUnheld/);
     expect(src).not.toMatch(/heldOwnerFrames|releaseOneHeldOwnerFrame|stashHeldOwnerTexts|takeHeldOwnerTexts/);
   });

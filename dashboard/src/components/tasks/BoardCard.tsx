@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { TaskListItem as Task } from '../../hooks/useTasks';
-import { useStatusModel } from '../../hooks/useTasks';
+import type { TaskListItem as Task, StatusModel } from '../../hooks/useTasks';
 import { useVault } from '../../context/VaultContext';
 import { taskAssetUrl } from '../../api/client';
 import {
@@ -18,6 +17,9 @@ import { CopySlugButton } from './CopySlugButton';
 interface BoardCardProps {
   task: Task;
   cardProps: CardProps;
+  /** The board's status model, read once by the board: a hook per card was one query observer
+   *  and one model build per card on every mount of the board (~600 on a real brain). */
+  sm: StatusModel;
   dragging?: boolean;
   assigneeName?: (slug: string) => string;
   /** This parent's children (all of them, not only the visible ones). Empty for a non-parent. */
@@ -89,10 +91,9 @@ function featureLabel(slug: string): string {
  * clip. Description, tags, urgency and due stay toggleable under Properties.
  */
 export function BoardCard({
-  task, cardProps: cp, dragging, assigneeName, subtasks = [], subtasksOpen, onToggleSubtasks, parentName,
+  task, cardProps: cp, sm, dragging, assigneeName, subtasks = [], subtasksOpen, onToggleSubtasks, parentName,
   showVersionChip = true, onOpenTask, onClick, onContextMenu, onDragStart, onDragEnd,
 }: BoardCardProps) {
-  const sm = useStatusModel();
   const { vault } = useVault();
   const di = dueInfo(task, sm);
   const rice = taskRice(task);

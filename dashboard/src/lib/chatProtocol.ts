@@ -347,6 +347,9 @@ export type ChatEvent =
   /** The CLI withdrew a `can_use_tool` request it sent (`control_cancel_request`), e.g. its
    *  stdin closed ("Stream closed"): the card for it is dead and must go. */
   | { kind: 'request-cancelled'; requestId: string }
+  /** The server's word on which requests the CLI still waits on (`_meta/open_requests`, told
+   *  whenever one leaves, whoever settled it). Every card not named is dead and goes. */
+  | { kind: 'open-requests'; requestIds: string[] }
   /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
    *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
@@ -1156,6 +1159,13 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'prompt_echo') {
     const text = str(obj.text);
     return text ? { kind: 'prompt-echo', text } : ignored('_meta:prompt_echo');
+  }
+  // Read strictly: anything but a list of ids is dropped, so a malformed frame never clears a
+  // card the CLI still waits on.
+  if (subtype === 'open_requests') {
+    const ids = obj.requestIds;
+    if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) return ignored('_meta:open_requests');
+    return { kind: 'open-requests', requestIds: ids as string[] };
   }
   // The user signed into another Claude account (server-detected — claude-auth-watch.ts).
   // `restart` and `loggedIn` are read STRICTLY: anything that is not a literal `true` /

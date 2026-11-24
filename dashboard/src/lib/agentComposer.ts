@@ -409,9 +409,18 @@ export interface ContextBand {
   frac: number;
 }
 
-export function contextBands(used: number, limit: number): ContextBand[] {
+/** The two edges a pane's `context_handoff` frame carries (a Super child's are 250k / 400k), or
+ *  the mirrored human pair when the frame has not arrived or is malformed. */
+export function bandEdgesOf(state: { nudgeAt?: unknown; hardAt?: unknown } | null | undefined): readonly number[] {
+  const a = state?.nudgeAt;
+  const b = state?.hardAt;
+  if (typeof a === 'number' && typeof b === 'number' && Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > a) return [a, b];
+  return CONTEXT_BAND_EDGES;
+}
+
+export function contextBands(used: number, limit: number, bandEdges: readonly number[] = CONTEXT_BAND_EDGES): ContextBand[] {
   const keys: ContextBandKey[] = ['calm', 'caution', 'danger'];
-  const edges = [0, ...CONTEXT_BAND_EDGES.filter((e) => e < limit), limit];
+  const edges = [0, ...bandEdges.filter((e) => e < limit), limit];
   const out: ContextBand[] = [];
   for (let i = 0; i < edges.length - 1; i++) {
     const from = edges[i];

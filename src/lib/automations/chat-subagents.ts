@@ -5,6 +5,7 @@ import { checkApproval } from './registry.js';
 import { buildPatternBlock, buildSoulBlock, buildTurnLearningDirective, sanitizeAutomationPrompt } from './runner.js';
 import { nameOf, summaryOf } from '../agents/agent-summary.js';
 import type { AutomationManifest } from './types.js';
+import { buildOwnerBlock, type OwnerRef } from '../agents/owner-block.js';
 
 /**
  * THE PROJECT'S AGENTS AS SUB-AGENTS OF A CHAT (owner, 2026-10-07: "the Claude I talk to should
@@ -44,9 +45,12 @@ export interface ChatSubagents {
 }
 
 /** What the agent is told when the chat's Claude calls it. Same order as its other briefs. */
-export function subagentPrompt(m: AutomationManifest): string {
+export function subagentPrompt(m: AutomationManifest, owner?: OwnerRef | null): string {
   const soul = buildSoulBlock(m);
   const pattern = buildPatternBlock(m);
+  // The owner's lines and lessons as they stand at THIS calling tab's spawn (plan uye-karnesi D9:
+  // the owner's accepted delay). No fingerprinted header: that belongs to the member's own chats.
+  const owned = buildOwnerBlock(owner, null);
   const learning = buildTurnLearningDirective(m);
   return [
     `You are "${nameOf(m)}" (the dreamcontext agent \`${m.slug}\`), called as a sub-agent by the owner's Claude in a dreamcontext Chat tab.`,
@@ -62,6 +66,7 @@ export function subagentPrompt(m: AutomationManifest): string {
     '--- END WHO YOU ARE ---',
     ...(soul ? ['', soul] : []),
     ...(pattern ? ['', pattern] : []),
+    ...(owned ? ['', owned] : []),
     ...(learning ? ['', learning] : []),
   ].join('\n');
 }
@@ -106,7 +111,7 @@ export function chatSubagents(contextRoot: string, opts: { exclude?: string; hom
   for (const m of callable) {
     agents[m.slug] = {
       description: `${nameOf(m)}, a dreamcontext agent of this project: ${summaryOf(m)} Call it when the owner names it or asks for its job.`,
-      prompt: subagentPrompt(m),
+      prompt: subagentPrompt(m, { projectRoot: dirname(contextRoot), member: m.agent || m.slug, home: opts.home }),
     };
   }
   const roster = [

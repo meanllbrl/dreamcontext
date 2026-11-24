@@ -15,11 +15,12 @@
  * WHAT IS CARRIED, AND WHY THAT IS ALL. The page's scripts run, and a sandboxed frame can
  * always navigate itself (knowledge: sandboxed-app-bridge-pattern §3), so whatever is inlined is
  * readable by the page and can leave in a navigation before the teardown notices. The bound is
- * authorship: only a file in the page's OWN folder or below it is carried, i.e. the material the
- * page's author put beside it (`v6/akis.html` → `v6/sonra/1-pano.png`). A reference that climbs
- * out of that folder (`../`), names a hidden segment (`.git/`, `.cache/`), is rooted (`/`, `~`)
- * or has a scheme (`https:`, `data:`) is left exactly as written, so the CSP keeps blocking it.
- * The page cannot reach the rest of the project, its brain or a credential through this.
+ * project and the file kind: only a PICTURE or `.css` file inside the project is carried,
+ * whether it sits beside the page (`v6/akis.html` → `v6/sonra/1-pano.png`) or in a sibling folder
+ * (`../user-journey/01/shot.png`). A reference that climbs past the project root, names a hidden
+ * segment (`.git/`, `.cache/`), is rooted (`/`, `~`) or has a scheme (`https:`, `data:`) is not
+ * carried, so the CSP keeps blocking it; a picture that could not be carried is drawn as a
+ * visible marker with its file name, never as a silent blank.
  *
  * Only real markup is rewritten: text inside `<script>`, `<style>`, `<template>`, `<textarea>`
  * and comments is left byte for byte (a gallery built from `"<img src='a.png'>"` in a JS string
@@ -27,7 +28,7 @@
  *
  * Pure string work, no DOM, no React: importable by root vitest (tests/unit/html-local-assets.test.ts).
  */
-import { parentDir, resolveDocumentRef } from '../components/appLink/viewerPaths.js';
+import { isDocumentRelativeRef, resolveDocumentRef } from '../components/appLink/viewerPaths.js';
 
 /** Picture types a page may show. SVG is drawn through `<img>`, where its scripts never run. */
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg']);
@@ -46,7 +47,7 @@ export interface LocalAssets {
   styles: string[];
 }
 
-/** What the host managed to read: path → `data:` URL / path → CSS text. A missing key stays as written. */
+/** What the host managed to read: path → `data:` URL / path → CSS text. A missing key stays as written (a picture then becomes a marker). */
 export interface LoadedAssets {
   images: ReadonlyMap<string, string>;
   styles: ReadonlyMap<string, string>;
@@ -104,14 +105,14 @@ function markupOnly(html: string): string {
 }
 
 /**
- * The project-relative file a reference names, when it is inside the page's own folder (or
- * below it) and crosses no hidden segment; else null.
+ * The project-relative file a reference names, when it stays inside the project (a `..` step may
+ * leave the page's folder for a sibling one, never the project: `resolveDocumentRef` refuses a
+ * climb past the root, and the file routes re-check containment with lstat + realpath) and
+ * crosses no hidden segment; else null.
  */
 function ownFile(docPath: string, ref: string): string | null {
   const resolved = resolveDocumentRef(docPath, ref.trim());
   if (!resolved) return null;
-  const dir = parentDir(docPath);
-  if (dir && !resolved.startsWith(`${dir}/`)) return null;
   if (resolved.split('/').some((part) => part.startsWith('.'))) return null;
   return resolved;
 }
@@ -158,10 +159,32 @@ function escapeStyleText(css: string): string {
   return css.replace(/<\/style/gi, '<\\/style');
 }
 
+/** The name a marker shows: the last segment of the written reference, query and fragment dropped. */
+function markerName(ref: string): string {
+  let clean = ref.trim().split(/[?#]/)[0];
+  try { clean = decodeURIComponent(clean); } catch { /* keep as written */ }
+  return clean.split('/').filter(Boolean).pop() ?? clean;
+}
+
+/**
+ * A picture the host could not carry (missing, refused, too big): its `src` becomes a small
+ * inline SVG that says so with the file name, so the page never shows an invisible hole.
+ */
+function brokenImage(tag: string, ref: string): string {
+  const name = Array.from(markerName(ref).replace(/[<>&"']/g, ''))
+    .slice(0, 80).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120"><rect x="1" y="1" width="318" height="118" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="6 4"/><text x="160" y="52" font-family="sans-serif" font-size="14" text-anchor="middle" fill="#b91c1c">Picture not shown</text><text x="160" y="76" font-family="sans-serif" font-size="13" text-anchor="middle" fill="#7f1d1d">${name}</text></svg>`;
+  const value = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg).replace(/'/g, '%27')}`;
+  return tag
+    .replace(SRC_ATTR, (_m, lead: string, _d, single: string | undefined) => (single !== undefined ? `${lead}'${value}'` : `${lead}"${value}"`))
+    .replace(/\ssrcset\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, '')
+    .replace(/^<img\b/i, `<img data-dc-broken="${name}"`);
+}
+
 /**
  * The page with every LOADED reference written in: an `<img>`'s `src` becomes its `data:` URL,
  * a stylesheet `<link>` becomes an inline `<style>` in the same place (so the cascade order the
- * author wrote is kept). A reference the host could not read is left exactly as written.
+ * author wrote is kept). A stylesheet the host could not read is left as written; a picture it could not read becomes a visible marker.
  */
 export function inlineLocalAssets(html: string, docPath: string, loaded: LoadedAssets): string {
   if (!docPath || docPath.startsWith('/')) return html;
@@ -169,7 +192,7 @@ export function inlineLocalAssets(html: string, docPath: string, loaded: LoadedA
     const src = attrValue(tag, SRC_ATTR);
     const path = src === null ? null : localImage(docPath, src);
     const data = path ? loaded.images.get(path) : undefined;
-    if (!data) return tag;
+    if (!data) return src !== null && isDocumentRelativeRef(src.trim()) ? brokenImage(tag, src) : tag;
     // The value keeps the quote it was written with; a data: URL here never contains one.
     const value = data.replace(/"/g, '%22').replace(/'/g, '%27');
     return tag

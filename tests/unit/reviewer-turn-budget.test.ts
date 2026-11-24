@@ -14,10 +14,10 @@ const AGENTS = path.resolve(__dirname, '../../agents');
 const read = (f: string) => fs.readFileSync(path.join(AGENTS, `${f}.md`), 'utf8');
 const hasMaxTurns = (f: string) => /^maxTurns:/m.test(read(f));
 
-describe('reviewers have no turn limit', () => {
+describe('reviewers and the validator have no turn limit', () => {
   it.each([
     'goal-plan-reviewer', 'reviewer', 'review-router', 'review-edge-cases', 'review-frontend',
-    'review-security', 'review-cloud-functions',
+    'review-security', 'review-cloud-functions', 'goal-validator',
   ])('%s sets no maxTurns', (agent) => {
     expect(hasMaxTurns(agent)).toBe(false);
   });

@@ -340,6 +340,52 @@ describe('usage ledger', () => {
     expect(a.verdict).toBe('unclear');
   });
 
+  describe('session facts: mode and handoff opening (super-cocuk-tasarruf D6)', () => {
+    const user = (uuid: string, ts: string, text: string) =>
+      JSON.stringify({ type: 'user', uuid, timestamp: ts, cwd: '/work/alpha', message: { role: 'user', content: [{ type: 'text', text }] } });
+    const snapshot = (ts: string, prompt: string) => JSON.stringify({ type: 'attachment', timestamp: ts, attachment: { type: 'prompt_snapshot', systemPrompt: [prompt] } });
+    const note = (ts: string, mode: string) => JSON.stringify({ type: 'attachment', timestamp: ts, attachment: { type: 'hook_additional_context', content: [`<!-- dreamcontext-chat-mode:${mode} -->\n# Chat mode is now: x`] } });
+
+    it('reads the held mode from the snapshot and a later mode note; a continue prompt opening is marked', async () => {
+      write('dev.jsonl', [snapshot(at(60), 'intro\n# Mode: Develop\nrules'), user('a', at(59), 'build the Acme page'), assistant('m1', 'r1', at(58), U(100))]);
+      write('moved.jsonl', [snapshot(at(60), 'intro\n# Mode: Develop\nrules'), user('b', at(59), 'hi'), note(at(50), 'plan'), assistant('m2', 'r2', at(49), U(100))]);
+      write('next.jsonl', [user('c', at(40), 'Handoff: continue task Acme (acme). Read it.'), assistant('m3', 'r3', at(39), U(100))]);
+      await scan();
+      const files = loadLedger(home).files;
+      const of = (n: string) => Object.entries(files).find(([k]) => k.endsWith(n))![1];
+      expect(of('dev.jsonl')).toMatchObject({ mode: 'develop', handoffOpening: false });
+      expect(of('moved.jsonl').mode).toBe('plan');
+      expect(of('next.jsonl')).toMatchObject({ mode: '', handoffOpening: true });
+    });
+
+    it('an entry from before the fields is read once in the background; a pruned file gets the sentinel', async () => {
+      write('old.jsonl', [snapshot(at(60), 'intro\n# Mode: Plan\nrules'), user('a', at(59), 'plan it'), assistant('m1', 'r1', at(58), U(100))]);
+      write('gone.jsonl', [user('b', at(59), 'hi'), assistant('m2', 'r2', at(58), U(100))]);
+      await scan();
+      // An older ledger: the fields were never written.
+      const path = join(home, '.dreamcontext', 'usage-scan-cache.json');
+      const raw = JSON.parse(readFileSync(path, 'utf-8'));
+      for (const f of Object.values(raw.files) as Array<Record<string, unknown>>) { delete f.mode; delete f.handoffOpening; }
+      writeFileSync(path, JSON.stringify(raw));
+      const { backfillSessionFacts } = await import('../../src/lib/usage-ledger.js');
+      const ledger = loadLedger(home);
+      const gone = Object.keys(ledger.files).find((k) => k.endsWith('gone.jsonl'))!;
+      rmSync(gone);
+      expect(await backfillSessionFacts(ledger)).toBe(true);
+      const of = (n: string) => Object.entries(ledger.files).find(([k]) => k.endsWith(n))![1];
+      expect(of('old.jsonl')).toMatchObject({ mode: 'plan', handoffOpening: false });
+      expect(of('gone.jsonl')).toMatchObject({ mode: '', handoffOpening: false });
+      // Every entry now holds a value or the sentinel: a second pass reads nothing.
+      expect(await backfillSessionFacts(ledger)).toBe(false);
+    });
+
+    it('the stats wire carries the Super card', async () => {
+      write('s1.jsonl', [user('a', at(59), 'hi'), assistant('m1', 'r1', at(58), U(100))]);
+      await scan();
+      expect(stats().dc.superEffect).toMatchObject({ verdict: 'noSuper', measure: 'tokensPerOutput' });
+    });
+  });
+
   describe('prompts per project', () => {
     const user = (uuid: string, ts: string, content: unknown, extra: Record<string, unknown> = {}) =>
       JSON.stringify({ type: 'user', uuid, timestamp: ts, cwd: '/work/alpha', entrypoint: 'sdk-cli', message: { role: 'user', content }, ...extra });

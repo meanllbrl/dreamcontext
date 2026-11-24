@@ -44,11 +44,15 @@ describe('findLocalAssets', () => {
     expect(findLocalAssets(html, DOC)).toEqual({ images: [], styles: [] });
   });
 
-  it('only the page\'s own folder and below: a ref that climbs out or crosses a hidden folder is refused', () => {
+  it('a sibling folder is reachable with `..`; climbing past the project root or a hidden folder is refused', () => {
+    expect(findLocalAssets('<img src="../ortak/logo.png"><link rel="stylesheet" href="../theme.css">', DOC)).toEqual({
+      images: ['_dream_context/tmp/taslak/ortak/logo.png'],
+      styles: ['_dream_context/tmp/taslak/theme.css'],
+    });
+    expect(findLocalAssets('<img src="../../../../src/app.png">', DOC).images).toEqual(['src/app.png']);
     const html = `
-      <img src="../ortak/logo.png"><img src="sonra/../../v5/x.png">
-      <img src="../../../state/shot.png"><img src="../../../../src/app.png">
-      <img src=".git/x.png"><img src="sonra/.cache/x.png"><link rel="stylesheet" href="../theme.css">`;
+      <img src="../../../../../x.png"><img src="../../../../../../x.png">
+      <img src=".git/x.png"><img src="sonra/.cache/x.png"><img src="../.hidden/x.png">`;
     expect(findLocalAssets(html, DOC)).toEqual({ images: [], styles: [] });
     // A page at the project root owns the project's (non-hidden) folders.
     expect(findLocalAssets('<img src="img/a.png"><img src=".env/a.png">', 'index.html').images).toEqual(['img/a.png']);
@@ -100,13 +104,25 @@ describe('inlineLocalAssets', () => {
   it('drops a srcset only where the src was inlined (it would win over the data URL)', () => {
     const loaded = { images: new Map([['_dream_context/tmp/taslak/v6/a.png', PNG]]), styles: new Map() };
     expect(inlineLocalAssets('<img src="a.png" srcset="a@2x.png 2x">', DOC, loaded)).toBe(`<img src="${PNG}">`);
-    expect(inlineLocalAssets('<img src="b.png" srcset="b@2x.png 2x">', DOC, loaded)).toBe('<img src="b.png" srcset="b@2x.png 2x">');
+    // An unloaded one keeps no srcset either: the marker replaces the whole picture.
+    expect(inlineLocalAssets('<img src="b.png" srcset="b@2x.png 2x">', DOC, loaded)).not.toContain('srcset');
   });
 
-  it('leaves an unloaded or remote reference exactly as written', () => {
+  it('leaves a remote or data reference exactly as written', () => {
     const empty = { images: new Map(), styles: new Map() };
-    const html = '<img src="missing.png"><img src="https://evil.test/x.png"><link rel="stylesheet" href="x.css">';
+    const html = '<img src="https://evil.test/x.png"><img src="data:image/png;base64,AAAA"><link rel="stylesheet" href="x.css">';
     expect(inlineLocalAssets(html, DOC, empty)).toBe(html);
+  });
+
+  it('draws a visible marker with the file name for a picture that was missing or refused', () => {
+    const empty = { images: new Map(), styles: new Map() };
+    const out = inlineLocalAssets('<img class="a" src="../b/missing.png" srcset="m@2x.png 2x"><img src=".git/x.png">', DOC, empty);
+    expect(out).not.toContain('srcset');
+    expect(out).toContain('data-dc-broken="missing.png"');
+    expect(out).toContain('data-dc-broken="x.png"');
+    expect(decodeURIComponent(out)).toContain('Picture not shown');
+    expect(decodeURIComponent(out)).toContain('missing.png</text>');
+    expect(out).toContain('class="a"');
   });
 
   it('turns a stylesheet link into an inline style in place, and that style cannot close early', () => {

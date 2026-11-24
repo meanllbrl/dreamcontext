@@ -20,6 +20,7 @@ import { bindingDir, readBinding, scopeOfContextRoot } from '../../src/lib/teleg
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { _openEventTurnForTests, markSuperEventTurn, superTurnEnded } from '../../src/lib/super/inbox.js';
 import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
+import { takeUndelivered } from '../../src/lib/super/undelivered.js';
 import { noteOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
@@ -82,7 +83,7 @@ beforeEach(async () => {
   tg.addBot(TOKEN, 'acme_super_bot');
   opened = [];
   skew = 0;
-  hub = new TelegramHub({
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0,
     home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, now: () => Date.now() + skew,
     vaults: () => [{ name: 'acme', contextRoot: root }],
     openLink: (u) => opened.push(u), injectorWaitMs: 300,
@@ -173,6 +174,22 @@ describe('the Super target', () => {
     }
     const quiet = () => new Promise((r) => setTimeout(r, 50));
 
+    it('a refused section names its own refs; its marked re-send from a turn that is not his goes to the phone (super-sessiz-kalmaz D5)', async () => {
+      const { h } = await onTelegram();
+      takeUndelivered(SID);
+      tg.failing.set('sendMessage', 400);
+      h.userSent(''); // an event turn: no words of his
+      assistant(h, '<!-- re:abc123 -->\nRapor hazır: üç bölüm, iki grafik, bir özet tablo.');
+      const lines: string[] = [];
+      await vi.waitFor(() => { lines.push(...takeUndelivered(SID)); expect(lines.some((l) => l.includes('refs=abc123'))).toBe(true); }, { timeout: 5000 });
+      tg.failing.delete('sendMessage');
+      turnEnd(h);
+      // The note's own turn (not his Telegram turn): the marked, shorter re-send reaches him.
+      h.userSent('');
+      assistant(h, '<!-- re:abc123 -->\nRapor hazır.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Rapor hazır.'), { timeout: 5000 });
+    });
+
     it('a job result under a Mac ref, written on a later event turn, reaches Telegram once', async () => {
       const { h } = await onTelegram();
       h.userSent(''); // the event turn: no words of his
@@ -182,6 +199,7 @@ describe('the Super target', () => {
       expect(tg.texts().filter((t) => t.includes('CLI açılışı'))).toHaveLength(1);
       // An unmarked short text goes too, as the turn's last word: a step before it never does.
       assistant(h, 'Bakıyorum.');
+      h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu9', name: 'Bash', input: { command: 'dreamcontext super state' } }] } });
       assistant(h, 'Onay verdim, iş sürüyor.');
       await quiet();
       expect(tg.texts()).not.toContain('Onay verdim, iş sürüyor.');
@@ -245,13 +263,13 @@ describe('the Super target', () => {
       });
     });
 
-    it('no double send: a section under his Telegram ref and a Mac-ref section each go once', async () => {
+    it('no double send: a section under his Telegram ref and a Mac-ref section go once, together in ONE message (telegram-sade)', async () => {
       const { h, ref } = await onTelegram();
       const before = tg.texts().length;
       assistant(h, `<!-- re:${ref} abc123 -->\nİkisine birden cevap.\n<!-- re:abc123 -->\nSonuç hazır.`);
-      await vi.waitFor(() => expect(tg.texts()).toContain('Sonuç hazır.'));
+      await vi.waitFor(() => expect(tg.texts().slice(before)).toHaveLength(1));
       await quiet();
-      expect(tg.texts().slice(before)).toEqual(['İkisine birden cevap.', 'Sonuç hazır.']);
+      expect(tg.texts().slice(before)).toEqual(['İkisine birden cevap.\n\nSonuç hazır.']);
     });
 
     it('a Mac message ends it; a slash command and a server continue do not', async () => {
@@ -552,7 +570,7 @@ describe('the Super target', () => {
       const kept = JSON.parse(readFileSync(pollFile, 'utf-8')).pending as Array<{ msg?: { text?: string } }>;
       expect(kept.map((e) => e.msg?.text)).toEqual(['Bunu dinle', 'Selam']);
       const { wake, sent } = headless();
-      hub = new TelegramHub({
+      hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0,
         home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, now: () => Date.now() + skew,
         vaults: () => [{ name: 'acme', contextRoot: root }],
         openLink: (u) => opened.push(u), injectorWaitMs: 300, wakeHeadless: wake,
@@ -591,7 +609,7 @@ describe('the Super target', () => {
       s.pending = [{ updateId: 9001, kind: 'text', written: false, at: Date.now(), ref: 'abc123', chatRegistryId: SID, msg: { message_id: 5, chat: { id: OWNER, type: 'private' }, from: { id: OWNER, is_bot: false }, text: 'eski' } }];
       writeFileSync(pollFile, JSON.stringify(s), { mode: 0o600 });
       const { wake, sent } = headless();
-      hub = new TelegramHub({
+      hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0,
         home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, now: () => Date.now() + skew,
         vaults: () => [{ name: 'acme', contextRoot: root }],
         openLink: (u) => opened.push(u), injectorWaitMs: 300, wakeHeadless: wake,
@@ -729,7 +747,7 @@ describe('the Super target', () => {
     tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, voice: { file_id: 'v1', file_size: 4 } }));
     await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
     expect(parseTelegramPrefix(sent[1]).body).toBe('🎙 merhaba dünya');
-    expect(tg.texts()).toContain('🎙 <i>Duyduğum</i>\n<blockquote expandable><i>merhaba dünya</i></blockquote>');
+    expect(tg.texts()).toContain('<blockquote expandable>🎙 <i>Duyduğum:</i> merhaba dünya</blockquote>');
   });
 
   it('unbind sends the last message first, then removes the folder; an unkeyed one (his own page click) stays quiet about it', async () => {
@@ -745,7 +763,7 @@ describe('the Super target', () => {
     const p = JSON.parse(readFileSync(pollFile, 'utf-8'));
     writeFileSync(pollFile, JSON.stringify({ ...p, pending: [{ updateId: 5, kind: 'text', written: false, at: 1 }, { updateId: 6, kind: 'text', written: true, at: 1, ref: 'abc123' }] }), { mode: 0o600 });
     await hub.stop();
-    hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+    hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
     await hub.start();
     await vi.waitFor(() => expect(tg.texts()).toEqual(expect.arrayContaining(["⚠️ <i>Mesajın Mac'e yazılamadı; tekrar gönder.</i>", "⚠️ <i>Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.</i>"])));
     expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([]);
@@ -763,7 +781,7 @@ describe('the Super target', () => {
     await vi.waitFor(() => expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([expect.objectContaining({ written: true })]));
     await hub.stop();
     const before = tg.texts().length;
-    hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+    hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
     await hub.start();
     await vi.waitFor(() => expect(tg.texts().slice(before)).toEqual(["⚠️ <i>Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.</i>"]));
   });
@@ -781,17 +799,28 @@ describe('the Super target', () => {
       return { h, ref: parseTelegramPrefix(sent[0]).ref! };
     }
 
-    it('text, tool call, text: both reach Telegram in the order written, and the turn is not called silent', async () => {
+    it('text, tool call, text: both reach Telegram in the order written, in ONE message (telegram-sade), and the turn is not called silent', async () => {
       const { h, ref } = await telegramTurn();
-      tg.slowSends.set('Evet, bu normal.', 120);
       assistant(h, `<!-- re:${ref} -->\nEvet, bu normal.`);
       toolCall(h);
       assistant(h, "Seçim kartı Telegram'a da düştü.");
       result(h);
-      await vi.waitFor(() => expect(tg.delivered).toContain("Seçim kartı Telegram'a da düştü."), { timeout: 3000 });
+      await vi.waitFor(() => expect(tg.delivered.some((t) => t.includes('Seçim kartı'))).toBe(true), { timeout: 3000 });
       await new Promise((r) => setTimeout(r, 150));
-      const tail = tg.delivered.filter((t) => t === 'Evet, bu normal.' || t.startsWith('Seçim kartı') || t.includes('cevap yazmadan bitti'));
-      expect(tail).toEqual(['Evet, bu normal.', "Seçim kartı Telegram'a da düştü."]);
+      const tail = tg.delivered.filter((t) => t.includes('Evet, bu normal.') || t.includes('Seçim kartı') || t.includes('cevap yazmadan bitti'));
+      // A short ANSWER before a tool call is news: it stays, joined with the rest.
+      expect(tail).toEqual(["Evet, bu normal.\n\nSeçim kartı Telegram'a da düştü."]);
+    });
+
+    it('a line that only says the work goes on, before a tool call, never reaches his phone (telegram-sade)', async () => {
+      const { h, ref } = await telegramTurn();
+      assistant(h, `<!-- re:${ref} -->\nBakıyorum, bitince yazacağım.`);
+      toolCall(h);
+      assistant(h, 'Kart düzeldi.');
+      result(h);
+      await vi.waitFor(() => expect(tg.delivered).toContain('Kart düzeldi.'), { timeout: 3000 });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(tg.delivered.some((t) => t.includes('Bakıyorum'))).toBe(false);
     });
 
     it('an unmarked text sent while the turn ends is not followed by the silent line', async () => {
@@ -895,7 +924,7 @@ describe('a held token lock (the tick, a crash inside the stale window)', () => 
 
 describe('the command menu is part of the profile every start brings up to date (owner report 2026-11-09)', () => {
   const MEMBER_TOKEN = '222222:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
-  const restart = () => new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+  const restart = () => new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
   /** Bindings saved before this release: on disk, no command ever set for them. */
   async function savedBindings(): Promise<void> {
     const { writeBinding } = await import('../../src/lib/telegram/config.js');

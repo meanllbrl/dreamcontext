@@ -57,8 +57,8 @@ export interface DrawerEkipFacts {
 
 /** What a mounted instance publishes up (`DrawerFactsBridge`). */
 export interface DrawerFacts {
-  /** The project's Super Agent is handed over (its stage exists). */
-  superOn: boolean;
+  /** The project's Super Agent is handed over (its stage exists). Absent: not read yet. */
+  superOn?: boolean;
   /** The overlay is showing the Super stage right now. */
   superSelected: boolean;
   /** The overlay is expanded: this project is "on Chat". */
@@ -255,6 +255,9 @@ export interface DrawerModelInput {
   fanout: Readonly<Record<string, FanoutFacts | undefined>>;
   /** A device shell (the tunnel, a phone on the laptop listener; `readDeviceShell`): its rows. */
   device?: DeviceDrawerInput;
+  /** Every row folded, the active one too, so each carries its one end `mark` (the sidebar's
+   *  projects and boards modes, tek-kenar C3). */
+  collapseAll?: boolean;
 }
 
 /** What a device shell's drawer is built from: the window's one published fact
@@ -376,8 +379,8 @@ export function filterProjectRows<T extends { name: string }>(rows: readonly T[]
   return rows.filter((r) => foldProjectName(r.name, locale).includes(q));
 }
 
-export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, device }: DrawerModelInput): DrawerProjectRow[] {
-  const open = new Set(expanded);
+export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, device, collapseAll }: DrawerModelInput): DrawerProjectRow[] {
+  const open = new Set(collapseAll ? [] : expanded);
   if (device) return projects.map((p) => deviceProjectRow(p, { activeVault, open, facts, device }));
   return projects.map((p): DrawerProjectRow => {
     const isOpen = open.has(p.name);
@@ -415,7 +418,9 @@ function childrenOf(
   const marks = mine?.superMarks ?? far?.superMarks;
   const children: DrawerChild[] = [
     // Always there, even before anything is read: it is how a project with no chat starts one.
-    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking, waiting: marks?.waiting ?? 0 },
+    // Off only once a read says so: a project still loading has no record yet, and "off" there
+    // would be a wrong word on the row the owner is about to press.
+    { kind: 'super', on: (mine?.superOn ?? far?.superOn) !== false, selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking, waiting: marks?.waiting ?? 0 },
   ];
   // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
   // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.
@@ -716,4 +721,54 @@ export function drawerChatsPollMs(o: { tunnel: boolean; desktop: boolean; drawer
   if (o.tunnel) return TUNNEL_CHATS_POLL_MS;
   if (!o.desktop) return false;
   return o.drawerVisible && o.focused ? DRAWER_POLL_MS : false;
+}
+
+/* ── The single sidebar (tek-kenar C3) ─────────────────────────────────────────────────────── */
+
+/** What the sidebar's body shows: today's chat rows while the active project's Chat is open (or a
+ *  chat-row landing is arriving), projects with their boards on Whiteboards, projects otherwise. */
+export type SidebarMode = 'chat' | 'boards' | 'projects';
+
+export function sidebarMode(o: { onChat: boolean; page: string | null | undefined }): SidebarMode {
+  if (o.onChat) return 'chat';
+  return o.page === 'whiteboards' ? 'boards' : 'projects';
+}
+
+/** A board row's key for the sidebar's anchor layer: `board:<vault>/<slug>`; a project's is
+ *  `project:<name>`. */
+export const projectRowKey = (name: string) => `project:${name}`;
+export const boardRowKey = (vault: string, slug: string) => `board:${vault}/${slug}`;
+
+/** The board rows "Search boards…" keeps: name or slug, folded like the project search. */
+export function filterBoards<T extends { slug: string; name: string }>(boards: readonly T[], query: string, locale = 'tr'): T[] {
+  const q = foldProjectName(query, locale);
+  if (!q) return [...boards];
+  return boards.filter((b) => foldProjectName(b.name, locale).includes(q) || foldProjectName(b.slug, locale).includes(q));
+}
+
+/** Of the rows carrying `key` (a slug can sit in Pinned, Recent and its folder), the one nearest
+ *  the y the owner clicked at. Null when none carries it. */
+export function nearestRow<T extends { top: number }>(rows: readonly T[], y: number): T | null {
+  let best: T | null = null;
+  for (const r of rows) if (!best || Math.abs(r.top - y) < Math.abs(best.top - y)) best = r;
+  return best;
+}
+
+/** The scroll that puts the anchored row back at `wantTop` (its on-screen y at the click): the
+ *  new `scrollTop`, plus the spacer (top or bottom) the scroll body needs when the range cannot
+ *  reach it. `rowTop` is the row's y now; `max` the largest scrollTop the body allows now. */
+export function anchorScroll(o: { scrollTop: number; rowTop: number; wantTop: number; max: number }): { scrollTop: number; spacerTop: number; spacerBottom: number } {
+  const target = o.scrollTop + (o.rowTop - o.wantTop);
+  if (target < 0) return { scrollTop: 0, spacerTop: -target, spacerBottom: 0 };
+  if (target > o.max) return { scrollTop: target, spacerTop: 0, spacerBottom: target - o.max };
+  return { scrollTop: target, spacerTop: 0, spacerBottom: 0 };
+}
+
+/**
+ * The sidebar's one-open-project rule (wb-sol-panel, owner 2026-11-22, option A), derived, never
+ * stored: the project being prepared, else the one on screen, open unless the owner folded THAT
+ * project. A move that never lands (another window, the ceiling) leaves nothing behind to undo.
+ */
+export function openProjects(target: string | null, folded: string | null): string[] {
+  return target && folded !== target ? [target] : [];
 }

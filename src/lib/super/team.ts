@@ -7,8 +7,12 @@ import type { AutomationQuestion, ThreadEntry } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, trimTeamJobs, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
 import { runChatSession } from '../automations/run-chat.js';
+import { superJobReader, type SuperJobReader } from '../automations/super-quiet.js';
+import { ratingExists } from '../agents/scorecard.js';
+import { dirname } from 'node:path';
 import { countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
+import { owedClock } from './owed.js';
 import { memberTeamCardId, superEntry, superIdOfMember } from './store.js';
 
 /**
@@ -178,8 +182,19 @@ export function teamJobOwed(j: SuperTeamJob): boolean {
  *  memory, the record survives a restart and an answer days later. */
 export function armTeamJobWatches(contextRoot: string, s: Pick<SuperState, 'team' | 'enabled' | 'session'>): void {
   if (!jobWatcher || !s.enabled || !s.session) return;
-  // A request job is the member's own Super's: no thread to watch (its events come from team done).
-  for (const j of s.team) if (!j.request && (teamJobOwed(j) || teamJobTrailing(j))) jobWatcher(contextRoot, j.id);
+  // A request job's events come from its member's own Super (team done): its watch only asks
+  // whether the member is still in the AI Team (Tilki 2026-11-21: a deleted member's job read
+  // "working" for 16 days). An old record that was never owed an event is read once more, so a
+  // job whose member or turn is gone stops reading "running".
+  for (const j of s.team) {
+    if (j.request ? teamJobOwed(j) : (teamJobOwed(j) || teamJobTrailing(j) || teamJobUnsaid(j))) jobWatcher(contextRoot, j.id);
+  }
+}
+
+/** A job from before `open` existed whose ending nothing ever told or concluded: its status is
+ *  read from its thread, so a member gone or a turn lost reads "running" until its watch looks. */
+export function teamJobUnsaid(j: SuperTeamJob): boolean {
+  return !j.request && j.open !== true && j.told === undefined && j.concluded === undefined && j.outcome === undefined;
 }
 
 /** How long a job whose ending was told is still read for a late post (a background wait that
@@ -483,14 +498,17 @@ export function teamJobEnding(contextRoot: string, job: SuperTeamJob, live: Live
 /** A team job's status and last line as the card and `super state` show them: the same reading
  *  as the super's events (a run that asked reads asking, never done), the thread for the rest. */
 export function teamJobStatus(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): { status: TeamJobStatus; lastLine: string } {
-  if (job.request) return requestJobStatus(contextRoot, job);
-  // A stuck its watch concluded (gone, lost with the server) stays what the super was told.
+  // A stuck its watch concluded (gone, lost with the server) or the Super cancelled stays what the
+  // super was told, a request job's too (its member's record may still hold the request open).
   if (job.concluded) return { status: 'failed', lastLine: CONCLUDED_LINES[job.concluded] };
+  if (job.request) return requestJobStatus(contextRoot, job);
   const row = teamJobLive(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status: TeamJobStatus = end.kind === 'question' ? 'asking'
     : end.kind === 'done' ? 'done'
     : end.kind === 'stuck' ? 'failed'
+    // Told stuck already (an older record, before `concluded`): never "running" again.
+    : job.told === 'stuck' ? 'failed'
     : row.status === 'queued' ? 'queued' : 'running';
   return { status, lastLine: end.lastLine ?? row.lastLine };
 }
@@ -499,7 +517,25 @@ export function teamJobStatus(contextRoot: string, job: SuperTeamJob, live: Live
 export const CONCLUDED_LINES: Record<TeamJobConclusion, string> = {
   gone: 'The member is no longer in the AI Team.',
   lost: 'Outcome unknown: its turn ended with no record (the server stopped during it).',
+  cancelled: 'Cancelled by the Super Agent.',
 };
+
+/**
+ * `super team cancel`: the Super Agent closes a job of its own that is still open. Final, as a
+ * concluded stuck is: nothing about it is told again, its pending items close, and its card reads
+ * failed with the cancel line. Nothing is deleted. Returns false for a job that already ended.
+ */
+export function cancelTeamJob(s: SuperState, jobId: string, now = Date.now()): boolean {
+  const job = s.team.find((j) => j.id === jobId);
+  if (!job || job.concluded || job.told === 'done' || job.told === 'stuck') return false;
+  job.concluded = 'cancelled';
+  job.told = 'stuck';
+  delete job.toldQuestion;
+  delete job.open;
+  job.toldEndAt = now;
+  for (const q of s.queue) if (q.team === jobId && q.state !== 'done') q.state = 'done';
+  return true;
+}
 
 /** What a team job's ending tells the super now (`teamJobEnding`'s kind). */
 export function teamJobEvent(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): TeamJobEvent | null {
@@ -538,9 +574,15 @@ export function noteTeamJobEnd(
   if (end.kind !== 'question') { delete job.open; job.toldEndAt = now; }
   // An answer already queued stays: it says something the ending does not repeat.
   for (const q of s.queue) if (q.team === jobId && q.state === 'pending' && !q.partial) q.state = 'done';
+  // W3 C15: an awaited run job that finished asks him to rate it, decided once here; a follow-up
+  // on the same run is never asked again.
+  const rate = end.kind === 'done' && job.jobKind === 'run' && job.awaited === true
+    && !s.team.some((j) => j.member === job.member && j.runId === job.runId && j.rateAsked);
+  if (rate) job.rateAsked = true;
   s.queue.push({
     id: newQueueId(), sessionId: s.session, kind: end.kind, state: 'pending', createdAt: now, team: jobId,
     ...(end.kind === 'question' ? {} : { posts: claimPosts(contextRoot, s, job) }),
+    ...(rate ? { rateRun: `${job.member}::${job.runId}` } : {}),
   });
   countEvent(s);
   return true;
@@ -647,8 +689,26 @@ export function awaitedTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem):
   return (q.kind === 'done' || q.kind === 'stuck') && s.team.find((j) => j.id === q.team)?.awaited === true;
 }
 
+/** What one render of a batch (or the held block) shares across its items: one Super-job reader. */
+export interface TeamRenderPass { isSuperJob?: SuperJobReader }
+
+/**
+ * W3 C15: what a finished Super job's `done` line adds. ` run=<member>::<runId>` on every finished
+ * run job the Super handed the member, and ` rate=ask` before it while the item asked to rate it and
+ * the card holds no rating for it. Empty for anything else (a run that asked him a question is no
+ * Super job: it asks through its own row).
+ */
+function rateFields(contextRoot: string, job: SuperTeamJob, q: SuperQueueItem, status: string, pass: TeamRenderPass): string {
+  if (q.kind !== 'done' || q.partial || job.jobKind !== 'run' || status !== 'done') return '';
+  const reader = pass.isSuperJob ??= superJobReader(contextRoot);
+  if (!reader(job.member, jobThread(contextRoot, job).ordered)) return '';
+  const key = `${job.member}::${job.runId}`;
+  const ask = !!q.rateRun && ratingExists(dirname(contextRoot), job.member, key) === false;
+  return `${ask ? ' rate=ask' : ''} run=${key}`;
+}
+
 /** One team item inside a `[super events]` batch: the server's line, then the member's text fenced. */
-export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, q: SuperQueueItem): string[] {
+export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, q: SuperQueueItem, pass: TeamRenderPass = {}): string[] {
   const job = s.team.find((j) => j.id === q.team);
   if (!job) return [`- item=${q.id} team=${q.team} event=${q.kind} moved-on`];
   if (job.request) return requestJobLines(contextRoot, vault, s, job, q);
@@ -656,7 +716,7 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status = q.kind === 'question' ? 'asking' : row.status;
-  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}${q.kind === 'stuck' && row.lastLine.includes(BOARD_LIMIT_MARK) ? ' reason=board-limit' : ''}`];
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}${q.kind === 'stuck' && row.lastLine.includes(BOARD_LIMIT_MARK) ? ' reason=board-limit' : ''}${rateFields(contextRoot, job, q, status, pass)}`];
   if (job.followUpOf && job.by !== 'super') {
     const asked = jobThread(contextRoot, job).ordered.find((e) => e.id === job.entryId)?.text ?? job.brief;
     lines.push(wrapUntrusted(vault, `The owner wrote to the member: ${asked.slice(0, TEAM_ANSWER_EXCERPT)}`));
@@ -699,7 +759,7 @@ function itemPosts(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperT
  * answers (`super team answer`), or asks the owner as its own question.
  */
 function requestJobLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob, q: SuperQueueItem): string[] {
-  const status = q.kind === 'question' ? 'asking' : requestJobStatus(contextRoot, job).status;
+  const status = q.kind === 'question' ? 'asking' : job.concluded ? 'failed' : requestJobStatus(contextRoot, job).status;
   const event = q.kind === 'question' ? 'question' : q.partial ? 'answer' : q.kind;
   const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${event} from=member-super${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
   if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
@@ -708,6 +768,8 @@ function requestJobLines(contextRoot: string, vault: string, s: Pick<SuperState,
     lines.push(`  This member's Super asks YOU, about the job you gave it: answer with \`dreamcontext super team answer ${q.id} "<answer>"\`; if only the owner can say, ask him with your own \`super ask\` (never forward the member).`);
     return lines;
   }
+  // Its watch concluded it (the member left the AI Team): the server's own line, nothing to fence.
+  if (q.kind === 'stuck' && job.concluded) lines.push(`  ${CONCLUDED_LINES[job.concluded]} The job is closed; nothing more will come of it.`);
   if (q.text) lines.push(...answerLines(vault, job, q.text));
   return lines;
 }
@@ -763,4 +825,57 @@ function lastAgentLine(entries: ThreadEntry[]): string {
 function firstLine(text: string, max: number): string {
   const line = text.split('\n').map((s) => s.trim()).find(Boolean) ?? '';
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+// ─── Progress of a running team job (super-sessiz-kalmaz C7, D3b) ─────────────────
+
+/** A team job's status now, through the live say-job source the route registered: what the
+ *  progress rule reads in the sweep's probe pass (never inside a write draft). Null on a failure. */
+export function teamJobStatusNow(contextRoot: string, job: SuperTeamJob): TeamJobStatus | null {
+  try { return teamJobStatus(contextRoot, job, liveSource ? liveSource(contextRoot, job) : null).status; } catch { return null; }
+}
+
+/** What a running team job shows of itself: since when it runs, its newest activity, its last
+ *  1-2 own posts after its start (a reply: only after it got the member's lock). `queued` (ms):
+ *  it waits behind the member's current work. Facts of THIS job only. */
+export interface TeamJobProgressFacts { status: TeamJobStatus; since?: number; lastAt?: number; lines: string[]; queued?: number }
+
+export function teamJobProgress(contextRoot: string, job: SuperTeamJob, now = Date.now()): TeamJobProgressFacts | null {
+  const live = liveSource ? liveSource(contextRoot, job) : null;
+  let status: TeamJobStatus;
+  try { status = teamJobStatus(contextRoot, job, live).status; } catch { return null; }
+  if (status === 'queued') return { status, queued: job.startedAt, lines: [] };
+  if (job.request) return { status, since: job.liveSince ?? job.startedAt, lines: [] };
+  if (status !== 'running') return { status, lines: [] };
+  let after: ThreadEntry[] = [];
+  try { ({ after } = jobThread(contextRoot, job)); } catch { after = []; }
+  const liveReply = live?.kind === 'reply' ? live : null;
+  const window = job.jobKind === 'reply' ? replyWindow(job, liveReply, after) : after;
+  const since = job.jobKind === 'reply' ? (liveReply?.deliveredAt ?? job.deliveredAt ?? job.startedAt) : job.startedAt;
+  let lastAt = since;
+  for (const e of window) { const ms = entryMs(e.id); if (Number.isFinite(ms) && ms > lastAt && ms <= now) lastAt = ms; }
+  const posts = window.filter((e) => e.kind === 'agent' && e.text.trim()).slice(-2).map((e) => firstLine(plainPostText(e.text), 300));
+  return { status, since, lastAt, lines: posts };
+}
+
+/** One child of a member's Super doing main's request (`super read <team-job>` on a request). */
+export interface RequestChildFact { sid: string; row?: string; since: number; last: string }
+
+/**
+ * What `super read <team-job>` says while the job has not ended (D3b), or null when it has (the
+ * member's answer is the read then). A running run or reply: since, last activity, its last 1-2
+ * own lines; waiting for the member: "queued behind the member's current work since HH:MM"; a
+ * running request: the member record's children doing it. Null once it is not running or queued
+ * (the caller reads the answer, else says "(no answer from the member yet)").
+ */
+export function teamProgressRead(contextRoot: string, job: SuperTeamJob, now = Date.now(), requestChildren: readonly RequestChildFact[] = []): string | null {
+  const p = teamJobProgress(contextRoot, job, now);
+  if (!p) return null;
+  if (p.queued !== undefined) return `Queued behind the member's current work since ${owedClock(p.queued)}.`;
+  if (p.status !== 'running') return null;
+  if (job.request) {
+    if (!requestChildren.length) return `Running since ${owedClock(p.since ?? job.startedAt)}; no child of the member works on it yet.`;
+    return [`Running since ${owedClock(p.since ?? job.startedAt)}; the member's children on it:`, ...requestChildren.map((c) => `- child=${c.sid}${c.row ? ` row=${c.row}` : ''} since=${owedClock(c.since)}${c.last ? ` last: ${firstLine(c.last, 300)}` : ''}`)].join('\n');
+  }
+  return [`Running since ${owedClock(p.since ?? job.startedAt)}, last activity ${owedClock(p.lastAt ?? p.since ?? job.startedAt)}.`, ...p.lines.map((l) => `- ${l}`)].join('\n');
 }

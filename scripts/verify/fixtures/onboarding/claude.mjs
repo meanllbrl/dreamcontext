@@ -50,6 +50,9 @@ if (argv[0] === 'auth' && argv[1] === 'login') {
   try { mode = fs.readFileSync(path.join(V, 'claude-login-mode'), 'utf-8').trim(); } catch { mode = ''; }
   if (mode === 'hang') {
     setInterval(() => {}, 1 << 30);
+  } else if (mode === 'fail') {
+    // The browser closed before access was allowed: ends, still signed out.
+    setTimeout(() => { log('login-failed'); process.exit(1); }, 1500);
   } else {
     setTimeout(() => {
       fs.writeFileSync(path.join(V, 'claude-auth.json'), JSON.stringify({ loggedIn: true }));
@@ -65,12 +68,33 @@ if (argv[0] === 'auth' && argv[1] === 'login') {
   runEngine();
 }
 
-/** A minimal stream-json engine: enough for a chat session to open and take a first turn. */
+/**
+ * A minimal stream-json engine: enough for a chat session to open and take a turn. It knows
+ * three roles (plan ilk-acilis screen 3): the Super Agent (its brief says `# Mode: Super Agent`),
+ * the project's first read (its prompt starts "Read this project once"; it holds for
+ * `$HOME/.verify/child-ms` ms, default 6000, so the reading line can be seen), and a plain chat.
+ * Every turn is logged as `claude\tturn-<role>\t<first words>`.
+ */
 function runEngine() {
   log('engine');
   const idFlag = argv.indexOf('--session-id') !== -1 ? argv.indexOf('--session-id') : argv.indexOf('--resume');
   const convId = idFlag !== -1 ? argv[idFlag + 1] : 'verify';
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+  let brief = '';
+  try { const i = argv.indexOf('--append-system-prompt-file'); if (i !== -1) brief = fs.readFileSync(argv[i + 1], 'utf-8'); } catch { brief = ''; }
+  const isSuper = /(^|\n)# Mode: Super Agent\s*\n/.test(brief);
+  const turnLog = (role, text) => {
+    try { fs.appendFileSync(path.join(V, 'log'), `claude\tturn-${role}\t${text.replace(/\s+/g, ' ').slice(0, 80)}\n`); } catch { /* best-effort */ }
+  };
+  const answer = (text) => {
+    out({ type: 'system', subtype: 'init', session_id: convId, model: 'claude-opus-5',
+      permissionMode: 'auto', slash_commands: [], claude_code_version: '2.1.300' });
+    out({ type: 'assistant', message: { role: 'assistant', model: 'claude-opus-5',
+      content: [{ type: 'text', text }] } });
+    out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, session_id: convId,
+      usage: { input_tokens: 1, output_tokens: 1 } });
+  };
+  let chain = Promise.resolve();
   let buf = '';
   let firstSeen = false;
   process.stdin.on('data', (c) => {
@@ -91,11 +115,20 @@ function runEngine() {
         firstSeen = true;
         try { fs.writeFileSync(path.join(V, 'claude-first-message.txt'), text); } catch { /* best-effort */ }
       }
-      out({ type: 'system', subtype: 'init', session_id: convId, model: 'claude-opus-5',
-        permissionMode: 'auto', slash_commands: [], claude_code_version: '2.1.300' });
-      out({ type: 'assistant', message: { role: 'assistant', model: 'claude-opus-5',
-        content: [{ type: 'text', text: 'Hello. Tell me about this project.' }] } });
-      out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1 });
+      if (isSuper) {
+        turnLog('super', text);
+        chain = chain.then(() => answer(text.startsWith('[super')
+          ? 'Orbit is a habit tracker for small teams. Want me to suggest a first job?'
+          : 'Hello. Tell me about this project.'));
+      } else if (text.includes('Read this project once')) {
+        turnLog('firstread', text);
+        let ms = 6000;
+        try { ms = Number(fs.readFileSync(path.join(V, 'child-ms'), 'utf-8').trim()) || ms; } catch { /* default */ }
+        chain = chain.then(() => new Promise((r) => setTimeout(r, ms))).then(() => answer('Orbit: a habit tracker. The brain is written.'));
+      } else {
+        turnLog('chat', text);
+        chain = chain.then(() => answer('Hello. Tell me about this project.'));
+      }
     }
   });
   process.stdin.on('end', () => process.exit(0));

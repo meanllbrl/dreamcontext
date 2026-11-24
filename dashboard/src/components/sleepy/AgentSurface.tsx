@@ -1,8 +1,10 @@
 import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
-  type CSSProperties,
+  type CSSProperties, type ReactNode,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { BrandMark } from '../brand/BrandMark';
+import type { EmptyHero } from './chat/Banners';
 import './AgentTerminal.css';
 // The phone layer (`.agent-surface[data-mobile]`): the chat on a phone, in the new shell's frame.
 import './MobileChat.css';
@@ -21,6 +23,7 @@ import { openMemberMirrors, openOwnerQuestions, sendToSuper, trimOwnerAnswers } 
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
+import { ChatLanding, type ChatLandingPick } from './ChatLanding';
 import { TeamJobConversation } from './super/TeamJobConversation';
 import type { TeamCard } from './super/TeamTile';
 import {
@@ -103,7 +106,7 @@ import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { MAX_FILMSTRIP, groupPresentCards, readSuperStateView, type MemberCardRef, type PadStatus, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
-import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
+import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, withMissingMemberCards, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberHeldSessions, useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
@@ -133,6 +136,10 @@ import type { HomeRow } from './phoneHome';
 import { arrivalCovers, DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 const NO_JOBS: readonly SuperJobWire[] = [];
+/** The first-read refusals the offer line words (C17); any other reads 'other'. */
+const FIRST_READ_REASONS = new Set(['limited', 'claude_not_ready', 'cap_full', 'super_off', 'in_flight']);
+/** How often a "Reading started" with no child seen yet asks whether the start really opened. */
+const FIRST_READ_RECHECK_MS = 10_000;
 
 /**
  * Per session, the open permission and refusal items its own chat card answers, with the record
@@ -571,6 +578,9 @@ function threadEscSid(): string | null {
   return null;
 }
 
+/** The surface's own entrances (AgentTerminal.css): the dock zoom, and the new shell's page-in. */
+const ENTRANCES = new Set(['agent-surface-zoom-in', 'agent-surface-page-in']);
+
 export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /** New shell: the drawer click this project lands on, known from its first render. */
   arrival?: PendingDrawerIntent | null;
@@ -617,9 +627,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // safety timeout for reduced-motion, where no animation event fires) then hides it.
   const [closing, setClosing] = useState(false);
   const wasExpanded = useRef(false);
+  // Tek-kenar delta 3: a project prepared out of sight collapses without the zoom-out (nobody
+  // would see it, and the gate would wait for it).
+  const activeForMotionRef = useRef(isActive);
+  activeForMotionRef.current = isActive;
   useEffect(() => {
     if (expanded) { setClosing(false); wasExpanded.current = true; return; }
     if (!wasExpanded.current) return;
+    if (!activeForMotionRef.current) { wasExpanded.current = false; setClosing(false); return; }
     setClosing(true);
     const t = window.setTimeout(() => setClosing(false), 400);
     return () => window.clearTimeout(t);
@@ -1044,14 +1059,23 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
-  // Bumped on every saved-draft change, so the roster PUT below (which carries each chat tab's
-  // drafts) re-runs: what is typed in a box has to reach disk without waiting for a tab change.
-  const [draftsRev, setDraftsRev] = useState(0);
+  // The roster PUT below, as the function of the newest render, and its one debounce timer. A
+  // saved-draft change (every keystroke) schedules it through these and never through state:
+  // what is typed has to reach disk without waiting for a tab change, but a key must not
+  // re-render this whole surface to get there (measured: scripts/verify/app-smooth.mjs).
+  const saveRosterRef = useRef<() => void>(() => {});
+  const rosterSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRosterSave = useCallback(() => {
+    if (!hydratedRef.current) return;
+    if (rosterSaveTimerRef.current !== null) clearTimeout(rosterSaveTimerRef.current);
+    rosterSaveTimerRef.current = setTimeout(() => { rosterSaveTimerRef.current = null; saveRosterRef.current(); }, 400);
+  }, []);
+  useEffect(() => () => { if (rosterSaveTimerRef.current !== null) clearTimeout(rosterSaveTimerRef.current); }, []);
   // True once a roster GET has answered and its drafts are seeded. Until then a PUT OMITS the
   // map, which the server reads as "keep what is stored": a launch whose GET failed must not
   // overwrite the file's drafts with this run's empty store.
   const draftsLoadedRef = useRef(false);
-  useEffect(() => subscribeAnyDrafts(() => setDraftsRev((n) => n + 1)), []);
+  useEffect(() => subscribeAnyDrafts(scheduleRosterSave), [scheduleRosterSave]);
   // The roster generation the last GET answered (`baseGeneration` of every PUT). A PUT based on
   // an older one is refused (409 `roster_stale`) and this surface re-hydrates instead.
   const rosterGenRef = useRef<number | undefined>(undefined);
@@ -1756,108 +1780,109 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // captured too. `minimized`/`size` are inert defaults kept only for persisted-format
   // compatibility; `pane`/`active`/`activePane` are the live ones that carry the placement.
   // Best-effort: a failed PUT just means this change isn't mirrored.
-  useEffect(() => {
-    if (!hydratedRef.current) return;
+  const saveRoster = () => {
+    if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
     const liveChatLaunch = (id: string): ChatLaunch | null => {
       const live = sessions.current.get(id);
       if (!live || live.kind !== 'chat') return null;
       const chat = live as ChatSession;
       return chatLaunch(modelForSession(chat), effortForSession(chat), chat.accountId);
     };
-    const handle = setTimeout(() => {
-      if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
-      // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
-      // ids are minted per page load and mean nothing tomorrow) and which tab was visible in
-      // it. A session in no pane — minimized — has no placement and defaults to pane 0 on the
-      // way back in, which is where a restored-from-nothing tab has always gone.
-      const paneOf = new Map<string, number>();
-      const activeTabs = new Set<string>();
-      const windowOf = new Map<string, string>();
-      let activePaneIndex = -1;
-      // Sent only once this surface knows the project's windows (the first read seeded them, or
-      // the owner made one): a surface that never read them must not replace the stored names.
-      let windowsOut: SavedWindowMeta[] | undefined;
-      if (windowed) {
-        // Every window's panes, window after window, ONE index across the surface: an app from
-        // before windows still lays each tab out in its own pane (D8).
-        const sp = savePlacement(chatWindows, { panes, activePaneId }, sessionList);
-        sp.placement.forEach((at, sid) => {
-          windowOf.set(sid, at.window);
-          if (at.pane !== undefined) paneOf.set(sid, at.pane);
-          if (at.active) activeTabs.add(sid);
-        });
-        activePaneIndex = sp.activePane ?? -1;
-        if (windowsKnownRef.current) windowsOut = sp.windows;
-      } else {
-        panes.forEach((p, i) => {
-          p.tabs.forEach((t) => paneOf.set(t, i));
-          if (p.active) activeTabs.add(p.active);
-        });
-        activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
-        // Classic hands every tab back to the window it came from, and sends no `windows` at all:
-        // absence keeps the stored list exactly, each window's focused pane included.
-        for (const m of sessionList) windowOf.set(m.id, classicHomeRef.current.get(m.claudeId) ?? chatWindows.list[0]?.id ?? DEFAULT_WINDOW_ID);
-        windowsOut = undefined;
-      }
-      // The window on screen's tabs first: an app from before W3 keeps only the first 20 entries
-      // (its MAX_SESSIONS), so a downgrade past 20 tabs keeps the ones the owner was looking at.
-      const shownFirst = (m: SessionMeta) => (windowOf.get(m.id) === chatWindows.activeId ? 0 : 1);
-      const payload = {
-        // The remembered permission mode rides with the roster: same per-vault, machine-local,
-        // gitignored file, and the same reason for being server-side at all (localStorage dies
-        // with the launch's loopback port). Sent on every roster write, so the value on disk
-        // is always the one this surface is actually running under.
-        chatPermissionMode,
-        // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
-        ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
-        ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
-        ...(windowsOut ? { windows: windowsOut } : {}),
-        sessions: [...[...sessionList].sort((a, b) => shownFirst(a) - shownFirst(b))
-          .filter((m) => m.kind !== 'shell')
-          // The Super Agent is never a tab, so it is never saved as one: a relaunch after
-          // take-back shows no super tab, and a reload while handed over rebinds it by id.
-          .filter((m) => !isSuperSession(m, superStateRef.current?.session))
-          .map((m) => ({
-            title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
-            ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
-            ...(activeTabs.has(m.id) ? { active: true } : {}),
-            ...(windowOf.has(m.id) ? { window: windowOf.get(m.id) } : {}),
-            ...(m.titleByAgent ? { titleByAgent: true } : {}),
-            // Only carried for automation tabs — the server's `coerceMeta` drops it for
-            // every other kind anyway, but there's no reason to send it otherwise.
-            ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
-            // Same rule for the chat mode: it means nothing on a shell or a terminal agent,
-            // and `coerceMeta` keeps it only alongside `kind: 'chat'`. Basic is the absent
-            // state on BOTH sides, so a plain chat tab's payload is unchanged.
-            ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
-            ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
-            ...(chatToolFor(m.claudeId) ? { tool: chatToolFor(m.claudeId) } : {}),
-            // The model, effort and account it runs on, so a relaunch resumes it on them: a
-            // running chat's own, else (dormant, parked) the ones its Resume will use.
-            // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
-            // falls back to the launch's, as its Resume does, so a save never erases them.
-            ...savedChatLaunch(m.kind, liveChatLaunch(m.id), dormantLaunch(m.parked, m.launch)),
-          })),
-          ...carriedUnrestored(unrestoredRef.current, new Set(sessionList.map((m) => m.claudeId)))],
-      };
-      // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
-      // this body; anything else stays best-effort (rosterRehydrate.ts `putOutcome`).
-      const settle = (o: ReturnType<typeof putOutcome>) => {
-        if (o.kind === 'adopt' && o.generation !== undefined) rosterGenRef.current = o.generation;
-        else if (o.kind === 'rehydrate') rehydrateRoster();
-      };
-      void scopedApi.put<unknown>('/agent/sessions', withBaseGeneration(payload, rosterGenRef.current)).then(
-        (body) => settle(putOutcome({ ok: true, body })),
-        (err: unknown) => settle(putOutcome(err instanceof RequestError ? { ok: false, status: err.status, code: err.code } : { ok: false, status: 0, code: '' })),
-      );
-    }, 400);
-    return () => clearTimeout(handle);
+    // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
+    // ids are minted per page load and mean nothing tomorrow) and which tab was visible in
+    // it. A session in no pane — minimized — has no placement and defaults to pane 0 on the
+    // way back in, which is where a restored-from-nothing tab has always gone.
+    const paneOf = new Map<string, number>();
+    const activeTabs = new Set<string>();
+    const windowOf = new Map<string, string>();
+    let activePaneIndex = -1;
+    // Sent only once this surface knows the project's windows (the first read seeded them, or
+    // the owner made one): a surface that never read them must not replace the stored names.
+    let windowsOut: SavedWindowMeta[] | undefined;
+    if (windowed) {
+      // Every window's panes, window after window, ONE index across the surface: an app from
+      // before windows still lays each tab out in its own pane (D8).
+      const sp = savePlacement(chatWindows, { panes, activePaneId }, sessionList);
+      sp.placement.forEach((at, sid) => {
+        windowOf.set(sid, at.window);
+        if (at.pane !== undefined) paneOf.set(sid, at.pane);
+        if (at.active) activeTabs.add(sid);
+      });
+      activePaneIndex = sp.activePane ?? -1;
+      if (windowsKnownRef.current) windowsOut = sp.windows;
+    } else {
+      panes.forEach((p, i) => {
+        p.tabs.forEach((t) => paneOf.set(t, i));
+        if (p.active) activeTabs.add(p.active);
+      });
+      activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
+      // Classic hands every tab back to the window it came from, and sends no `windows` at all:
+      // absence keeps the stored list exactly, each window's focused pane included.
+      for (const m of sessionList) windowOf.set(m.id, classicHomeRef.current.get(m.claudeId) ?? chatWindows.list[0]?.id ?? DEFAULT_WINDOW_ID);
+      windowsOut = undefined;
+    }
+    // The window on screen's tabs first: an app from before W3 keeps only the first 20 entries
+    // (its MAX_SESSIONS), so a downgrade past 20 tabs keeps the ones the owner was looking at.
+    const shownFirst = (m: SessionMeta) => (windowOf.get(m.id) === chatWindows.activeId ? 0 : 1);
+    const payload = {
+      // The remembered permission mode rides with the roster: same per-vault, machine-local,
+      // gitignored file, and the same reason for being server-side at all (localStorage dies
+      // with the launch's loopback port). Sent on every roster write, so the value on disk
+      // is always the one this surface is actually running under.
+      chatPermissionMode,
+      // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
+      ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
+      ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
+      ...(windowsOut ? { windows: windowsOut } : {}),
+      sessions: [...[...sessionList].sort((a, b) => shownFirst(a) - shownFirst(b))
+        .filter((m) => m.kind !== 'shell')
+        // The Super Agent is never a tab, so it is never saved as one: a relaunch after
+        // take-back shows no super tab, and a reload while handed over rebinds it by id.
+        .filter((m) => !isSuperSession(m, superStateRef.current?.session))
+        .map((m) => ({
+          title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
+          ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
+          ...(activeTabs.has(m.id) ? { active: true } : {}),
+          ...(windowOf.has(m.id) ? { window: windowOf.get(m.id) } : {}),
+          ...(m.titleByAgent ? { titleByAgent: true } : {}),
+          // Only carried for automation tabs — the server's `coerceMeta` drops it for
+          // every other kind anyway, but there's no reason to send it otherwise.
+          ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
+          // Same rule for the chat mode: it means nothing on a shell or a terminal agent,
+          // and `coerceMeta` keeps it only alongside `kind: 'chat'`. Basic is the absent
+          // state on BOTH sides, so a plain chat tab's payload is unchanged.
+          ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
+          ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
+          ...(chatToolFor(m.claudeId) ? { tool: chatToolFor(m.claudeId) } : {}),
+          // The model, effort and account it runs on, so a relaunch resumes it on them: a
+          // running chat's own, else (dormant, parked) the ones its Resume will use.
+          // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
+          // falls back to the launch's, as its Resume does, so a save never erases them.
+          ...savedChatLaunch(m.kind, liveChatLaunch(m.id), dormantLaunch(m.parked, m.launch)),
+        })),
+        ...carriedUnrestored(unrestoredRef.current, new Set(sessionList.map((m) => m.claudeId)))],
+    };
+    // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
+    // this body; anything else stays best-effort (rosterRehydrate.ts `putOutcome`).
+    const settle = (o: ReturnType<typeof putOutcome>) => {
+      if (o.kind === 'adopt' && o.generation !== undefined) rosterGenRef.current = o.generation;
+      else if (o.kind === 'rehydrate') rehydrateRoster();
+    };
+    void scopedApi.put<unknown>('/agent/sessions', withBaseGeneration(payload, rosterGenRef.current)).then(
+      (body) => settle(putOutcome({ ok: true, body })),
+      (err: unknown) => settle(putOutcome(err instanceof RequestError ? { ok: false, status: err.status, code: err.code } : { ok: false, status: 0, code: '' })),
+    );
+  };
+  // Committed renders only: a render React throws away never becomes what the timer sends.
+  useLayoutEffect(() => { saveRosterRef.current = saveRoster; });
+  useEffect(() => {
+    scheduleRosterSave();
     // `panes`/`activePaneId`/`chatPermissionMode` join the roster in the deps because they are
     // now part of what is persisted — a split, a tab drag or a permission change has to reach
     // disk, and the 400ms debounce is what keeps a drag from writing once per frame.
     // `modelForSession`/`effortForSession` too: a model or effort picked on a running chat is
-    // part of what a relaunch resumes it on.
-  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession, draftsRev, chatWindows, windowed]);
+    // part of what a relaunch resumes it on. Saved drafts schedule the same save themselves.
+  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession, chatWindows, windowed, scheduleRosterSave]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -2025,7 +2050,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return home ? showWindow(home) : null;
   }, [showWindow]);
 
-  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '') => {
+  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '', pick?: ChatLandingPick) => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
     // A new CHAT starts in Basic — there is deliberately no remembered mode default (the mode
@@ -2044,8 +2069,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const s = launch
       ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
       : codexId
-        ? spawn(bypass, codexId, false, 'chat', '', onAntigravity ? '' : defaults.codexDefaultModel, true, '', false, onAntigravity ? '' : defaults.codexDefaultEffort)
-        : spawn(bypass, undefined, false, kind);
+        // A landing pick's mode carries over; its model and effort are Claude's, so Codex keeps its own.
+        ? spawn(bypass, codexId, false, 'chat', '', onAntigravity ? '' : defaults.codexDefaultModel, true, '', false, onAntigravity ? '' : defaults.codexDefaultEffort, false, pick?.mode ?? DEFAULT_CHAT_MODE)
+        : pick && kind === 'chat'
+          // The Chat page's landing (ChatLanding): what the owner picked before the chat existed.
+          ? spawn(bypass, pickedClaudeId(pick.chosenModel), false, 'chat', '', pick.chosenModel, true, '', false, pick.effort, false, pick.mode, pick.accountId)
+          : spawn(bypass, undefined, false, kind);
     // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {
       id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
@@ -2056,10 +2085,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
   // a shell), or as the first pane.
-  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = ''): string => {
+  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '', pick?: ChatLandingPick): string => {
     if (!admitTab()) return '';
     freshenShownIfEmptyRef.current();
-    const s = spawnAndRegister(kind, launch, forceTool);
+    const s = spawnAndRegister(kind, launch, forceTool, pick);
     if (panes.length === 0) {
       const pid = nextPaneId();
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -3400,8 +3429,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setSuperDockOpen(false);
     setSuperView('panes');
   });
+  // Which intent is parked: `initializer` starts the initializer chat; `super-landing` (plan
+  // ilk-acilis C8) turns the Super Agent on quietly and shows its stage, sending nothing.
+  const startIntentKindRef = useRef<StartChatIntentDetail['intent']>('initializer');
+  // `handOver` is declared further down; the landing reaches it through this ref.
+  const handOverRef = useRef<(opts?: unknown) => Promise<string | null>>(async () => null);
   useInstanceEvent<StartChatIntentDetail>(START_CHAT_INTENT_EVENT, (detail) => {
-    if (detail?.intent !== 'initializer') return;
+    if (detail?.intent !== 'initializer' && detail?.intent !== 'super-landing') return;
+    startIntentKindRef.current = detail.intent;
     setStartIntentAt(Date.now());
     detail.accepted = true;
   });
@@ -3415,6 +3450,22 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return () => window.clearTimeout(timer);
     }
     setStartIntentAt(null);
+    if (startIntentKindRef.current === 'super-landing') {
+      // D10: Claude cannot start here, so the project opens on today's panes (no refusal: the
+      // landing itself worked). Otherwise the stage, handed over quietly when not on yet: no
+      // `handover` item is queued, so the Super takes no turn until the owner writes (C8a).
+      if (!canSpawn) return undefined;
+      setExpanded(true);
+      if (superStateRef.current?.enabled) {
+        setActiveSuperId(MAIN_SUPER);
+        setSuperView('super');
+        return undefined;
+      }
+      void handOverRef.current({ adoptNone: true, quiet: true }).then((session) => {
+        if (!session) emitInstance(bus, START_CHAT_REFUSED_EVENT);
+      });
+      return undefined;
+    }
     const detail: DelegateAgentDetail = {
       title: t('onboarding.handoff.tabTitle'),
       prompt: initializerKickoffPrompt(),
@@ -3976,12 +4027,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       changeChatEffortFor(sid, level);
       return true;
     },
-    send: (sid, text) => {
+    send: (sid, text, lead) => {
       const chat = liveChat(sid);
       if (!chat) return false;
       // Busy: into the running turn (the composer's ⏎); only an open question/permission card
-      // makes it wait (`deliverToChat`).
-      return deliverToChat(chat, text);
+      // makes it wait (`deliverToChat`). A lead line rides only a new turn.
+      return deliverToChat(chat, text, lead);
     },
     close: (sid) => closeSessionById(sid),
     };
@@ -4029,7 +4080,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (!base || placeholderPatches.slug !== slug) return base;
     return placeholderPatches.patches.reduce<SuperStateView>((st, patch) => applyLayoutPatch(st, patch), base);
   }, [activeSuperId, vault, memberSaved, placeholderPatches]);
-  const stageView = superState ?? memberPlaceholder;
+  // A member's live record lacking a card a newer build added draws it at its default (C7).
+  const memberStageState = useMemo(() => withMissingMemberCards(superState, memberOf(activeSuperId) !== null), [superState, activeSuperId]);
+  const stageView = memberStageState ?? memberPlaceholder;
   const handedOver = superView === 'super' && !!stageView && !isMobile;
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
   // here: the view stays as the hand-over and take-back left it (T1).
@@ -4622,9 +4675,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // A member Super's child: the server's crew ticket rides on its connection (main's frames
       // carry none, so its child's URL is unchanged).
       bindCrewTicket(childId, args.crewTicket);
+      // The project's first read (C15a): the server runs it `auto` whatever the URL says, so its
+      // tab never claims bypass (explicitBypass with bp = false); every other child follows the
+      // vault's switch as before.
+      const firstRead = args.firstRead === true;
       // An explicit `--model` (an escalated `--model opus` job among them) is a pick: kept under Eco Plus.
       noteChatModelPick(childId, d.model);
-      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
+      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, firstRead, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise
       // unmark it on the next roster change, before the push lands).
@@ -5033,6 +5090,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const handOver = useCallback(async (opts?: unknown): Promise<string | null> => {
     // Telegram's "Super'i aç" (N5): the same hand-over, adopting none of the open chats.
     const adoptNone = !!opts && typeof opts === 'object' && (opts as { adoptNone?: unknown }).adoptNone === true;
+    // A quiet hand-over queues no turn: the onboarding landing (`super-landing`, C8a) and a sidebar
+    // header press that lands on the Super Agent (wb-sol-panel C6).
+    const quiet = !!opts && typeof opts === 'object' && (opts as { quiet?: unknown }).quiet === true;
     let landed: string | null = null;
     const live = flightRunRef.current;
     if (live?.run.active) { live.run.reverse(); return null; }
@@ -5062,7 +5122,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       });
       // New shell: every session has one home and there is no take-back, so opening the Super
       // Agent takes none of the owner's chats out of their windows.
-      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session);
+      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session, quiet);
       // FIRST rects, in ONE batch, before anything changes.
       const first = new Map<string, { role: FlightRole; rect: Rect }>();
       for (const cid of body.adopt) {
@@ -5123,6 +5183,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return landed;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedApi, ensureSuperSession, panes, activePaneId, transportKind, t, instanceId]);
+  handOverRef.current = handOver;
 
   // Telegram's "Super'i aç" reaches this window as `hub_command super_handover` (N5, P4): the
   // same hand-over, adopting nothing; a full tab bar or a flight in progress says why.
@@ -5237,7 +5298,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   }, []);
   // The surface's own zoom-in (AgentTerminal.css) while it runs: the page still shows around it.
   const zoomIn = useCallback(() => hostRef.current?.getAnimations?.()
-    .find((a) => (a as CSSAnimation).animationName === 'agent-surface-zoom-in' && a.playState !== 'finished'), []);
+    .find((a) => ENTRANCES.has((a as CSSAnimation).animationName) && a.playState !== 'finished'), []);
   // Opened while handed over (re-open, or a reload: desktop opens it by itself): cover the page
   // once the zoom lands, never under it. No zoom (reduced motion, already open) = at once.
   useLayoutEffect(() => {
@@ -6012,8 +6073,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // This instance's Shell only (it emits on the same bus): navigating in the foreground
   // project must not collapse a backgrounded project's overlay out from under it, so that
   // switching back lands on the agent you left open rather than on its page.
-  useInstanceEvent('dreamcontext-navigate', () => {
+  // Unless Chat was opened after that press (`keepChat`, Shell.tsx `NavigateSignal`): the page
+  // lands under it.
+  useInstanceEvent<{ keepChat?: boolean } | undefined>('dreamcontext-navigate', (signal) => {
     navigatedRef.current = true;
+    if (signal?.keepChat) return;
     setExpanded((cur) => (cur ? false : cur));
   });
 
@@ -6103,6 +6167,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (wasExpandedForArrival.current && !expanded) setArrived(false);
     wasExpandedForArrival.current = expanded;
   }, [expanded]);
+  // Tek-kenar delta 3: an expand while this project is not on screen (a move prepares it out of
+  // sight) is an arrival: no zoom-in, so it is at rest when the window shows it.
+  useLayoutEffect(() => {
+    if (expanded && !isActive) setArrived(true);
+  }, [expanded, isActive]);
   // The intent can be dropped on its way (a stale queue entry): the wait never outlives its bound.
   useEffect(() => {
     if (!arriving) return undefined;
@@ -6405,7 +6474,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       arrivalHeldRef.current = true;
       void runSuperRow(plan, {
         showStage: () => setSuperView('super'),
-        handOver: async () => { await handOver(); },
+        handOver: async () => { await handOver(intent.quiet ? { quiet: true } : undefined); },
         spawnChat: () => {
           const id = addSession(SUPER_ROW_SPAWN.kind, { bypass: SUPER_ROW_SPAWN.bypass, explicitBypass: SUPER_ROW_SPAWN.explicitBypass });
           if (!id) throw new Error('40 chats are open in this project');
@@ -6967,7 +7036,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown, chatFacts, activeChatId, memberWaits]);
   useEffect(() => {
     emitInstance<DrawerSurfaceWithWaits>(bus, DRAWER_SURFACE_EVENT, {
-      superOn, superSelected: (superSelected || arriving === 'super') && !peekMember,
+      // Unread, the record says nothing yet: the side menu must not call the Super off.
+      ...(superKnown ? { superOn } : {}), superSelected: (superSelected || arriving === 'super') && !peekMember,
       // Before the roster is restored every window reads empty: the drawer must not believe it.
       ...(rosterKnown ? { windows: windowFacts, activeWindowId: chatWindows.activeId, chats: chatFacts } : {}),
       ...(rosterKnown && activeChatId ? { activeChatId } : {}),
@@ -6976,7 +7046,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bus, superOn, superSelected, windowFactsKey]);
+  }, [bus, superOn, superKnown, superSelected, windowFactsKey]);
 
   // The door History and links walk through (`resumePastSession`): the new shell's desktop only.
   openInSuperWindowRef.current = (past) => {
@@ -7187,9 +7257,140 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     </div>
   );
   /** A Super chat's composer line: main's as before, a member's "<name> ne yapsın?". */
+  // The main Super stage's empty state (plan ilk-acilis C13, v2-03j): the project's question,
+  // the gem in place of ">_" (owner 2026-11-20), three chips. ONE object per vault and language.
+  // The first-read offer (C17): GET only asks whether it is up; POST goes out ONLY from the
+  // Start reading click (S6), never on mount, reconnect or a timer.
+  const [firstReadPending, setFirstReadPending] = useState(false);
+  const [firstReadOut, setFirstReadOut] = useState(false);
+  const [firstReadRefused, setFirstReadRefused] = useState<string | null>(null);
+  const [firstReadStarted, setFirstReadStarted] = useState(false);
+  // A start shown here belongs to its project: only a project change clears it (a canSpawn
+  // flicker or a new api object must not drop "Reading started" back to the default).
+  useEffect(() => { setFirstReadStarted(false); }, [vault]);
+  useEffect(() => {
+    setFirstReadPending(false); setFirstReadRefused(null);
+    if (!vault || isMobile || !canSpawn) return undefined;
+    let live = true;
+    scopedApi.ownerGet<{ pending?: boolean }>('/super/first-read')
+      .then((r) => { if (live) setFirstReadPending(r?.pending === true); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [vault, isMobile, canSpawn, scopedApi]);
+  const firstReadLive = useMemo(() => Object.values(mainSuperState?.children ?? {}).some((c) =>
+    c.firstRead === true && c.endedAt === undefined && (c.row === 'working' || c.row === 'asking' || c.row === 'waiting')),
+  [mainSuperState?.children]);
+  // Started here and then seen running: once it stops running the line goes back to today's.
+  const firstReadSeenLive = useRef(false);
+  useEffect(() => {
+    if (firstReadLive) firstReadSeenLive.current = true;
+    else if (firstReadSeenLive.current) { firstReadSeenLive.current = false; setFirstReadStarted(false); }
+  }, [firstReadLive]);
+  // "Reading started" with no child seen yet (a start the window answered late): ask again now
+  // and then. No claim and no start in flight means it never opened: the offer comes back.
+  useEffect(() => {
+    if (!vault || !firstReadStarted || firstReadLive || firstReadSeenLive.current) return undefined;
+    let live = true;
+    const timer = setInterval(() => {
+      scopedApi.ownerGet<{ pending?: boolean; starting?: boolean }>('/super/first-read')
+        .then((r) => {
+          if (!live || firstReadSeenLive.current || r?.pending !== true || r.starting === true) return;
+          setFirstReadStarted(false);
+          setFirstReadPending(true);
+        })
+        .catch(() => undefined);
+    }, FIRST_READ_RECHECK_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, [vault, firstReadStarted, firstReadLive, scopedApi]);
+  const startFirstRead = useCallback(async () => {
+    if (firstReadOut) return;
+    setFirstReadOut(true);
+    setFirstReadRefused(null);
+    try {
+      const r = await scopedApi.ownerPost<{ ok?: boolean; error?: string }>('/super/first-read', {});
+      if (r?.ok === false) throw new RequestError('', 409, r.error ?? 'other');
+      setFirstReadPending(false);
+      setFirstReadStarted(true);
+    } catch (e) {
+      const code = e instanceof RequestError ? e.code : '';
+      if (code === 'not_eligible') setFirstReadPending(false);
+      else setFirstReadRefused(FIRST_READ_REASONS.has(code) ? code : 'other');
+    } finally {
+      setFirstReadOut(false);
+    }
+  }, [firstReadOut, scopedApi]);
+  const firstReadSub = useMemo<ReactNode | undefined>(() => {
+    const name = vault ?? '';
+    if (firstReadLive || firstReadStarted) {
+      return <span data-testid="first-read-started">{t('super.firstRead.started')}</span>;
+    }
+    if (!firstReadPending) return undefined;
+    return (
+      <span className="chat-banner-first-read" data-testid="first-read-offer">
+        <span>{t('super.firstRead.offer').replace('{name}', name)}</span>
+        <button type="button" className="chat-banner-chip" data-testid="first-read-start" disabled={firstReadOut} onClick={() => { void startFirstRead(); }}>
+          {t('super.firstRead.start')}
+        </button>
+        {firstReadRefused && <span className="chat-banner-first-read-why" role="status" data-testid="first-read-refused">{t(`super.firstRead.refused.${firstReadRefused}`)}</span>}
+      </span>
+    );
+  }, [t, vault, firstReadLive, firstReadStarted, firstReadPending, firstReadOut, firstReadRefused, startFirstRead]);
+  const superHero = useMemo<EmptyHero>(() => ({
+    title: t('super.empty.title').replace('{name}', vault ?? ''),
+    ...(firstReadSub ? { sub: firstReadSub } : {}),
+    mark: <BrandMark size={76} className="chat-banner-empty-mark" title="" />,
+    chips: [
+      t('super.empty.chip.explain'),
+      t('super.empty.chip.first'),
+      t('super.empty.chip.morning').replace('{name}', vault ?? ''),
+    ],
+  }), [t, vault, firstReadSub]);
+  // The Chat page with no chat open (ChatLanding): the Super welcome's mark, question and chips,
+  // with the old landing's other ways in as one quiet row under them.
+  const [termSetupOpen, setTermSetupOpen] = useState(false);
+  const openExternalRef = useRef(openExternal);
+  openExternalRef.current = openExternal;
+  const landingHero = useMemo<EmptyHero>(() => ({
+    title: superHero.title,
+    mark: superHero.mark,
+    chips: superHero.chips,
+    more: (
+      <>
+        <div className="chat-banner-more-row">
+          {caps?.embeddedTerminal ? (
+            <button type="button" className="chat-banner-more-btn" onClick={() => addSession('shell')}>{t('chat.landing.terminal')}</button>
+          ) : (
+            <button type="button" className="chat-banner-more-btn" aria-expanded={termSetupOpen} onClick={() => setTermSetupOpen((v) => !v)}>{t('chat.landing.setupTerminal')}</button>
+          )}
+          {caps?.openTerminal && (
+            <button type="button" className="chat-banner-more-btn" onClick={() => { void openExternalRef.current(); }}>{t('chat.landing.external')}</button>
+          )}
+          <button type="button" className="chat-banner-more-btn" onClick={openPastChats}>{t('chat.landing.past')}</button>
+        </div>
+        {!caps?.embeddedTerminal && termSetupOpen && <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />}
+      </>
+    ),
+  }), [superHero, caps?.embeddedTerminal, caps?.openTerminal, termSetupOpen, t, addSession, openPastChats, refreshCaps]);
+  const startLandingChat = useCallback((message: string, pick: ChatLandingPick): boolean => {
+    const sid = addSession('chat', undefined, '', pick);
+    const cs = sid ? sessions.current.get(sid) : undefined;
+    if (!cs || cs.kind !== 'chat') return false;
+    const chat = cs as ChatSession;
+    // The pickers of a Claude chat read these; a chat on another default tool keeps its own.
+    if (!chat.tool) {
+      setSessionModel((prev) => ({ ...prev, [sid]: pick.model }));
+      setSessionEffort((prev) => ({ ...prev, [sid]: pick.effort }));
+    }
+    chat.enqueue(message, { resubmit: true });
+    return true;
+  }, [addSession]);
+  /** Is this the MAIN project's Super stage on a computer (plan ilk-acilis D9)? Never a member
+   *  stage, a member's mirror or the phone: those keep today's empty state. */
+  const isMainSuperStage = (cs: ChatSession): boolean =>
+    cs.mode === 'super' && !isMobile && !chatAgentFor(cs.claudeId) && !memberMirrorsRef.current.has(cs.claudeId);
   const superPlaceholderFor = (cs: ChatSession): string => {
     const member = chatAgentFor(cs.claudeId) || memberMirrorsRef.current.get(cs.claudeId) || '';
-    if (!member) return t('super.centre.placeholder');
+    if (!member) return isMainSuperStage(cs) ? t('super.empty.placeholder') : t('super.centre.placeholder');
     const name = findAgent(memberRoster.data, member)?.title || member;
     return t('superStage.member.placeholder').replace('{name}', name);
   };
@@ -7486,81 +7687,58 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   } else if (isMobile) {
     body = <div className="agent-term">{phoneEmpty}</div>;
   } else {
-    body = (
-      <Centered>
-        <BotMark />
-        <h2 style={titleStyle}>Chat — real Claude Code</h2>
-        <p style={subStyle}>
-          {chatMode ? (
-            <>
-              A full Claude Code session running right here, scoped to this project, rendered as a
-              <strong> native conversation</strong> — boards, media and diffs appear inline, and its
-              questions become buttons you click. Or a <strong>plain terminal</strong> in the same
-              window when you just need a shell.
-            </>
-          ) : (
-            <>
-              A full interactive Claude Code session running right here, scoped to this project —
-              or a <strong>plain terminal</strong> in the same window when you just need a shell.
-            </>
-          )}
-          {' '}Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
-          can put them <strong>side by side</strong> (⌘D) to watch several at once.
-        </p>
-        <BypassToggle bypass={bypass} setBypass={setBypass} />
-        {(() => {
-          // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
-          // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
-          // when the CLI is missing. Missing the renderer → show the in-app Setup panel.
-          // Chat needs only the claude CLI + the Settings → Agents screen preference — it can
-          // start on a node-pty-broken machine where neither of the above can.
-          // The Agent screen preference is a SWAP: exactly one Claude start button shows,
-          // matching the chosen surface (chatMode folds in the claudeCli requirement).
-          const agentReady = caps.embeddedTerminal && caps.claudeCli && !chatMode;
-          const terminalReady = caps.embeddedTerminal;
-          const chatReady = chatMode;
-          return (
-            <>
-              <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {agentReady && (
-                  <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
-                )}
-                {chatReady && (
-                  <button onClick={() => addSession('chat')} style={primaryBtn}>◆ Start chat</button>
-                )}
-                {terminalReady && (
-                  <button onClick={() => addSession('shell')} style={(agentReady || chatReady) ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
-                )}
-                {caps.openTerminal && (
-                  <button onClick={openExternal} style={secondaryBtn}>↗ Open in Terminal</button>
-                )}
-                {/* Past chats belongs HERE too, not only in the header: `started` is
-                    `sessionList.length > 0`, so a launch with no restored tabs shows this
-                    screen and the header's ◷ button does not exist yet — which is exactly
-                    the moment "reopen what I was working on" is the thing you want. Gated
-                    on the CLI alone: resuming spawns `claude --resume`, no node-pty. */}
-                {caps.claudeCli && (
-                  <button onClick={openPastChats} style={secondaryBtn}>◷ Past chats</button>
-                )}
-              </div>
-              {!terminalReady && (
-                <>
-                  {/* Coexistence: on a node-pty-broken machine with Chat ready, don't let the
-                      terminal's install panel read as "the whole surface is unavailable" —
-                      chat is already usable above; the terminal needs one more piece. */}
-                  {chatReady && (
-                    <p style={{ ...subStyle, marginTop: '18px', color: 'var(--color-text-tertiary)' }}>
-                      Chat is ready to use above. The embedded terminal needs one more piece:
-                    </p>
-                  )}
-                  <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />
-                </>
-              )}
-            </>
-          );
-        })()}
-      </Centered>
-    );
+    // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
+    // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
+    // when the CLI is missing. Chat needs only the claude CLI + the Settings → Agents screen
+    // preference — it can start on a node-pty-broken machine where neither of the above can.
+    // The Agent screen preference is a SWAP: exactly one Claude start shows, matching the
+    // chosen surface (chatMode folds in the claudeCli requirement).
+    const agentReady = caps.embeddedTerminal && caps.claudeCli && !chatMode;
+    const terminalReady = caps.embeddedTerminal;
+    if (chatMode) {
+      // The Super Agent's welcome over the real composer (owner 2026-11-24): the owner types and
+      // a chat starts. The terminal, past chats and Open in Terminal stay one quiet click away;
+      // the permission mode is the composer's own control.
+      body = (
+        <div className="agent-term">
+          <ChatLanding
+            hero={landingHero}
+            placeholder={t('super.empty.placeholder')}
+            actions={chatActions}
+            modelConfig={modelConfig}
+            permissionMode={chatPermissionMode}
+            canSignInInApp={canSignInInApp}
+            signInCommand={signInCommand}
+            onStart={startLandingChat}
+          />
+        </div>
+      );
+    } else {
+      body = (
+        <Centered>
+          {landingHero.mark}
+          <h2 style={titleStyle}>{landingHero.title}</h2>
+          <BypassToggle bypass={bypass} setBypass={setBypass} />
+          <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {agentReady && (
+              <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
+            )}
+            {terminalReady && (
+              <button onClick={() => addSession('shell')} style={agentReady ? secondaryBtn : primaryBtn}>&gt;_ {t('chat.landing.terminal')}</button>
+            )}
+            {caps.openTerminal && (
+              <button onClick={openExternal} style={secondaryBtn}>↗ {t('chat.landing.external')}</button>
+            )}
+            {/* Past chats belongs HERE too: with no tab open the header's ◷ button does not
+                exist yet. Gated on the CLI alone: resuming spawns `claude --resume`. */}
+            {caps.claudeCli && (
+              <button onClick={openPastChats} style={secondaryBtn}>◷ {t('chat.landing.past')}</button>
+            )}
+          </div>
+          {!terminalReady && <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />}
+        </Centered>
+      );
+    }
   }
 
   return (
@@ -7573,6 +7751,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
            corner pane's composer can clear its anchor chip (model/effort stay visible). */
         data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}
         data-arrived={arrived ? 'true' : undefined}
+        /* Tek-kenar C1 delta 2: landing on Chat, the surface is not drawn yet until its roster,
+           settings and Super record are read and the click's wait is over. Never collapsed. */
+        data-loading={expanded && (caps === null || !settingsReady || !rosterKnown || !superKnown || arriving !== null) ? '' : undefined}
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
@@ -7885,6 +8066,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // A member's phone mirror (an ordinary chat mode) asks "<name> ne yapsın?" too; main's
           // mirror and every other chat are unchanged.
           idlePlaceholder={cs.mode === 'super' || memberMirrorsRef.current.has(cs.claudeId) ? superPlaceholderFor(cs) : undefined}
+          // The main Super stage's own empty state (C13): one memoised object, so the memo holds.
+          emptyHero={isMainSuperStage(cs) ? superHero : undefined}
           // A member's phone mirror reads and marks the member's unread, never main's.
           superMember={memberMirrorsRef.current.get(cs.claudeId)}
           aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}

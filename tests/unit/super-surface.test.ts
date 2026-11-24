@@ -55,7 +55,10 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
     // Param 11 (explicitBypass) is false, so `spawn`'s chat arm takes the vault's remembered mode.
     expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', superPaneReattach\(fresh, isMacPhoneSurface\(\)\)\)/);
     // The child's id is minted first so its lean MCP set (orchestration plan r5 D14) is known at the spawn.
-    expect(surface).toMatch(/spawn\(false, childId, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
+    // Its children too, except the project's first read (C15a): explicitBypass = firstRead with
+    // bp = false, so that one tab never claims bypass whatever the vault's switch says.
+    expect(surface).toMatch(/spawn\(false, childId, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, firstRead, d\.mode\)/);
+    expect(surface).toMatch(/const firstRead = args\.firstRead === true;/);
   });
 
   it('past chats never reopen its conversation as a tab', () => {
@@ -68,7 +71,8 @@ describe('hand over / take back (D5, D9, D17)', () => {
   it('the hand-over posts the adoption body built with the predicate (never the super itself)', () => {
     const hand = surface.slice(surface.indexOf('const handOver = useCallback'), surface.indexOf('const takeBack = useCallback'));
     // Telegram's "Super'i aç" adopts nothing (W5 N5); the Mac button keeps the predicate.
-    expect(hand).toMatch(/const body = adoptionBody\(windowed \|\| adoptNone \? \[\] : tabs, before\?\.session\);/);
+    // The onboarding landing alone passes quiet (C8a: no hand-over turn).
+    expect(hand).toMatch(/const body = adoptionBody\(windowed \|\| adoptNone \? \[\] : tabs, before\?\.session, quiet\);/);
     expect(hand).toMatch(/await enableSuper\(scopedApi, body\)/);
     // First rects in ONE batch BEFORE the request and the DOM switch (D18).
     expect(hand.indexOf('const first = new Map')).toBeLessThan(hand.indexOf('await enableSuper'));

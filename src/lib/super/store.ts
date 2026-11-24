@@ -1,3 +1,4 @@
+import { isRunKey } from '../agents/run-key.js';
 import { promises as fsp } from 'node:fs';
 import { isConditionData } from '../automations/condition.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -5,15 +6,17 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, PAD_STAGES, cleanPadText, MAX_OWNER_MARKS_BYTES, OWNER_MARK_KEY_RE, OWNER_MARK_KINDS, type OwnerMark, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
-  MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
+  MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, TEAM_JOB_CONCLUSIONS, TEAM_SAID_NOTES, type TeamJobConclusion, type TeamSaidNote, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
-  MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
+  MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, MAX_PROGRESS_JOBS, type ProgressJob, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
-  type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_SLUG_RE, SUPER_NOTES, validBase, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
+  type AskShow, type ReturnsAsked, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  JOB_RISKS, type JobContext, type JobRisk,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
+import { cleanMigrationIds } from './migration-ids.js';
 import { sanitizeModel } from '../claude-args.js';
 import { capAskShows } from './ask-show.js';
 import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
@@ -172,6 +175,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v);
 const cap = (v: unknown, n: number): string | undefined => (typeof v === 'string' ? v.slice(0, n) : undefined);
 const finite = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+const nonNegative = (v: unknown): number | undefined => { const n = finite(v); return n !== undefined && n >= 0 ? n : undefined; };
 // eslint-disable-next-line no-control-regex
 const stripControls = (s: string) => s.replace(/[\u0000-\u001f\u007f]/g, ' ');
 
@@ -322,13 +326,16 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     // (`super state`, its card and `super resume` all read it from here).
     if (c.tool === 'codex' || c.tool === 'antigravity') child.tool = c.tool;
     if (c.mcp !== undefined) { const m = parseMcpNames(c.mcp); if (!('error' in m) && m.names.length) child.mcp = m.names; }
-    // A worktree and its branch travel together; either one hostile drops both.
-    if (c.worktree !== undefined || c.branch !== undefined) {
-      if (acceptableWorktree(c.worktree, opts) && typeof c.branch === 'string' && SUPER_BRANCH_RE.test(c.branch)) {
-        child.worktree = c.worktree;
-        child.branch = c.branch;
-      }
+    // The child's identity (K9): each field kept by its own check or dropped alone. The branch
+    // stands without a worktree (a dal-yalnız child is merged and resumed through it); a worktree
+    // only beside a valid branch, so a hostile or unlisted path drops only the path.
+    if (typeof c.branch === 'string' && SUPER_BRANCH_RE.test(c.branch)) {
+      child.branch = c.branch;
+      if (acceptableWorktree(c.worktree, opts)) child.worktree = c.worktree;
     }
+    if (typeof c.repo === 'string' && REPO_NAME_RE.test(c.repo)) child.repo = c.repo;
+    if (typeof c.lastBranch === 'string' && SUPER_BRANCH_RE.test(c.lastBranch)) child.lastBranch = c.lastBranch;
+    if (validBase(c.movedTo)) child.movedTo = c.movedTo;
     // The job list's row (plan r4): every field to its own list or pattern, or dropped.
     if (oneOf(CHILD_ROWS, c.row)) child.row = c.row;
     const rowAt = finite(c.rowAt);
@@ -341,11 +348,19 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
     if (child.row === 'stuck' && typeof c.startError === 'string') child.startError = c.startError.slice(0, MAX_START_ERROR);
     if (c.awaited === true) child.awaited = true;
+    if (c.firstRead === true) child.firstRead = true;
+    if (typeof c.firstReadAnnounced === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(c.firstReadAnnounced)) child.firstReadAnnounced = c.firstReadAnnounced;
     if (typeof c.origin === 'string' && MSG_REF_RE.test(c.origin)) child.origin = c.origin;
     const wo = parseWorkOrigin(c.workOrigin);
     if (wo) child.workOrigin = wo;
     const outward = sanitizeOutward(c.outward);
     if (outward) child.outward = outward;
+    const cctx = sanitizeJobContext(c.context);
+    if (cctx) child.context = cctx;
+    if (Array.isArray(c.delegatedBy)) {
+      const keys = [...new Set(c.delegatedBy.filter((k: unknown): k is string => typeof k === 'string' && k !== '' && k.length <= 200))].slice(0, 8);
+      if (keys.length) child.delegatedBy = keys;
+    }
     // The agenda's two stamps (epoch ms): a non-finite or negative value is dropped.
     const sentAt = finite(c.sentAt);
     if (sentAt !== undefined && sentAt >= 0) child.sentAt = sentAt;
@@ -357,15 +372,69 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
       if (v !== undefined && v >= 0) child[k] = k === 'finishedAt' ? v : Math.min(v, Date.now());
     }
     if (child.seenAt === undefined) delete child.seenMarkedAt;
+    // The progress clock's stamps (super-sessiz-kalmaz C2), field by field: malformed is dropped.
+    for (const k of ['workingSince', 'toldAt', 'progressAt'] as const) {
+      const v = finite(c[k]);
+      if (v !== undefined && v >= 0) child[k] = v;
+    }
     const sent = cleanSent(c.sent);
     if (sent.length) child.sent = sent;
+    // A migration child (`delegate --migration`) keeps its marker: one such child per project.
+    const migration = cleanMigrationIds(c.migration);
+    if (migration.length) child.migration = migration;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
-  // still owns a worktree always stays (`super merge` and `worktree remove` reach it by child).
-  const ended = Object.values(out).filter((c) => c.endedAt !== undefined && !c.worktree).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  // still holds its identity always stays (`super merge` and `super resume` reach it by child;
+  // the janitor releases it once its branch is home, D17). No count cap on those: each is work
+  // that has not come home.
+  const ended = Object.values(out).filter((c) => c.endedAt !== undefined && !holdsIdentity(c)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
   for (const c of ended.slice(MAX_ENDED_CHILDREN)) { trimmed?.push(c.sessionId); delete out[c.sessionId]; }
   return out;
+}
+
+/** The linked repo name shape (jobs.ts). */
+const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * K9: does this child stay in the record? The ONE predicate every keep/drop decision asks (the
+ * sanitize trim, the Super hand-over's kept set): a child holding a worktree or a branch still
+ * carries work the Super may merge or resume.
+ */
+export function holdsIdentity(c: Pick<SuperChild, 'worktree' | 'branch'>): boolean {
+  return !!c.worktree || !!c.branch;
+}
+
+/**
+ * K9: hand `from`'s work identity to `to` (a successor). Only when `to` has no branch of its own:
+ * a successor with its own worktree keeps it. The branch, its repo, the branch the worktree was
+ * last on, where it moved, and the worktree when there is one, travel together; a worktree-less
+ * identity travels too.
+ */
+export function carryIdentity(from: SuperChild, to: SuperChild): void {
+  if (to.branch || !from.branch) return;
+  to.branch = from.branch;
+  if (from.repo) to.repo = from.repo;
+  if (from.lastBranch) to.lastBranch = from.lastBranch;
+  if (from.movedTo) to.movedTo = from.movedTo;
+  if (from.worktree && !to.worktree) to.worktree = from.worktree;
+}
+
+/** D16: the cut-return asks, one per topic; a bad entry drops alone. */
+function sanitizeReturnsAsked(raw: unknown): Record<string, ReturnsAsked> | undefined {
+  if (!isRecord(raw)) return undefined;
+  const out: Record<string, ReturnsAsked> = {};
+  for (const [topic, e] of Object.entries(raw)) {
+    if (!SUPER_SLUG_RE.test(topic) || !isRecord(e)) continue;
+    if (typeof e.key !== 'string' || !/^[0-9a-f]{64}$/.test(e.key)) continue;
+    const at = finite(e.at);
+    if (at === undefined || at < 0) continue;
+    if (typeof e.askId !== 'string' || !QUEUE_ID_RE.test(e.askId)) continue;
+    const entry: ReturnsAsked = { key: e.key, at, askId: e.askId };
+    if (typeof e.answer === 'string') entry.answer = stripControls(e.answer.slice(0, 300));
+    out[topic] = entry;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
@@ -409,6 +478,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const automation = q.kind === 'automation' && !member && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
     const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
     if (q.kind === 'automation' && ((!automation && !member) || !decision)) continue;
+    // A migration event names the due task ids it was queued for; one naming none is dropped.
+    const migration = q.kind === 'migration' ? cleanMigrationIds(q.migration) : [];
+    if (q.kind === 'migration' && (!migration.length || q.sessionId !== session)) continue;
     // A scheduled job names its Super automation and the fire it answers for (super-rutin C3).
     const scheduled = q.kind === 'schedule' && typeof q.automation === 'string' && okMember(q.automation)
       && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire))
@@ -465,6 +537,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ? [...new Set(q.owed.filter((x): x is string => typeof x === 'string' && OWED_ID_RE.test(x)))].slice(0, MAX_OWED_OPEN)
       : [];
     if (q.kind === 'owed' && !owedIds.length) continue;
+    // A `progress` item's jobs (super-sessiz-kalmaz C3): each a child or a team job with a
+    // well-formed ref; an item left with none is dropped (nothing to say), never thrown.
+    const progress = q.kind === 'progress' ? cleanProgressJobs(q.progress) : undefined;
+    if (q.kind === 'progress' && (!progress || q.sessionId !== session)) continue;
     // An ask's report cards, while it is open (nothing points at them after his answer).
     const read = isAsk && q.state !== 'done' && Array.isArray(q.read)
       ? [...new Set(q.read.filter((r): r is string => typeof r === 'string' && CONTAINER_ID_RE.test(r)))].slice(0, MAX_ASK_READS)
@@ -491,6 +567,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
         ...(typeof q.posts.upto === 'string' && ENTRY_ID_RE.test(q.posts.upto) ? { upto: q.posts.upto } : {}),
       } } : {}),
       ...(team && q.partial === true ? { partial: true as const } : {}),
+      ...(team && q.kind === 'done' && q.partial !== true && isRunKey(q.rateRun) && q.rateRun.length <= 200 ? { rateRun: q.rateRun } : {}),
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
       ...(q.kind === 'question' && !team && q.superAsked === true ? { superAsked: true as const } : {}),
       ...((isAsk || isMirror) && q.ownerTalk === true ? { ownerTalk: true as const } : {}),
@@ -505,11 +582,15 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(isRequest && typeof q.model === 'string' && sanitizeModel(q.model) ? { model: q.model } : {}),
       ...(isRequest && typeof q.effort === 'string' && (JOB_EFFORTS as readonly string[]).includes(q.effort) ? { effort: q.effort } : {}),
       ...(isRequest && q.light === true ? { light: true as const } : {}),
+      ...(isRequest ? cleanRelayedOwner(q.owner) : {}),
       ...(result ? { result } : {}),
       ...(acceptedAt !== undefined && acceptedAt >= 0 ? { acceptedAt } : {}),
       ...(answers ? { answers } : {}),
+      ...(isReply && q.cancels === true ? { cancels: true as const } : {}),
       ...(workOrigin ? { workOrigin } : {}),
+      ...(q.wakeTold === true && (isRequest || isReply || !!team) ? { wakeTold: true as const } : {}),
       ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
+      ...(q.kind === 'gone' && q.cut === true ? { cut: true as const } : {}),
       ...(owedIds.length ? { owed: owedIds } : {}),
       ...(mirrorOf ? { of: mirrorOf } : {}),
       // An own item (K1) is a question, a permission or an owner wait of the record's own session.
@@ -526,6 +607,8 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(remindAt !== undefined && remindAt >= 0 ? { remindAt } : {}),
       ...(delivery ? { delivery } : {}),
       ...(ownerResult ? { ownerResult } : {}),
+      ...(progress ? { progress: { jobs: progress } } : {}),
+      ...(migration.length ? { migration } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
@@ -628,6 +711,31 @@ export function okMember(slug: string): boolean {
 const RUN_ID_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{1,20}Z$/;
 const ENTRY_ID_RE = /^[A-Za-z0-9._:-]{1,80}$/;
 
+/** A job's told notes from disk: known ones only, each once. */
+function saidNotesOf(raw: unknown[]): { saidNotes?: TeamSaidNote[] } {
+  const said = TEAM_SAID_NOTES.filter((n) => raw.includes(n));
+  return said.length ? { saidNotes: [...said] } : {};
+}
+
+/** A `progress` item's job list, cleaned job by job; undefined when none survives. */
+function cleanProgressJobs(raw: unknown): ProgressJob[] | undefined {
+  if (!isRecord(raw) || !Array.isArray(raw.jobs)) return undefined;
+  const out: ProgressJob[] = [];
+  const seen = new Set<string>();
+  for (const j of raw.jobs) {
+    if (!isRecord(j) || typeof j.ref !== 'string' || !MSG_REF_RE.test(j.ref)) continue;
+    const child = typeof j.child === 'string' && okSessionId(j.child) ? j.child : undefined;
+    const team = typeof j.team === 'string' && TEAM_JOB_ID_RE.test(j.team) ? j.team : undefined;
+    if (!child === !team) continue;
+    const key = child ?? `team:${team}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...(child ? { child } : { team }), ref: j.ref });
+    if (out.length >= MAX_PROGRESS_JOBS) break;
+  }
+  return out.length ? out : undefined;
+}
+
 function sanitizeTeam(raw: unknown): SuperTeamJob[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperTeamJob[] = [];
@@ -658,12 +766,18 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(j.told === 'done' || j.told === 'stuck' || j.told === 'question' ? { told: j.told } : {}),
       ...(j.told === 'question' && typeof j.toldQuestion === 'string' && ENTRY_ID_RE.test(j.toldQuestion) ? { toldQuestion: j.toldQuestion } : {}),
       ...(j.open === true ? { open: true as const } : {}),
-      ...(j.concluded === 'gone' || j.concluded === 'lost' ? { concluded: j.concluded } : {}),
+      ...(typeof j.concluded === 'string' && (TEAM_JOB_CONCLUSIONS as readonly string[]).includes(j.concluded) ? { concluded: j.concluded as TeamJobConclusion } : {}),
+      ...(Array.isArray(j.saidNotes) ? saidNotesOf(j.saidNotes) : {}),
       ...(typeof j.toldPost === 'string' && ENTRY_ID_RE.test(j.toldPost) ? { toldPost: j.toldPost } : {}),
       ...(finite(j.toldEndAt) !== undefined ? { toldEndAt: finite(j.toldEndAt) } : {}),
+      ...(j.rateAsked === true ? { rateAsked: true as const } : {}),
       ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),
       ...(j.by === 'super' && typeof j.followUpOf === 'string' ? { by: 'super' as const } : {}),
       ...(typeof j.request === 'string' && QUEUE_ID_RE.test(j.request) ? { request: j.request } : {}),
+      // The progress clock's stamps (super-sessiz-kalmaz C2): malformed or negative is dropped.
+      ...(nonNegative(j.liveSince) !== undefined ? { liveSince: nonNegative(j.liveSince) } : {}),
+      ...(nonNegative(j.toldAt) !== undefined ? { toldAt: nonNegative(j.toldAt) } : {}),
+      ...(nonNegative(j.progressAt) !== undefined ? { progressAt: nonNegative(j.progressAt) } : {}),
     });
   }
   // Over the cap the oldest follow-ups go first; a member's current root never does (plan-r10 1b).
@@ -841,13 +955,19 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
       ...(j.base ? { base: j.base } : {}),
       ...(j.mcp ? { mcp: j.mcp } : {}),
       ...(j.tool ? { tool: j.tool } : {}),
+      ...(j.laneIntent ? { laneIntent: j.laneIntent } : {}),
       ...(p.held === true ? { held: true } : {}),
       ...(p.maybeStarted === true ? { maybeStarted: true } : {}),
     };
     const outward = sanitizeOutward(p.outward);
     if (outward) row.outward = outward;
+    const pctx = sanitizeJobContext(p.context);
+    if (pctx) row.context = pctx;
     const workOrigin = parseWorkOrigin(p.workOrigin);
     if (workOrigin) row.workOrigin = workOrigin;
+    // A migration job kept at the cap keeps its marker (the server wrote it; no verb sets it).
+    const migration = cleanMigrationIds(p.migration);
+    if (migration.length) row.migration = migration;
     if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
       row.startedIn = p.startedIn;
       row.startedBranch = p.startedBranch;
@@ -918,6 +1038,10 @@ function sanitizeOwed(raw: unknown): SuperOwed[] {
         return sat === undefined || !head ? [] : [{ at: sat, head }];
       }).slice(-MAX_OWED_SAID);
       if (said.length) out.said = said;
+    }
+    if (d.kind === 'msg' && Array.isArray(d.pictures)) {
+      const pics = [...new Set(d.pictures.filter((x: unknown): x is string => typeof x === 'string' && x.startsWith('/') && x.length <= 1024 && !/[\u0000-\u001f]/.test(x) && x.includes('/tmp/agent-drops/')))].slice(0, 8);
+      if (pics.length) out.pictures = pics;
     }
     if (isRecord(d.closed)) {
       const cat = finite(d.closed.at);
@@ -998,8 +1122,14 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const owedSince = finite(raw.owedSince);
   const ownerLanguage = asOwnerLanguage(raw.ownerLanguage);
   // The presentation queue settles against the cards, and may open its next item (types.ts).
-  const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers);
+  // An item whose picture question is over (done, or gone from the queue) or that waited unseen too
+  // long leaves here, on every read (owner 2026-11-18: "1 presentation waiting" stayed stuck).
+  const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers, {
+    now: opts.now ?? Date.now(),
+    askClosed: (ask) => { const it = queue.find((x) => x.id === ask); return !it || it.state === 'done'; },
+  });
   const ownerMarks = sanitizeOwnerMarks(raw.ownerMarks);
+  const returnsAsked = sanitizeReturnsAsked(raw.returnsAsked);
   const rawMarkSeq = finite(raw.ownerMarkSeq);
   const ownerMarkSeq = Math.max(rawMarkSeq !== undefined && rawMarkSeq > 0 && rawMarkSeq < 1e9 ? Math.floor(rawMarkSeq) : 0, ...ownerMarks.map((m) => m.seq ?? 0));
   return {
@@ -1030,6 +1160,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(owed.length ? { owed } : {}),
     ...(owedSeq ? { owedSeq } : {}),
     ...(owedSince !== undefined && owedSince > 0 ? { owedSince } : {}),
+    ...(returnsAsked ? { returnsAsked } : {}),
     ...(ownerLanguage ? { ownerLanguage } : {}),
     ...(raw.movedPastDone === true ? { movedPastDone: true as const } : {}),
     ...(ownerMarks.length ? { ownerMarks } : {}),
@@ -1052,9 +1183,24 @@ async function assertContained(contextRoot: string, id: SuperId = 'main', create
   let realDir: string;
   try {
     realRoot = await fsp.realpath(contextRoot);
-    realDir = await fsp.realpath(stateDir);
   } catch {
     throw new SuperStoreRefused('outside', 'the vault has no state directory');
+  }
+  // A brain cloned from GitHub may have no `state/` at all (git keeps no empty folder): a read
+  // finds no record, a write makes the folder. Only a truly absent path qualifies (lstat ENOENT);
+  // a dangling or outside link is still refused below.
+  const stateLstat = await fsp.lstat(stateDir).catch((e: NodeJS.ErrnoException) => {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  });
+  if (stateLstat === null) {
+    if (!create) return path;
+    await fsp.mkdir(stateDir).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'EEXIST') throw e; });
+  }
+  try {
+    realDir = await fsp.realpath(stateDir);
+  } catch {
+    throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
   }
   if (realDir !== join(realRoot, 'state')) throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
   if (id !== 'main') {
@@ -1380,6 +1526,10 @@ interface IndexEntry {
   ended: Set<string>;
   /** The worktree `super delegate --worktree` made for a child (live or ended), by its pin. */
   worktrees: Map<string, string>;
+  /** Children marked as the project's first read (live or ended): their spawn is the server's. */
+  firstReads: Set<string>;
+  /** First-read children that run right now (not ended, row working/asking/waiting; C16). */
+  firstReadsRunning: Set<string>;
   notes: Map<string, SuperNote>;
 }
 
@@ -1417,6 +1567,11 @@ function indexState(key: string, state: SuperState): void {
     leanMcp: new Map(Object.keys(state.children).filter((k) => !state.children[k].adopted).map((k) => [k, state.children[k].mcp ?? []])),
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
     worktrees: new Map(Object.keys(state.children).flatMap((k) => { const w = state.children[k].worktree; return w ? [[k, w] as [string, string]] : []; })),
+    firstReads: new Set(Object.keys(state.children).filter((k) => state.children[k].firstRead === true)),
+    firstReadsRunning: new Set(Object.keys(state.children).filter((k) => {
+      const c = state.children[k];
+      return c.firstRead === true && c.endedAt === undefined && (c.row === 'working' || c.row === 'asking' || c.row === 'waiting');
+    })),
     notes,
   });
 }
@@ -1546,6 +1701,21 @@ export function superOfChild(sessionId: string): SuperRef | null {
   return null;
 }
 
+/** Does the Super whose session is `sessionId` have a first read running right now (C16)? From
+ *  the index only: what its record said at its last read or write. */
+export function superFirstReadRunning(sessionId: string): boolean {
+  if (!sessionId) return false;
+  for (const e of index.values()) if (e.session === sessionId && e.firstReadsRunning.size > 0) return true;
+  return false;
+}
+
+/** Is `sessionId` a child some super record marks as the first read (C15a)? Live or ended. */
+export function isFirstReadChild(sessionId: string): boolean {
+  if (!sessionId) return false;
+  for (const e of index.values()) if (e.firstReads.has(sessionId)) return true;
+  return false;
+}
+
 /**
  * The worktree the server made for a delegated child (`super delegate --worktree`), or null. The
  * child is told to `cd` there, a move no frame reports, so this is where it works: read by the
@@ -1662,4 +1832,47 @@ export function resetSuperIndex(): void {
   clearing.clear();
   locks.clear();
   pendingArm.clear();
+}
+
+/** A request's relayed owner message (C5), re-validated whole, or nothing. */
+function cleanRelayedOwner(raw: unknown): { owner?: NonNullable<SuperQueueItem['owner']> } {
+  if (!raw || typeof raw !== 'object') return {};
+  const o = raw as Record<string, unknown>;
+  const s = (v: unknown, max: number): string | null => (typeof v === 'string' && v.length <= max ? v : null);
+  const ref = s(o.ref, 6);
+  const turn = s(o.turn, 128);
+  const own = s(o.own, MAX_REQUEST_TEXT);
+  const at = s(o.at, 40);
+  const via = o.via === 'composer' || o.via === 'phone' || o.via === 'telegram' ? o.via : null;
+  if (!ref || !/^[0-9a-z]{6}$/.test(ref) || !turn || !own || !at || Number.isNaN(Date.parse(at)) || !via) return {};
+  return { owner: { ref, turn, via, own, at, vault: s(o.vault, 4096) ?? '', session: s(o.session, 256) ?? '' } };
+}
+
+/** C11: a job's context as the record may keep it; anything off-shape is dropped, never widened. */
+export function sanitizeJobContext(raw: unknown): JobContext | undefined {
+  if (!isRecord(raw)) return undefined;
+  const clean = (t: unknown, max: number): string => typeof t === 'string' ? t.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '';
+  const out: JobContext = { pictures: [] };
+  if (isRecord(raw.origin) && typeof raw.origin.ref === 'string' && MSG_REF_RE.test(raw.origin.ref)) {
+    const at = finite(raw.origin.at);
+    if (at !== undefined) out.origin = { ref: raw.origin.ref, at, words: clean(raw.origin.words, 300) };
+  }
+  if (Array.isArray(raw.pictures)) {
+    out.pictures = [...new Set(raw.pictures.filter((x: unknown): x is string => typeof x === 'string' && x.startsWith('/') && x.length <= 1024 && !/[\u0000-\u001f]/.test(x) && x.includes('/tmp/agent-drops/')))].slice(0, 8);
+  }
+  const pol = raw.policy;
+  if (isRecord(pol) && typeof pol.model === 'string' && typeof pol.effort === 'string'
+    && (pol.allowedBy === 'flags' || pol.allowedBy === 'risk' || pol.allowedBy === 'full' || pol.allowedBy === 'words')) {
+    const grants = Array.isArray(pol.grants) ? pol.grants.flatMap((g) => {
+      if (!isRecord(g) || typeof g.ref !== 'string' || !MSG_REF_RE.test(g.ref)) return [];
+      const at = finite(g.at);
+      const words = clean(g.words, 300);
+      return at === undefined || !words ? [] : [{ ref: g.ref, words, at }];
+    }).slice(-4) : [];
+    out.policy = {
+      model: clean(pol.model, 80), effort: clean(pol.effort, 16), allowedBy: pol.allowedBy, grants,
+      ...((JOB_RISKS as readonly unknown[]).includes(pol.risk) ? { risk: pol.risk as JobRisk } : {}),
+    };
+  }
+  return out.origin || out.pictures.length || out.policy ? out : undefined;
 }

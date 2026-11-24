@@ -30,7 +30,7 @@ skills:
 | Evidence ledger entries (`theses evidence`) | Creating insights — instrumentation gaps are a `theses block` + decision-ask, never a new `lab/insights/*.md` |
 | Predictions (`theses predict`) and their standings (`theses status --prediction <id>=<standing>`) | Editing predictions after they're pre-registered (append new ones instead — the ledger is append-only in spirit) |
 | Status flips (`theses status`) | Promoting a thesis's target knowledge doc yourself (`theses promote` only RECORDS a promotion the user/agent already made via a decision ask — you never write to `knowledge/`) |
-| Understanding changelog (`theses changelog`) | Anything `sleep-tasks` / `sleep-state` / `sleep-product` / `sleep-migration` own |
+| Understanding changelog (`theses changelog`) | Anything `sleep-tasks` / `sleep-state` / `sleep-product` own |
 | `theses link` / `theses unlink` to insights/objectives/tasks that already exist | Creating the objective/insight/task being linked to |
 
 ## Contract (re-run safe, no-op cheap)

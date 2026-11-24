@@ -178,6 +178,25 @@ export interface AgentPlacementPatch {
 export const AGENTS_GITIGNORE_ENTRIES = ['agents/*.md'];
 export const AGENTS_GITIGNORE_ENTRIES_ROOT = ['_dream_context/agents/*.md'];
 
+/**
+ * A project member's rules (`agents/<slug>.rules.json`, plan global-uye-ogrenme D1): private like
+ * its agent file, in a block of their OWN so the existing agents negations keep their order. A
+ * shared member's rules file is negated by {@link sharedAgentRulesNegations}. The generated view
+ * (`<slug>.rules.md`) stays ignored by `agents/*.md` and is rebuilt from the JSON after a pull.
+ */
+export const AGENT_RULES_GITIGNORE_ENTRIES = ['agents/*.rules.json'];
+export const AGENT_RULES_GITIGNORE_ENTRIES_ROOT = ['_dream_context/agents/*.rules.json'];
+
+/** The negation that shares ONE member's rules file (brain-relative `.gitignore`). */
+export function sharedAgentRulesNegations(slug: string): string[] {
+  return [`!agents/${slug}.rules.json`];
+}
+
+/** The negation that shares ONE member's rules file (project-root `.gitignore`). */
+export function sharedAgentRulesNegationsRoot(slug: string): string[] {
+  return [`!_dream_context/agents/${slug}.rules.json`];
+}
+
 /** The negation that shares ONE agent file (brain-relative `.gitignore`). */
 export function sharedAgentNegations(slug: string): string[] {
   return [`!agents/${slug}.md`];

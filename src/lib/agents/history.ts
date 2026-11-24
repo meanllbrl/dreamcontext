@@ -6,19 +6,24 @@ import { threadEntriesHere } from './agent-sync.js';
 import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { getAutomation, listAutomations, readAutomationCache } from '../automations/store.js';
 import { readMachineIdentity } from '../machine-id.js';
-import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
+import { isThreadDayFile, parseDayFile, threadDateStamp, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
 import {
   feedCutoffDay, openQuestionsByRun, readRunHead, runDocumentPath, runInUnreadWindow, runWindowUnread, toBrainRelative,
 } from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
 import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
-import { privateSources } from '../automations/history.js';
+import { isAppRunSession, privateSources } from '../automations/history.js';
 import { runChatSession } from '../automations/run-chat.js';
-import type { RunEvent, ThreadEntry } from '../automations/types.js';
+import { AGENT_CHAT_ENV, type RunEvent, type ThreadEntry } from '../automations/types.js';
 import {
   listAgentSessions, markSessionHadTurns, pruneAgentSessions, type AgentSessionEntry,
 } from '../local-store.js';
 import { newTalkLookup, readTalkRawLower, readTalkRows, TALK_MAX_ROWS, transcriptMtime } from './talks.js';
+import { request as httpRequest } from 'node:http';
+import { projectKey } from '../local-store.js';
+import { listTraceFiles, readTraceFile, workRoot, type WorkTrace } from './work-trace.js';
+import { localIndex, WORK_SELECT_PATH, workServerPort } from './work-index.js';
+import { RUN_APP_ENV } from './session-member.js';
 
 /**
  * An agent's HISTORY: every run of its routines and every talk the owner had with it, as one list
@@ -84,7 +89,20 @@ export interface HistorySession {
   elsewhere?: true;
   truncated?: true;
   missing?: true;
+  /** A run's rating request facts (plan uye-karnesi W3 C9): present once it has a first terminal
+   *  entry, whatever its live status (a reply turn in flight included). */
+  request?: RequestFacts;
   rows: HistoryRow[];
+}
+
+/** W3 E1/E2: whether a run asks to be rated, and when its 72-hour window starts. Both come from the
+ *  run's full thread; later turns never move them. */
+export interface RequestFacts {
+  eligible: boolean;
+  /** The first terminal entry's time. */
+  endedAt: string;
+  /** The status that first terminal entry maps to (a rating's snapshot, never a live `running`). */
+  status: NonNullable<HistorySession['status']>;
 }
 
 export interface HistoryPage {
@@ -156,12 +174,14 @@ const dayCache = new Map<string, { mtimeMs: number; size: number; entries: Threa
 /** Every entry of a source, by id, and the day file each entry came from: its name says which
  *  machine wrote it, also for a shared routine whose threads sync with agent sync off. Which runs
  *  count as unread is `runInUnreadWindow`'s word, the feed's own rule, never a day file's. */
-function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; fileOf: Map<string, string> } {
+function readSource(contextRoot: string, source: string, fromDay?: string): { entries: ThreadEntry[]; fileOf: Map<string, string> } {
   let dir: string;
   try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], fileOf: new Map() }; }
-  let names: string[];
-  try { names = readdirSync(dir).filter(isThreadDayFile).sort(); } catch { names = []; }
-  const present = new Set(names.map((n) => join(dir, n)));
+  let all: string[];
+  try { all = readdirSync(dir).filter(isThreadDayFile).sort(); } catch { all = []; }
+  const present = new Set(all.map((n) => join(dir, n)));
+  // A run-scoped read (W3 C9): day files from `fromDay` on (names open with their local date).
+  const names = fromDay ? all.filter((n) => n.slice(0, 10) >= fromDay) : all;
   // A day file retention deleted leaves the cache with its folder's listing.
   for (const p of [...dayCache.keys()]) if (p.startsWith(dir + sep) && !present.has(p)) dayCache.delete(p);
   const byId = new Map<string, ThreadEntry>();
@@ -231,6 +251,116 @@ const terminalOf = (entries: readonly ThreadEntry[]): ThreadEntry | undefined =>
 function writtenElsewhere(entry: ThreadEntry, fileOf: ReadonlyMap<string, string>, home: string): boolean {
   const file = fileOf.get(entry.id) ?? '';
   return /-[0-9a-f]{12}\.md$/.test(file) && !file.endsWith(`-${readMachineIdentity(home).id}.md`);
+}
+
+// ─── Rating requests (plan uye-karnesi W3, C9) ──────────────────────────────────────
+
+/** A system line task delivery writes (`fanOutDelivered`): only system entries and no `started`.
+ *  Never rateable, never a request. */
+export function isDeliveryNoteEntries(entries: readonly ThreadEntry[]): boolean {
+  return entries.length > 0 && entries.every((e) => e.kind === 'system') && !entries.some((e) => e.event === 'started');
+}
+
+/** The day a run-scoped read starts: one local day before the run id's own (day files are named by
+ *  local date, run ids are UTC). Null when the run id is no time: read every file. */
+export function runReadFromDay(runId: string): string | null {
+  const t = Date.parse(runId);
+  return Number.isFinite(t) ? threadDateStamp(new Date(t - 86_400_000)) : null;
+}
+
+/** Is `source` a member's conversation (the member itself, or a routine with a member)? A routine
+ *  with no member (super-rutin) never asks. */
+function isMemberSource(contextRoot: string, source: string): boolean {
+  try { if (getAgent(contextRoot, source)) return true; } catch { /* not an agent */ }
+  // A routine's `agent` must BE a member: a Super automation (`target: super`) composes with its own
+  // slug as its agent, and `getAgent` refuses that slug.
+  try {
+    const agent = getAutomation(contextRoot, source)?.agent;
+    return !!agent && !!getAgent(contextRoot, agent);
+  } catch { return false; }
+}
+
+/** E1 + E2 from one run's full thread. Null when the run has no terminal entry yet. */
+function requestFactsOf(
+  contextRoot: string, source: string, run: readonly ThreadEntry[], fileOf: ReadonlyMap<string, string>, home: string,
+  isSuperJob: (source: string, run: readonly ThreadEntry[]) => boolean,
+): RequestFacts | null {
+  const end = terminalOf(run);
+  if (!end) return null;
+  const started = run.find((e) => e.kind === 'system' && e.event === 'started');
+  const eligible = end.event === 'ok'
+    && !!started
+    && !isDeliveryNoteEntries(run)
+    && !writtenElsewhere(started, fileOf, home)
+    && !writtenElsewhere(end, fileOf, home)
+    && isMemberSource(contextRoot, source)
+    && !isSuperJob(source, run);
+  return { eligible, endedAt: end.at, status: TERMINAL[end.event!] ?? 'ok' };
+}
+
+/** One run's request facts, read from its own thread (from a day before the run id's day). */
+export function requestFacts(contextRoot: string, source: string, runId: string, home: string = homedir()): RequestFacts | null {
+  const { entries, fileOf } = readSource(contextRoot, source, runReadFromDay(runId) ?? undefined);
+  const run = entries.filter((e) => e.runId === runId);
+  if (run.length === 0) return null;
+  return requestFactsOf(contextRoot, source, run, fileOf, home, superJobReader(contextRoot));
+}
+
+/**
+ * A job the main Super handed this member (W3 E9, C16), read from its own run: the Super's ask
+ * opened it (`superJobReader`) and its first terminal entry is the raw `ok`. Its title is the ask's
+ * first line. Null for anything else (a failed Super job is not one: D2 rates it from history).
+ */
+export function superJobSession(contextRoot: string, member: string, sessionKey: string, home: string = homedir()): HistorySession | null {
+  const at = sessionKey.indexOf('::');
+  if (at <= 0) return null;
+  const source = sessionKey.slice(0, at);
+  const runId = sessionKey.slice(at + 2);
+  if (source !== member) return null;
+  const { entries, fileOf } = readSource(contextRoot, source, runReadFromDay(runId) ?? undefined);
+  const run = entries.filter((e) => e.runId === runId);
+  if (run.length === 0) return null;
+  const isSuperJob = superJobReader(contextRoot);
+  if (!isSuperJob(source, run)) return null;
+  const end = terminalOf(run);
+  // Still going: found, not yet rateable (`run_not_rateable`).
+  if (end && end.event !== 'ok') return null;
+  const ask = run.find((e) => e.kind === 'user');
+  const title = (ask?.text ?? '').split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 200) || source;
+  const request = requestFactsOf(contextRoot, source, run, fileOf, home, isSuperJob);
+  return {
+    key: sessionKey, kind: 'run', source, title,
+    startedAt: run[0].at, lastAt: run[run.length - 1].at, status: end ? 'ok' : 'running',
+    durationMs: threadDuration(run), hasDocument: false, newestId: run[run.length - 1].id, unread: false,
+    ...(request ? { request } : {}),
+    rows: [],
+  };
+}
+
+/** Every run of this member whose run id (its fire time) falls in the last `days`, with its facts:
+ *  each one's whole thread is read, so an old run with a fresh reply is never a candidate. */
+export function recentRunFacts(
+  contextRoot: string, member: string, nowMs: number, days: number, home: string = homedir(),
+): Array<{ key: string; source: string; runId: string; facts: RequestFacts }> {
+  const out: Array<{ key: string; source: string; runId: string; facts: RequestFacts }> = [];
+  const isSuperJob = superJobReader(contextRoot);
+  const fromMs = nowMs - days * 86_400_000;
+  const fromDay = threadDateStamp(new Date(fromMs - 86_400_000));
+  for (const source of agentConversationSlugs(contextRoot, member)) {
+    const { entries, fileOf } = readSource(contextRoot, source, fromDay);
+    const byRun = new Map<string, ThreadEntry[]>();
+    for (const e of entries) {
+      const t = Date.parse(e.runId);
+      if (!Number.isFinite(t) || t < fromMs) continue;
+      const list = byRun.get(e.runId);
+      if (list) list.push(e); else byRun.set(e.runId, [e]);
+    }
+    for (const [runId, run] of byRun) {
+      const facts = requestFactsOf(contextRoot, source, run, fileOf, home, isSuperJob);
+      if (facts) out.push({ key: `${source}::${runId}`, source, runId, facts });
+    }
+  }
+  return out;
 }
 
 function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null, f: RunFacts): HistorySession['status'] {
@@ -326,6 +456,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   let unreadCount = 0;
   const quietOf = ownerQuietReader(contextRoot);
   const isSuperJob = opts.runsOnly ? superJobReader(contextRoot) : null;
+  const superJobOf = isSuperJob ?? superJobReader(contextRoot);
   const nowMs = (opts.now ?? new Date()).getTime();
   const cutoffDay = feedCutoffDay(opts.now);
   const openRuns = openQuestionsByRun(contextRoot);
@@ -398,6 +529,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
           const docPath = runDocumentPath(contextRoot, run);
           const docHead = docPath ? readRunHead(contextRoot, run) : null;
           const first = runEntries.find((e) => e.kind === 'system' && e.event === 'started') ?? runEntries[0];
+          const request = requestFactsOf(contextRoot, source, runEntries, fileOf, home, superJobOf);
           return {
             key, kind: 'run', source, title,
             startedAt: runEntries[0].at,
@@ -410,6 +542,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             ...(docPath ? { document: { path: toBrainRelative(contextRoot, docPath), name: basename(docPath), ...(docHead ? { head: docHead } : {}) } } : {}),
             ...(chat ? { claudeId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {}),
             ...(opts.audience === 'owner' && writtenElsewhere(first, fileOf, home) ? { elsewhere: true as const } : {}),
+            ...(request ? { request } : {}),
             rows,
           };
         },
@@ -577,4 +710,93 @@ export function searchAgentHistory(
     }
   }
   return { hits, nextBefore: null };
+}
+
+
+// ─── Past work (plan uye-gecmis-is D12) ─────────────────────────────────
+
+export interface TraceHit { id: string; line: string; at: number; projectKey: string }
+
+/**
+ * A member's past-work traces matching `query`, best first: through the running app's warm index,
+ * else by reading the files here (slower, never wrong). `all`: every project for a global member.
+ */
+/**
+ * Who reads a member's past work from this process (G2): an app's chat (`app-<slug>`) or an app's
+ * run (the runner's RUN_APP_ENV on the live child; a finished run's session as a fallback, its app
+ * unknown, so it sees nothing) reads as that app; anyone else is the owner (null). The ONE reading
+ * for `history --search`, `history show` and the `--all` refusal.
+ */
+export function pastWorkViewer(contextRoot: string, env: NodeJS.ProcessEnv = process.env): { app: string | null } | null {
+  const chat = env[AGENT_CHAT_ENV] ?? '';
+  if (chat.startsWith('app-')) return { app: chat.length > 4 ? chat.slice(4) : null };
+  const runApp = (env[RUN_APP_ENV] ?? '').trim();
+  if (runApp) return { app: runApp };
+  const sid = env.CLAUDE_CODE_SESSION_ID ?? env.CLAUDE_SESSION_ID ?? '';
+  try { if (sid && isAppRunSession(contextRoot, sid)) return { app: null }; } catch { /* no cache */ }
+  return null;
+}
+
+export async function searchPastWork(
+  contextRoot: string,
+  slug: string,
+  query: string,
+  /** `viewer`: an app's session (only that app's runs here, never `all`). */
+  opts: { all?: boolean; home?: string; viaServer?: boolean; viewer?: { app: string | null } | null } = {},
+): Promise<TraceHit[]> {
+  const projectRoot = dirname(contextRoot);
+  if (!query.trim()) return [];
+  const viewer = opts.viewer ?? null;
+  const all = opts.all === true && !viewer;
+  if (opts.viaServer !== false) {
+    const remote = await searchViaServer(slug, projectRoot, query, all, viewer, workServerPort(process.env, opts.home ?? homedir()));
+    if (remote) return remote;
+  }
+  const local = localIndex(slug, projectRoot, opts.home ?? homedir());
+  if (!local) return [];
+  return local.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: local.scope }, all, viewer);
+}
+
+function searchViaServer(member: string, root: string, query: string, all: boolean, viewer: { app: string | null } | null, port: number): Promise<TraceHit[] | null> {
+  const payload = JSON.stringify({ member, root, query, audience: viewer ? 'app' : 'owner', ...(viewer?.app ? { app: viewer.app } : {}), mode: 'search', all });
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v: TraceHit[] | null) => { if (settled) return; settled = true; clearTimeout(timer); resolve(v); };
+    const timer = setTimeout(() => { req.destroy(); done(null); }, 10_000);
+    const req = httpRequest({ host: '127.0.0.1', port, path: WORK_SELECT_PATH, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } }, (res) => {
+      let data = '';
+      res.setEncoding('utf-8');
+      res.on('data', (c: string) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return done(null);
+        try {
+          const p = JSON.parse(data) as { hits?: unknown };
+          done(Array.isArray(p.hits) ? (p.hits as TraceHit[]).filter((h) => typeof h?.id === 'string' && typeof h?.line === 'string') : null);
+        } catch { done(null); }
+      });
+      res.on('error', () => done(null));
+    });
+    req.on('error', () => done(null));
+    req.end(payload);
+  });
+}
+
+/** One whole trace by its id or its `w_<id8>` handle, among this project's members (and global ones). */
+export function findTrace(contextRoot: string, handle: string, members: readonly string[], home?: string, viewer: { app: string | null } | null = null): WorkTrace | null {
+  const want = handle.replace(/^w_/, '').toLowerCase();
+  if (!/^[0-9a-f]{8,32}$/.test(want)) return null;
+  const projectRoot = dirname(contextRoot);
+  // An app sees only its own runs of this project (the same rule as its search).
+  const here = projectKey(projectRoot);
+  const visible = (t: WorkTrace) => !viewer || (t.kind === 'run' && !!viewer.app && t.app === viewer.app && t.project.key === here);
+  for (const slug of members) {
+    const root = workRoot(slug, projectRoot, home ?? homedir());
+    if (!root) continue;
+    for (const f of listTraceFiles(root)) {
+      if (!f.name.startsWith(want)) continue;
+      const t = readTraceFile(root, join(root, f.month, f.name));
+      if (t && visible(t)) return t;
+    }
+  }
+  return null;
 }

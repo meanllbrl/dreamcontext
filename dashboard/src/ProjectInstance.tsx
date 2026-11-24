@@ -4,7 +4,7 @@ import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './conte
 import { ProjectProvider } from './context/ProjectContext';
 import { I18nProvider } from './context/I18nContext';
 import { createInstanceQueryClient, registerInstanceClient, setInstanceActive } from './lib/instanceQueryClient';
-import { Shell, type ShellNavigation } from './components/layout/Shell';
+import { Shell, isShellPage, type ShellNavigation } from './components/layout/Shell';
 import { AgentSurface, PROJECT_ROLLUP_EVENT } from './components/sleepy/AgentSurface';
 import type { ProjectRollup } from './components/sleepy/agentStatus';
 import { TasksPage } from './pages/TasksPage';
@@ -49,6 +49,7 @@ import type { DrawerFacts } from './components/layout/newshell/drawerModel';
 import { DRAWER_INTENT_EVENT, DRAWER_PAGE_EVENT, landsOnChat, memberIntent, type DrawerIntent, type PendingDrawerIntent } from './lib/drawerIntents';
 import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, readDeviceShell, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
+import type { PrepareReport, PrepareTarget } from './lib/revealGate';
 import './ProjectInstance.css';
 
 /**
@@ -131,7 +132,7 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle, onPageChange }: {
     seen.current = nonce;
     // Every instance hears the window's nonce; only the one on screen acts on it.
     if (!isActive) return;
-    if (drawerTogglePanel({ chatOpen, page }) === 'page') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
+    if (drawerTogglePanel({ chatOpen, page, local: !readDeviceShell() }) === 'page') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
     else onDrawerToggle?.();
   }, [nonce, isActive, chatOpen, page, bus, onDrawerToggle]);
   // A drawer floating over a page goes with that page.
@@ -145,14 +146,18 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle, onPageChange }: {
 }
 
 /**
- * The drawer's page rows (Project Relations, an AI Team member) as a navigation of THIS
- * project's Shell. Navigating collapses the chat, as any rail page does. Renders nothing.
+ * A window move's page landing (the drawer's Project Relations row, the project rail, ← →, ⌘K
+ * across projects) as a navigation of THIS project's Shell, with its item, marked `'landing'` so
+ * the window's recorder tells it from the owner's own navigation. Navigating collapses the chat,
+ * as any rail page does. `'chat'` is the Shell's own (it expands the chat as it stands). A page
+ * this shell cannot show (a device shell's hidden pages) is refused as `navigate` refuses it.
+ * Renders nothing.
  */
 function DrawerPageBridge({ nav }: { nav: ShellNavigation }) {
   useInstanceEvent<{ page?: unknown; id?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
     const page = detail?.page;
-    if (page !== 'relations') return;
-    nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'other');
+    if (!isShellPage(page)) return;
+    nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'landing');
   });
   return null;
 }
@@ -573,14 +578,20 @@ export interface ProjectInstanceProps {
    *  screen (a nonce); the modal opens once this instance is active. */
   pendingManage?: { nonce: number; create?: boolean; global?: boolean } | null;
   onManageConsumed?: (vault: string, nonce: number) => void;
+  /** Tek-kenar C2: prepared out of sight for a move to this target (laid out at full size under
+   *  the project on screen, `inert`, not `hidden`); null otherwise. Never `isActive`. */
+  preparing?: PrepareTarget | null;
+  /** While preparing: what it shows, once a frame, for the window's gate. */
+  onPrepared?: (vault: string, report: PrepareReport) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
   pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle, onDrawerDismiss,
   drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
-  pendingManage = null, onManageConsumed,
+  pendingManage = null, onManageConsumed, preparing = null, onPrepared,
 }: ProjectInstanceProps) {
+  const handlePrepared = useCallback((r: PrepareReport) => onPrepared?.(vault, r), [onPrepared, vault]);
   const newShell = useIsNewShell();
   /*
    * Both of these are per-instance identities that must survive every re-render: a new
@@ -638,9 +649,11 @@ export function ProjectInstance({
   // The window's registry reaches this client on refocus; the cleanup frees it with the tab.
   useEffect(() => registerInstanceClient(queryClient), [queryClient]);
   // Page-data polling follows visibility. Nothing else does — see this file's header.
+  // A preparing instance loads as the active one does (C2): what it lands on must be there.
+  const loading = isActive || preparing !== null;
   useEffect(() => {
-    setInstanceActive(queryClient, isActive);
-  }, [queryClient, isActive]);
+    setInstanceActive(queryClient, loading);
+  }, [queryClient, loading]);
 
   return (
     /*
@@ -652,15 +665,19 @@ export function ProjectInstance({
     <div
       className="project-instance"
       data-instance={instanceId}
+      data-instance-vault={vault}
       data-shell={newShell ? 'new' : undefined}
-      hidden={!isActive}
+      data-active={isActive ? 'true' : undefined}
+      data-preparing={preparing && !isActive ? 'true' : undefined}
+      hidden={!isActive && !preparing}
       inert={!isActive}
     >
       <QueryClientProvider client={queryClient}>
         <VaultProvider vault={vault} instanceId={instanceId} isActive={isActive} bus={bus}>
           <ProjectProvider>
             <I18nProvider>
-              <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}>
+              <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}
+                preparing={isActive ? null : preparing} onPrepared={handlePrepared}>
                 {(nav) => (
                   <>
                     {newShell ? (

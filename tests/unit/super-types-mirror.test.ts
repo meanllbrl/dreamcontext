@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
+import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import * as ownerWait from '../../src/lib/super/owner-wait.js';
 import * as phoneMirror from '../../src/lib/super/phone-mirror.js';
 import * as store from '../../src/lib/super/store.js';
@@ -139,6 +140,20 @@ describe('super types — server record <-> window mirror', () => {
       dismissed: [{ kind: 'web', ref: 'http://localhost:5173/', until: 99 }],
     };
     expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))).toEqual(view);
+  });
+
+  it("a side-by-side view the owner set keeps its ownerAt: a narrow window's fold is keyed by it (a read link pressed again reopens a folded sheet)", () => {
+    const base = { ...server.emptySuperState(), vault: 'acme-app', session: 's', enabled: true, containers: [{ id: 'c1', kind: 'web', ref: 'x', shape: 'tall', place: 'float' }] };
+    const owned = { mode: 'half', card: 'c1', by: 'owner', ownerAt: 1700 };
+    expect(client.readSuperStateView({ ...base, view: owned })?.view).toEqual(owned);
+    // a patch that does not touch the view keeps the stamp (the fold key must not flicker), a view patch drops it for the server's new one
+    const st = { containers: base.containers.map((c) => ({ ...c })), groups: [], view: owned } as never;
+    expect(applyLayoutPatch(st, { cards: [{ id: 'c1', place: 'float' }] }).view).toEqual(owned);
+    expect(applyLayoutPatch(st, { view: { mode: 'half', card: 'c1' } }).view).toEqual({ mode: 'half', card: 'c1', by: 'owner' });
+    // not his own view: no mark and no stamp, as before
+    expect(client.readSuperStateView({ ...base, view: { mode: 'half', card: 'c1', ownerAt: 1700 } })?.view).toEqual({ mode: 'half', card: 'c1' });
+    // a stamp that is no number is dropped
+    expect(client.readSuperStateView({ ...base, view: { ...owned, ownerAt: 'x' } })?.view).toEqual({ mode: 'half', card: 'c1', by: 'owner' });
   });
 
   it('a malformed push is no state at all, and a bad row is dropped, not half-rendered', () => {

@@ -5,7 +5,11 @@ import { getReadiness } from '../../lib/onboarding/readiness.js';
 import { listPendingGitInits, runPendingGitInits } from '../../lib/onboarding/pending-git.js';
 import { FIX_IDS, type CheckId, type FixId, type ReadinessReport, type Surface } from '../../lib/onboarding/types.js';
 import { activeRunFor, cancelRun, getRun, serverProbeContext, startFixRun } from '../install-runs.js';
-import { isLoopback, isLoopbackHostHeader, requireLocalDesktop, requireLocalRead } from './agent-spawn-shared.js';
+import { isLoopback, isLoopbackHostHeader, requireLocalDesktop, requireLocalRead, requireOwnerWindow } from './agent-spawn-shared.js';
+import { hasOwnerKey } from '../owner-key.js';
+import { isAgentId, setPickedAgents, type AgentId } from '../../lib/agent-pick.js';
+import { probeGhImport, requestedGithubScopes, type GhExec } from '../../lib/onboarding/github.js';
+import { defaultFixDeps, shellFacts } from '../../lib/onboarding/fixes.js';
 import { ptyPresent } from './agent-terminal.js';
 
 /**
@@ -130,7 +134,9 @@ export async function handleOnboardingFix(req: IncomingMessage, res: ServerRespo
     sendJson(res, refusal.status, refusal.body);
     return;
   }
-  const { runId, existing } = startFixRun(fix, ctx);
+  // "Use another account" (C12): the GitHub sign-in skips the `gh` import. Read only for that fix.
+  const deviceOnly = fix === 'github-signin' && body?.deviceOnly === true;
+  const { runId, existing } = startFixRun(fix, ctx, deviceOnly ? { fixOptions: { deviceOnly: true } } : {});
   if (existing) {
     sendJson(res, 409, { error: 'in_progress', message: 'This step is already running.', runId });
     return;
@@ -148,4 +154,61 @@ export async function handleOnboardingFixCancel(req: IncomingMessage, res: Serve
     return;
   }
   sendJson(res, 200, { ok: true, canceled: cancelRun(runId) });
+}
+
+/**
+ * POST /api/onboarding/agents { picked: AgentId[] }: the first screen's agent pick ("Continue
+ * with Claude" writes `["claude"]`, the Codex or Antigravity choice writes that one). The only
+ * writer is `setPickedAgents()`; no other body field is read. Owner window AND the shell's
+ * owner key: a no-Origin loopback `curl` passes the window check but not the key.
+ */
+export async function handleOnboardingAgents(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireOwnerWindow(req, res)) return;
+  if (!hasOwnerKey(req)) {
+    sendError(res, 403, 'forbidden', 'Only this app\'s own window can do this.');
+    return;
+  }
+  const body = await parseJsonBody(req);
+  const raw = body?.picked;
+  if (!Array.isArray(raw) || raw.length === 0 || !raw.every(isAgentId)) {
+    sendError(res, 400, 'bad_pick', 'Body must be { picked } with at least one of claude, codex, antigravity.');
+    return;
+  }
+  try {
+    const picked: AgentId[] = setPickedAgents(raw);
+    sendJson(res, 200, { ok: true, picked });
+  } catch (err) {
+    sendError(res, 400, 'bad_pick', (err as Error).message);
+  }
+}
+
+/**
+ * GET /api/onboarding/github-probe: what the clone flow's sign-in step shows (C12). `login`:
+ * a `gh` sign-in this app would import (its scopes inside the D7 set), shown as "Continue as
+ * <login>"; null when there is none. `scopes`: the list the sign-in requests, for the
+ * permission line. Reads only; the token is never read here (the import is the click).
+ */
+export async function handleOnboardingGithubProbe(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const scopes = requestedGithubScopes();
+  try {
+    const ctx = serverProbeContext('desktop', ptyPresent);
+    const facts = await shellFacts(ctx);
+    const ghPath = defaultFixDeps.ghPath(ctx.home, facts);
+    if (!ghPath) {
+      sendJson(res, 200, { login: null, scopes });
+      return;
+    }
+    const childEnv = { ...process.env };
+    delete childEnv.GH_TOKEN;
+    delete childEnv.GITHUB_TOKEN;
+    const ac = new AbortController();
+    const sink = { output() {}, progress() {}, awaiting() {}, deviceCode() {}, onCancel() {} };
+    const gh: GhExec = (args, o) => defaultFixDeps.run(ghPath, args, { timeoutMs: o.timeoutMs, env: childEnv }, sink, ac.signal);
+    const probe = await probeGhImport(gh, ctx.home);
+    sendJson(res, 200, { login: probe ? (probe.login ?? '') : null, scopes });
+  } catch (err) {
+    console.error('[onboarding] GitHub probe failed:', err);
+    sendJson(res, 200, { login: null, scopes });
+  }
 }

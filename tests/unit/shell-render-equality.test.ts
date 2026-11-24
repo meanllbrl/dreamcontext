@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../../dashboard/src/hooks/useAppsWaiting.js', () => ({ useAppsWaiting: () => 0, APPS_WAITING_KEY: 'apps-waiting' }));
+// No live link in these renders: the pill draws nothing (tunel-paylasim).
+vi.mock('../../dashboard/src/lib/sharesApi.js', () => ({ useLiveShares: () => ({ data: [] }), useRefreshShares: () => () => {}, LIVE_SHARES_KEY: ['live-shares'] }));
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: 'en', setLocale: () => {} }),
   I18nProvider: ({ children }: { children: unknown }) => children,

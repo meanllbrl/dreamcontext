@@ -102,7 +102,7 @@ const ALWAYS_SET_ENVS: ReadonlySet<string> = new Set(['DREAMCONTEXT_MEMBER_CREW'
  * app's chat sets to `app-<slug>`): such a process edits that member only, and an app's chat none.
  */
 export function memberActorFromEnv(env: NodeJS.ProcessEnv = process.env): { actor: MemberActor; self: string | null } {
-  const self = (env.DREAMCONTEXT_AGENT_SELF || env.DREAMCONTEXT_MEMBER_CREW || memberSuperProcess(env) || env.DREAMCONTEXT_AGENT_CHAT || '').trim() || null;
+  const self = (env.DREAMCONTEXT_AGENT_SELF || env.DREAMCONTEXT_MEMBER_CREW || memberSuperProcess(env) || env.DREAMCONTEXT_AGENT_CHAT || env.DREAMCONTEXT_RUN_MEMBER || '').trim() || null;
   if (BACKGROUND_ENVS.some((k) => (ALWAYS_SET_ENVS.has(k) ? !!env[k] : env[k] !== undefined))) return { actor: 'agent', self };
   if (env.CLAUDECODE !== undefined || env.DREAMCONTEXT_AGENT_CHAT !== undefined) return { actor: 'session', self };
   return { actor: 'owner', self: null };

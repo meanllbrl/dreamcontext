@@ -2,11 +2,12 @@ import { execFile } from 'node:child_process';
 import { promises as fsp, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { git } from './worktrees.js';
-import { diskUsage, rustTargets } from './disk-leftovers.js';
+import { childCheckout, git, homeContains, listedWorktreesFor, refsAreHome } from './worktrees.js';
+import { distDirs, diskUsage, rustTargets } from './disk-leftovers.js';
 import { listVaults, vaultsFilePath } from '../vaults.js';
-import { MEMBER_SUPER_DIR, okMember, superIdOfMember, superRecordPath } from './store.js';
-import type { SuperId } from './types.js';
+import { MEMBER_SUPER_DIR, okMember, readSuperState, superIdOfMember, superRecordPath, withSuperState } from './store.js';
+import { SUPER_BRANCH_RE, validBase } from './types.js';
+import type { SuperChild, SuperId, SuperState } from './types.js';
 
 /** Every super record path of a vault: main's, then each member Super's (plan-r10 1). A members
  *  folder that is a link, or unreadable, adds none (never followed). */
@@ -123,7 +124,8 @@ export async function inspectWorktree(path: string): Promise<WorktreeFacts> {
   try { common = resolve(admin, (await fsp.readFile(join(admin, 'commondir'), 'utf-8')).trim()); } catch { /* the usual layout */ }
   const repo = basename(common) === '.git' ? dirname(common) : common;
   const lastActive = Math.max(base.lastActive, ...(await Promise.all(['HEAD', 'index', join('logs', 'HEAD')].map((f) => mtime(join(admin, f))))));
-  const heavy = [...(await nodeModulesDirs(path)), ...(await rustTargets(path))];
+  // Build output only when git ignores it (D13): a tracked `dist` or `target` is source.
+  const heavy = await ignoredOnly(path, [...(await nodeModulesDirs(path)), ...(await rustTargets(path)), ...(await distDirs(path))]);
 
   const head = await git(path, ['symbolic-ref', '-q', '--short', 'HEAD']);
   const branch = head.code === 0 ? head.stdout.trim() || null : null;
@@ -133,12 +135,25 @@ export async function inspectWorktree(path: string): Promise<WorktreeFacts> {
   let safe: boolean | null = null;
   let merged: boolean | null = null;
   if (refs.code === 0) {
-    const others = refs.stdout.split('\n').map((s) => s.trim())
-      .filter((r) => r && r !== `refs/heads/${branch}` && !/^refs\/remotes\/[^/]+\/HEAD$/.test(r));
+    const all = refs.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    const others = all.filter((r) => r !== `refs/heads/${branch}` && !/^refs\/remotes\/[^/]+\/HEAD$/.test(r));
     safe = others.length > 0;
-    merged = others.some((r) => r.startsWith('refs/heads/'));
+    // A label only (D9): HEAD reached home (a remote branch that is not a pushed super/* cut, or a
+    // local default branch, dev or beta).
+    merged = await refsAreHome(repo, all).catch(() => false);
   }
   return { path, shape: 'worktree', repo, branch, dirty, safe, merged, lastActive, heavy };
+}
+
+/** The paths git ignores in `worktree` (`git check-ignore -q`, one call each: exit 0 = ignored). */
+async function ignoredOnly(worktree: string, paths: readonly string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of paths) {
+    if (!p.startsWith(worktree + sep)) continue;
+    const rel = p.slice(worktree.length + 1);
+    if ((await git(worktree, ['check-ignore', '-q', '--', rel])).code === 0) out.push(p);
+  }
+  return out;
 }
 
 // ─── Guards ─────────────────────────────────────────────────────────────────────
@@ -154,11 +169,14 @@ export interface SweepGuards {
   /** Worktree → why a child still holds it (not ended, or an open question). */
   held: ReadonlyMap<string, string>;
   /** Worktree → the ENDED child of this vault whose record names it. */
-  ended: ReadonlyMap<string, { child: string; branch?: string; endedAt?: number }>;
+  ended: ReadonlyMap<string, EndedRow>;
   /** Set when a child record could not be read: which worktrees children hold is unknown, so
    *  nothing may go (fail toward keeping). */
   unsure?: string;
 }
+
+/** An ENDED child of this vault naming a worktree, and the Super record that holds it. */
+export interface EndedRow { child: string; branch?: string; endedAt?: number; superId: SuperId }
 
 const under = (p: string, dir: string) => p === dir || p.startsWith(dir + sep);
 
@@ -169,6 +187,11 @@ export type Verdict =
 
 const days = (ms: number) => `${Math.floor(ms / DAY)}d`;
 
+/** A running process works in `path` (an open file under it, or a command line naming it). */
+function usedBy(path: string, inUse: readonly string[], commands: readonly string[]): boolean {
+  return inUse.some((p) => under(p, path)) || commands.some((c) => c.includes(path + sep) || c.includes(path + ' ') || c.endsWith(path));
+}
+
 /** One folder's verdict. Pure: every fact it weighs is in its arguments. */
 export function classify(f: WorktreeFacts, g: SweepGuards, now: number): Verdict {
   if (f.shape === 'not-a-worktree') return { action: 'keep', reason: 'not-a-worktree', why: 'no .git here: not a worktree git knows, report only' };
@@ -176,24 +199,33 @@ export function classify(f: WorktreeFacts, g: SweepGuards, now: number): Verdict
   if (f.shape === 'broken') return { action: 'keep', reason: 'unreadable', why: 'its git admin dir is gone (`git worktree prune` territory), report only' };
   if (g.unsure) return { action: 'keep', reason: 'unreadable', why: g.unsure };
   if (g.inUse === null) return { action: 'keep', reason: 'in-use', why: 'could not list running processes, so nothing is removed' };
-  if (g.inUse.some((p) => under(p, f.path)) || g.commands.some((c) => c.includes(f.path + sep) || c.includes(f.path + ' ') || c.endsWith(f.path))) {
+  if (usedBy(f.path, g.inUse, g.commands)) {
     return { action: 'keep', reason: 'in-use', why: 'a running process works in it' };
   }
   const cli = g.cliTargets.find((t) => under(t, f.path));
   if (cli) return { action: 'keep', reason: 'global-cli', why: `the global dreamcontext link points into it (${cli})` };
   const held = g.held.get(f.path);
   if (held) return { action: 'keep', reason: 'live-child', why: held };
-  if (f.dirty !== false) return { action: 'keep', reason: 'dirty', why: f.dirty === null ? 'git could not read its status' : 'uncommitted changes' };
-  if (f.safe !== true) return { action: 'keep', reason: 'unmerged', why: `${f.branch ?? 'detached HEAD'} has commits on no other branch or remote` };
-
   const ended = g.ended.get(f.path);
   const idle = now - Math.max(f.lastActive, ended?.endedAt ?? 0);
-  if (ended && f.merged) return { action: 'remove', category: 'child-worktree', why: `child ${ended.child} ended, ${f.branch ?? 'HEAD'} merged and clean` };
+  // D13: a dirty tree stays; only its git-ignored build output goes (an ended child's at once,
+  // anyone else's once idle a day).
+  if (f.dirty !== false) {
+    if (f.dirty === true && f.heavy.length && (ended || idle >= BUILD_IDLE_MS)) {
+      return { action: 'strip', why: ended ? `child ${ended.child} ended with uncommitted changes: only its git-ignored build output goes` : `idle ${days(idle)}, uncommitted changes kept: only git-ignored build output goes` };
+    }
+    return { action: 'keep', reason: 'dirty', why: f.dirty === null ? 'git could not read its status' : 'uncommitted changes' };
+  }
+  // A clean tree goes only when its commits stay: HEAD on a branch (the branch is kept), or held by
+  // another ref. A detached HEAD with commits nowhere else stays.
+  if (!f.branch && f.safe !== true) return { action: 'keep', reason: 'unmerged', why: 'detached HEAD with commits on no branch or remote' };
+  const label = f.merged ? 'home' : f.branch ? `branch ${f.branch} kept` : 'held by another ref';
+  if (ended) return { action: 'remove', category: 'child-worktree', why: `child ${ended.child} ended, clean, ${label}` };
   if (RELEASE_NAME_RE.test(basename(f.path)) && idle >= RELEASE_IDLE_MS) {
-    return { action: 'remove', category: 'release-worktree', why: `release worktree idle ${days(idle)}, clean, ${f.merged ? 'merged' : 'pushed'}` };
+    return { action: 'remove', category: 'release-worktree', why: `release worktree idle ${days(idle)}, clean, ${label}` };
   }
   if (idle >= STALE_IDLE_MS) {
-    return { action: 'remove', category: 'stale-worktree', why: `idle ${days(idle)}${ended ? ` (child ${ended.child} ended)` : ''}, clean, ${f.merged ? 'merged' : 'pushed'}` };
+    return { action: 'remove', category: 'stale-worktree', why: `idle ${days(idle)}, clean, ${label}` };
   }
   if (f.heavy.length && idle >= BUILD_IDLE_MS) return { action: 'strip', why: `idle ${days(idle)}: node_modules / Rust target come back with an install or build` };
   return { action: 'keep', reason: 'recent', why: `active ${days(idle)} ago` };
@@ -255,18 +287,18 @@ interface RawState { children?: Record<string, RawChild>; queue?: Array<{ sessio
 
 /** From Super Agent records: which worktrees a child still holds (not ended, or an open question),
  *  and which an ENDED child of `own` (this vault's record) names. */
-export function childHolds(records: ReadonlyArray<{ vault: string; state: RawState; own?: boolean }>): {
-  held: Map<string, string>; ended: Map<string, { child: string; branch?: string; endedAt?: number }>;
+export function childHolds(records: ReadonlyArray<{ vault: string; state: RawState; own?: boolean; superId?: SuperId }>): {
+  held: Map<string, string>; ended: Map<string, EndedRow>;
 } {
   const held = new Map<string, string>();
-  const ended = new Map<string, { child: string; branch?: string; endedAt?: number }>();
-  for (const { vault, state, own } of records) {
+  const ended = new Map<string, EndedRow>();
+  for (const { vault, state, own, superId } of records) {
     const open = new Set((state.queue ?? []).filter((q) => q && q.state !== 'done' && typeof q.sessionId === 'string').map((q) => q.sessionId as string));
     for (const [sid, ch] of Object.entries(state.children ?? {})) {
       if (!ch || typeof ch.worktree !== 'string') continue;
       if (typeof ch.endedAt !== 'number') held.set(ch.worktree, `child ${sid} of ${vault} is not ended`);
       else if (open.has(sid)) held.set(ch.worktree, `child ${sid} of ${vault} has an open question`);
-      else if (own) ended.set(ch.worktree, { child: sid, branch: typeof ch.branch === 'string' ? ch.branch : undefined, endedAt: ch.endedAt });
+      else if (own) ended.set(ch.worktree, { child: sid, branch: typeof ch.branch === 'string' ? ch.branch : undefined, endedAt: ch.endedAt, superId: superId ?? 'main' });
     }
   }
   // A tree any child still holds is held, whatever an ended one says about it.
@@ -277,7 +309,7 @@ export function childHolds(records: ReadonlyArray<{ vault: string; state: RawSta
 /** Every registered vault's Super Agent record (raw). `unsure` names any record, or the vault
  *  registry, that exists but cannot be read: then which worktrees children hold is unknown. */
 export function readSuperRecords(ownContextRoot: string, home: string = homedir()): {
-  records: Array<{ vault: string; state: RawState; own: boolean }>; warnings: string[]; unsure?: string;
+  records: Array<{ vault: string; state: RawState; own: boolean; superId: SuperId }>; warnings: string[]; unsure?: string;
 } {
   const roots = new Map<string, string>([[resolve(ownContextRoot), 'this vault']]);
   const warnings: string[] = [];
@@ -290,7 +322,7 @@ export function readSuperRecords(ownContextRoot: string, home: string = homedir(
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') doubt('the vault registry (vaults.json) cannot be read');
   }
   for (const v of listVaults(home)) roots.set(resolve(v.path, '_dream_context'), v.name);
-  const records: Array<{ vault: string; state: RawState; own: boolean }> = [];
+  const records: Array<{ vault: string; state: RawState; own: boolean; superId: SuperId }> = [];
   for (const [root, vault] of roots) {
     // Main's record and every member Super's: a member's child holds its worktree as much as main's.
     for (const { id, path } of superRecordPaths(root)) {
@@ -303,7 +335,7 @@ export function readSuperRecords(ownContextRoot: string, home: string = homedir(
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') doubt(`${vault}: ${whose} cannot be read`);
         continue;
       }
-      try { records.push({ vault, state: JSON.parse(raw) as RawState, own: root === resolve(ownContextRoot) }); }
+      try { records.push({ vault, state: JSON.parse(raw) as RawState, own: root === resolve(ownContextRoot), superId: id }); }
       catch { doubt(`${vault}: ${whose} does not parse`); }
     }
   }
@@ -336,6 +368,8 @@ export interface SweepItem {
   branch?: string | null;
   repo?: string | null;
   child?: string;
+  /** The Super record whose ended child names it (a member's too): its removal is written there. */
+  superId?: SuperId;
   /** `build-output`: the dirs that go (the worktree itself stays); `test-tmp`: its folders
    *  (left out of {@link publicPlan}: thousands of them). */
   remove?: string[];
@@ -371,6 +405,8 @@ async function pool<T, R>(xs: readonly T[], n: number, fn: (x: T) => Promise<R>)
   return out;
 }
 
+const ownerOf = (row: EndedRow | undefined) => (row ? { child: row.child, superId: row.superId } : {});
+
 /** Look at every folder under `root` and say what would go and what stays. Removes nothing. */
 export async function planSweep(o: {
   root: string; guards: SweepGuards; testTmp?: readonly string[]; now?: number; warnings?: string[];
@@ -386,9 +422,9 @@ export async function planSweep(o: {
   for (const { f, v } of verdicts) {
     const heavyBytes = f.heavy.reduce((n, h) => n + size(h), 0);
     if (v.action === 'remove') {
-      items.push({ category: v.category, path: f.path, bytes: size(f.path), why: v.why, branch: f.branch, repo: f.repo, ...(o.guards.ended.get(f.path) ? { child: o.guards.ended.get(f.path)!.child } : {}) });
+      items.push({ category: v.category, path: f.path, bytes: size(f.path), why: v.why, branch: f.branch, repo: f.repo, ...ownerOf(o.guards.ended.get(f.path)) });
     } else if (v.action === 'strip') {
-      items.push({ category: 'build-output', path: f.path, bytes: heavyBytes, why: v.why, branch: f.branch, repo: f.repo, remove: f.heavy });
+      items.push({ category: 'build-output', path: f.path, bytes: heavyBytes, why: v.why, branch: f.branch, repo: f.repo, remove: f.heavy, ...ownerOf(o.guards.ended.get(f.path)) });
     } else {
       kept.push({ reason: v.reason, path: f.path, bytes: size(f.path), why: v.why, branch: f.branch, ...(heavyBytes ? { heavyBytes } : {}) });
     }
@@ -411,6 +447,45 @@ export async function planSweep(o: {
 
 // ─── Acting on it ───────────────────────────────────────────────────────────────
 
+type UsesFn = (path: string) => Promise<{ inUse: readonly string[] | null; commands: readonly string[] }>;
+
+/**
+ * THE check every strip and every removal of a worktree passes right before it acts, the
+ * janitor's round and `super clean --apply` alike (review r1-r3, class
+ * janitor-acts-on-stale-snapshot): no snapshot taken earlier decides. The caller has put `path`
+ * in `removing` first, so a resume from then on reads it as gone and waits. For a child's
+ * worktree: not held by a resume in flight, and under its own record's lock (a member's record
+ * too) still ended and still naming this path; `before` runs in that same lock. Then the process
+ * listing for this path alone. A reason means: leave it.
+ */
+async function recheckBeforeActing(a: {
+  path: string; home: string; uses?: UsesFn; roundUses?: { inUse: readonly string[] | null; commands: readonly string[] };
+  child?: { contextRoot: string; superId: SuperId; id: string; namesPath: (w: string | undefined) => boolean };
+}, before?: (c: SuperChild) => void): Promise<string | null> {
+  if (a.child) {
+    const ch = a.child;
+    if (resumingChildren.has(ch.id)) return 'its child is being resumed';
+    let why: string | null = 'its child left the record';
+    await withSuperState(ch.contextRoot, ch.superId, (st) => {
+      const c = st.children[ch.id];
+      if (!c) return;
+      if (c.endedAt === undefined || resumingChildren.has(ch.id)) { why = 'its child was resumed'; return; }
+      if (!ch.namesPath(c.worktree)) { why = 'its child names another worktree now'; return; }
+      why = null;
+      before?.(c);
+    }, { home: a.home });
+    if (why) return why;
+  }
+  const u = a.uses ? await a.uses(a.path) : a.roundUses ?? await runningUses(a.path, await fsp.realpath(a.path).catch(() => a.path));
+  if (u.inUse === null) return 'could not list running processes';
+  if (usedBy(a.path, u.inUse, u.commands)) return 'a running process works in it';
+  return null;
+}
+
+/** The record names `path` in either spelling (the one it was made with, or the real one). */
+const namesPathIn = (root: string, path: string, also?: string) => (w: string | undefined) =>
+  !!w && (w === path || w === also || join(root, basename(w)) === path);
+
 export interface SweepResult { removed: string[]; failed: Array<{ path: string; message: string }>; bytesFreed: number }
 
 /**
@@ -419,7 +494,13 @@ export interface SweepResult { removed: string[]; failed: Array<{ path: string; 
  */
 export async function applySweep(plan: SweepPlan, guards: SweepGuards, o: {
   now?: number; inspect?: (p: string) => Promise<WorktreeFacts>; onRemoved?: (item: SweepItem) => Promise<void>;
+  /** The vault whose records name the children (`super clean`'s caller); with it, each child row is
+   *  re-checked and written in its OWN record (main or member) around the removal. */
+  contextRoot?: string; home?: string;
+  /** The per-path process listing (tests inject it; default: read the machine for that path). */
+  uses?: UsesFn;
 } = {}): Promise<SweepResult> {
+  const home = o.home ?? homedir();
   const inspect = o.inspect ?? inspectWorktree;
   const removed: string[] = [];
   const failed: SweepResult['failed'] = [];
@@ -429,22 +510,40 @@ export async function applySweep(plan: SweepPlan, guards: SweepGuards, o: {
       if (item.category === 'test-tmp') {
         for (const t of item.remove ?? []) await fsp.rm(t, { recursive: true, force: true });
       } else {
-        const f = await inspect(item.path);
-        const v = classify(f, guards, o.now ?? Date.now());
-        const same = item.category === 'build-output' ? v.action === 'strip' : v.action === 'remove';
-        if (!same) throw new Error(`changed since the plan: ${v.why}`);
-        if (item.category === 'build-output') {
-          for (const h of item.remove ?? []) {
-            const st = await fsp.lstat(h).catch(() => null);
-            if (!st || !st.isDirectory() || st.isSymbolicLink() || !h.startsWith(item.path + sep)) continue;
-            await fsp.rm(h, { recursive: true, force: true });
+        // In `removing` FIRST (a resume from here waits), then the one recheck, then act.
+        removing.add(item.path);
+        try {
+          const f = await inspect(item.path);
+          const v = classify(f, guards, o.now ?? Date.now());
+          const same = item.category === 'build-output' ? v.action === 'strip' : v.action === 'remove';
+          if (!same) throw new Error(`changed since the plan: ${v.why}`);
+          const child = item.child && item.superId && o.contextRoot
+            ? { contextRoot: o.contextRoot, superId: item.superId, id: item.child, namesPath: namesPathIn(plan.root, item.path) }
+            : undefined;
+          const strip = item.category === 'build-output';
+          // Before (D15), in the recheck's lock: the child's own record learns the branch it was on.
+          const why = await recheckBeforeActing({ path: item.path, home, uses: o.uses, child }, strip ? undefined : (c) => noteWorkBranch(c, f.branch));
+          if (why) throw new Error(`kept: ${why}`);
+          if (strip) {
+            for (const h of item.remove ?? []) {
+              const st = await fsp.lstat(h).catch(() => null);
+              if (!st || !st.isDirectory() || st.isSymbolicLink() || !h.startsWith(item.path + sep)) continue;
+              await fsp.rm(h, { recursive: true, force: true });
+            }
+          } else {
+            if (!f.repo) throw new Error('no repository to remove it from');
+            // No --force: git itself refuses a tree with changes or untracked files.
+            const r = await git(f.repo, ['worktree', 'remove', item.path]);
+            if (r.code !== 0) throw new Error(`git worktree remove: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`);
+            // After: only the worktree goes from that child's own record.
+            if (child) {
+              await withSuperState(child.contextRoot, child.superId, (st) => {
+                const c = st.children[child.id];
+                if (c && child.namesPath(c.worktree)) delete c.worktree;
+              }, { home });
+            }
           }
-        } else {
-          if (!f.repo) throw new Error('no repository to remove it from');
-          // No --force: git itself refuses a tree with changes or untracked files.
-          const r = await git(f.repo, ['worktree', 'remove', item.path]);
-          if (r.code !== 0) throw new Error(`git worktree remove: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`);
-        }
+        } finally { removing.delete(item.path); }
       }
       if (item.category === 'test-tmp') removed.push(...(item.remove ?? [])); else removed.push(item.path);
       bytesFreed += item.bytes;
@@ -474,4 +573,215 @@ export function renderPlan(plan: SweepPlan): string {
   lines.push('', 'kept, with reasons:');
   for (const k of plan.kept) lines.push(`  ${gb(k.bytes).padStart(8)}  ${k.reason.padEnd(14)} ${k.path}  (${k.why}${k.heavyBytes ? `; ${gb(k.heavyBytes)} of it build output` : ''})`);
   return lines.join('\n');
+}
+
+// ─── The ended-child janitor (K5, D14, D15, D17) ────────────────────────────────
+
+/** Worktrees the janitor is removing right now (D15): `childCheckout` reads them as gone, so a
+ *  merge or a resume racing the removal goes through the branch. In-process only. */
+const removing = new Set<string>();
+export function removingWorktrees(): ReadonlySet<string> { return removing; }
+
+/** Vaults (context roots) with a round running, and the `only` paths each skipped meanwhile: one
+ *  vault's round never makes another vault's hourly round skip. */
+const sweeping = new Set<string>();
+const retryOnly = new Map<string, Set<string>>();
+
+export interface JanitorResult {
+  removed: string[];
+  stripped: string[];
+  failed: Array<{ path: string; message: string }>;
+  bytesFreed: number;
+  released: string[];
+  warnings: string[];
+}
+
+/** The janitor's last round in this process, for `super state` (D14's one line). */
+let lastRound: (JanitorResult & { at: number; trigger: string }) | null = null;
+
+/** Children a `super resume` is bringing back right now (review r2): from BEFORE the resume reads
+ *  the child's checkout until its record says it is no longer ended, the janitor never strips or
+ *  removes that child's worktree. A removal that already passed its recheck has its path in
+ *  `removing`, so the resume reads the worktree as gone and re-attaches after it. */
+const resumingChildren = new Map<string, number>();
+export function holdForResume(child: string, on: boolean): void {
+  const n = (resumingChildren.get(child) ?? 0) + (on ? 1 : -1);
+  if (n > 0) resumingChildren.set(child, n); else resumingChildren.delete(child);
+}
+
+/** The one rule every removal of a child's worktree writes (D15), whichever verb removes it: where
+ *  its work is, the branch the worktree was on. `branch` itself never changes. */
+export function noteWorkBranch(c: SuperChild, branchNow: string | null | undefined): void {
+  if (branchNow && SUPER_BRANCH_RE.test(branchNow)) { if (branchNow !== c.branch) c.lastBranch = branchNow; else delete c.lastBranch; delete c.movedTo; }
+  else if (branchNow && validBase(branchNow)) c.movedTo = branchNow;
+}
+export function lastJanitorRound(): typeof lastRound { return lastRound; }
+
+export function janitorLine(r: JanitorResult): string {
+  const gb = (b: number) => `${(b / 1024 ** 3).toFixed(1)} GB`;
+  return `worktree janitor: ${r.removed.length} removed, ${r.stripped.length} stripped, ${gb(r.bytesFreed)} freed`
+    + `${r.released.length ? `, ${r.released.length} ended children released (branch home)` : ''}${r.failed.length ? `, ${r.failed.length} failed` : ''}`;
+}
+
+export interface SweepEndedDeps {
+  home?: string;
+  /** Tests inject the facts and the guards; the server reads the machine. */
+  inspect?: (p: string) => Promise<WorktreeFacts>;
+  guards?: () => Promise<{ guards: SweepGuards; warnings: string[]; root: string }>;
+  /** The process listing for ONE path, read again right before acting. Tests inject it; with
+   *  injected `guards` and no `uses`, the round's own listing is reused (tests never read the
+   *  machine). */
+  uses?: (path: string) => Promise<{ inUse: readonly string[] | null; commands: readonly string[] }>;
+  now?: number;
+  trigger?: string;
+}
+
+/**
+ * The ended-child janitor (D14): every ended child of every Super record of this vault (main and
+ * members) whose worktree the sweep's one rule (D13) lets go: a clean one is removed (its branch
+ * stays, in git and in the record), a dirty one loses only its git-ignored build output. Then the
+ * release pass (D17): a worktree-less ended child whose branch reached home, or is gone from a
+ * readable repo, gives its branch up and trims as any ended child. Never throws; a second round
+ * while one runs is skipped and its `only` path retried once after the round.
+ */
+export async function sweepEnded(o: { root: string; contextRoot: string; only?: string } & SweepEndedDeps): Promise<JanitorResult | null> {
+  if (sweeping.has(o.contextRoot)) {
+    if (o.only) { const q = retryOnly.get(o.contextRoot) ?? new Set<string>(); q.add(o.only); retryOnly.set(o.contextRoot, q); }
+    return null;
+  }
+  sweeping.add(o.contextRoot);
+  try {
+    const result = await sweepEndedRound(o);
+    const again = [...(retryOnly.get(o.contextRoot) ?? [])];
+    retryOnly.delete(o.contextRoot);
+    for (const only of again) {
+      const r = await sweepEndedRound({ ...o, only }).catch(() => null);
+      if (r) { result.removed.push(...r.removed); result.stripped.push(...r.stripped); result.failed.push(...r.failed); result.bytesFreed += r.bytesFreed; }
+    }
+    lastRound = { ...result, at: Date.now(), trigger: o.trigger ?? (o.only ? 'end' : 'round') };
+    if (result.removed.length || result.stripped.length || result.released.length || result.failed.length) console.log(`[super] ${janitorLine(result)}`);
+    return result;
+  } catch (err) {
+    console.warn(`[super] worktree janitor failed: ${(err as Error)?.message ?? err}`);
+    return null;
+  } finally {
+    sweeping.delete(o.contextRoot);
+  }
+}
+
+async function sweepEndedRound(o: { root: string; contextRoot: string; only?: string } & SweepEndedDeps): Promise<JanitorResult> {
+  const home = o.home ?? homedir();
+  const out: JanitorResult = { removed: [], stripped: [], failed: [], bytesFreed: 0, released: [], warnings: [] };
+  const { guards, warnings, root } = o.guards ? await o.guards() : await machineGuards(o.root, o.contextRoot, home);
+  out.warnings.push(...warnings);
+  const inspect = o.inspect ?? inspectWorktree;
+  const realOnly = o.only ? await fsp.realpath(o.only).catch(() => o.only!) : undefined;
+  const onlyKey = realOnly && (dirname(realOnly) === root ? realOnly : join(root, basename(realOnly)));
+  for (const [path, row] of guards.ended) {
+    if (o.only && path !== o.only && path !== realOnly && path !== onlyKey) continue;
+    const f = await inspect(path);
+    const v = classify(f, guards, o.now ?? Date.now());
+    if (v.action === 'keep') continue;
+    if (v.action === 'remove' && v.category !== 'child-worktree') continue;
+    const bytes = (await diskUsage(v.action === 'strip' ? f.heavy : [path], 600_000));
+    const size = [...bytes.values()].reduce((n, b) => n + b, 0);
+    const key = { contextRoot: o.contextRoot, superId: row.superId };
+    const namesPath = namesPathIn(root, path, o.only);
+    // The one recheck right before acting (recheckBeforeActing); with injected guards and no
+    // `uses`, the round's own listing (tests never read the machine).
+    const stillOurs = (before?: (c: SuperChild) => void) => recheckBeforeActing({
+      path, home, uses: o.uses, ...(o.guards && !o.uses ? { roundUses: guards } : {}),
+      child: { contextRoot: key.contextRoot, superId: key.superId, id: row.child, namesPath },
+    }, before);
+    if (v.action === 'strip') {
+      // In `removing` while it strips too: a resume waits instead of starting in half a node_modules.
+      removing.add(path);
+      try {
+        const why = await stillOurs();
+        if (why) { out.warnings.push(`${path} kept: ${why}`); continue; }
+        for (const h of f.heavy) {
+          const st = await fsp.lstat(h).catch(() => null);
+          if (!st || !st.isDirectory() || st.isSymbolicLink() || !h.startsWith(path + sep)) continue;
+          await fsp.rm(h, { recursive: true, force: true });
+        }
+        out.stripped.push(path); out.bytesFreed += size;
+      } catch (err) { out.failed.push({ path, message: (err as Error).message }); } finally { removing.delete(path); }
+      continue;
+    }
+    if (!f.repo) { out.failed.push({ path, message: 'no repository to remove it from' }); continue; }
+    const writeChild = (fn: (c: SuperChild) => void) => withSuperState(key.contextRoot, key.superId, (s) => {
+      const c = s.children[row.child];
+      if (c) fn(c);
+    }, { home });
+    // In `removing` first: from here a resume goes through re-attach, which waits for this removal.
+    removing.add(path);
+    try {
+      // Before (D15), in the recheck's own lock: the record learns where the work is, so a merge or
+      // resume racing the removal reaches the branch. `branch` itself never changes.
+      const why = await stillOurs((c) => noteWorkBranch(c, f.branch));
+      if (why) { out.warnings.push(`${path} kept: ${why}`); continue; }
+      // No --force: git itself refuses a tree with changes or untracked files.
+      const r = await git(f.repo, ['worktree', 'remove', path]);
+      if (r.code !== 0) throw new Error(`git worktree remove: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`);
+      // After: only the worktree goes from the record.
+      await writeChild((c) => { if (namesPath(c.worktree)) delete c.worktree; });
+      out.removed.push(path); out.bytesFreed += size;
+    } catch (err) {
+      out.failed.push({ path, message: (err as Error).message });
+    } finally {
+      removing.delete(path);
+    }
+  }
+  if (!o.only) out.released.push(...await releasePass(o.contextRoot, home));
+  return out;
+}
+
+/**
+ * D17: every record's ended children without a live worktree. A worktree hint git does not list
+ * (readable repo) is dropped; a child whose every named branch is home or gone (readable repo)
+ * gives up `branch`, `lastBranch` and `movedTo`, re-checked inside the record's lock (a resume in
+ * between wins). An unreadable repo is "unknown": nothing dropped.
+ */
+async function releasePass(contextRoot: string, home: string): Promise<string[]> {
+  const projectRoot = dirname(contextRoot);
+  const released: string[] = [];
+  for (const { id } of superRecordPaths(contextRoot)) {
+    let s: SuperState;
+    try { s = await readSuperState(contextRoot, id, { home }); } catch { continue; }
+    for (const c of Object.values(s.children)) {
+      if (c.endedAt === undefined || !c.branch) continue;
+      const co = await childCheckout(projectRoot, c, { removing, home });
+      // A listed worktree (on a branch or detached) is still where the work is: never released.
+      if (!co.repo || co.worktree || co.elsewhere?.kind === 'detached') continue;
+      if (!(await isReadableRepo(co.repo.path))) continue;
+      const staleHint = c.worktree ?? null;
+      if (staleHint) {
+        const listed = await listedWorktreesFor([co.repo.path], [staleHint]).catch(() => null);
+        if (!listed || listed.has(staleHint) || removing.has(staleHint)) continue;
+      }
+      let release = true;
+      // Every branch the identity names, movedTo too: the work there must be home (or gone) as well.
+      for (const b of [...new Set([c.movedTo, c.lastBranch, c.branch].filter((x): x is string => !!x))]) {
+        const exists = await git(co.repo.path, ['show-ref', '--verify', '--quiet', `refs/heads/${b}`]);
+        if (exists.code === 1) continue; // gone from a readable repo
+        if (exists.code !== 0) { release = false; break; }
+        if ((await homeContains(co.repo.path, `refs/heads/${b}`)) !== true) { release = false; break; }
+      }
+      await withSuperState(contextRoot, id, (d) => {
+        const x = d.children[c.sessionId];
+        if (!x || x.endedAt === undefined) return;
+        // Re-checked inside the lock: a resume re-attached a worktree, or another hint came.
+        if (x.worktree && x.worktree !== staleHint) return;
+        if (staleHint && x.worktree === staleHint) delete x.worktree;
+        if (release && x.branch === c.branch) { delete x.branch; delete x.lastBranch; delete x.movedTo; released.push(c.sessionId); }
+      }, { home }).catch(() => undefined);
+    }
+  }
+  return released;
+}
+
+async function isReadableRepo(path: string): Promise<boolean> {
+  try { await fsp.access(path); } catch { return false; }
+  const r = await git(path, ['rev-parse', '--git-dir']);
+  return r.code === 0;
 }

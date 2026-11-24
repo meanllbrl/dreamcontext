@@ -95,6 +95,33 @@ describe('the window drops a ghost permission card', () => {
   });
 });
 
+describe('the window follows the server on which requests are open (split "asking", 2026-11-22)', () => {
+  const question = (requestId: string) => ({
+    type: 'control_request', request_id: requestId,
+    request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Go?', header: 'Go', options: [{ label: 'Yes' }, { label: 'No' }] }] } },
+  });
+
+  it('reads `_meta/open_requests` strictly', () => {
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'open_requests', requestIds: ['a'] }))).toEqual({ kind: 'open-requests', requestIds: ['a'] });
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'open_requests', requestIds: [1] })).kind).toBe('ignored');
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'open_requests' })).kind).toBe('ignored');
+  });
+
+  it('a question settled elsewhere leaves the card, the tab stops asking, an open one stays', async () => {
+    const s = await open();
+    last().open();
+    last().frame(question('q1'));
+    last().frame(question('q2'));
+    last().frame(permission('p1', 'tu-1'));
+    expect(s.asking).toBe(true);
+    last().frame({ type: '_meta', subtype: 'open_requests', requestIds: ['q2'] });
+    expect(pendingIds(s)).toEqual(['q2']);
+    last().frame({ type: '_meta', subtype: 'open_requests', requestIds: [] });
+    expect(pendingIds(s)).toEqual([]);
+    expect(s.asking).toBe(false);
+  });
+});
+
 describe('the window `allow` verb', () => {
   const target = (pending: PendingItem[], written = true) => {
     const calls: unknown[] = [];

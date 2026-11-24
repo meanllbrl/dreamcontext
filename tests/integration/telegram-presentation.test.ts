@@ -86,7 +86,7 @@ beforeEach(async () => {
   hubFrames = [];
   session = { on: false, url: null, channel: null, via: false };
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, now: () => clock, openLink: () => {}, handsfree: { streamsTo: () => false, isOn: () => true } });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, now: () => clock, openLink: () => {}, handsfree: { streamsTo: () => false, isOn: () => true } });
   unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, {
     settleMs: 5, isGitIgnored: (r, rel) => ignored(r, rel),
     session: () => ({ isOn: () => session.on, startedVia: session.via ? { scope: scopeOfContextRoot(root), target: 'super' } : null, channel: session.channel, status: () => ({ url: session.url }) }),
@@ -448,7 +448,8 @@ describe('a rich ask outlives an expired note capture (capture.ts)', () => {
     const press = (label: string) => {
       const edit = [...tg.calls].reverse().find((c) => c.method === 'editMessageReplyMarkup' && c.params.message_id === q2.result!.message_id);
       const kb = ((edit ?? q2).params.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat();
-      const btn = kb.find((b) => b.text === label || b.text === `✓ ${label}`)!;
+      // One message holds both questions (telegram-sade): the second question's buttons are "2· …".
+      const btn = kb.find((b) => [label, `2· ${label}`, `2· ✓ ${label}`].includes(b.text))!;
       tg.push(TOKEN, { callback_query: { id: `cb${Math.random()}`, data: btn.callback_data, from: { id: OWNER }, message: { message_id: q2.result!.message_id, chat: { id: OWNER, type: 'private' }, text: q2Text, ...(edit ? { edit_date: 9 } : {}) } } });
     };
     press('Not ekle');
@@ -520,13 +521,13 @@ describe('commands (M4, N5, N6, P4)', () => {
     { id: 'n4', section: 'done', text: 'Eski iş', at: 1 },
   ];
 
-  it('/gundem: one message, a button per waiting line only, running and done as one quiet line', async () => {
+  it('/gundem: one message, a button per waiting line only, running as one quiet line, done lines never shown', async () => {
     chat();
     await writeState({ pad: agendaPad, padSeq: 4 });
     tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
     await vi.waitFor(() => expect(buttonMsg('Raporu yaz')).toBeTruthy());
     const m = buttonMsg('Raporu yaz');
-    expect(m.params.text).toBe('<b>Seni bekleyen 2 iş</b>\n<i>1 iş sürüyor · bugün 1 iş bitti</i>');
+    expect(m.params.text).toBe('<b>Seni bekleyen 2 iş</b>\n<i>1 iş sürüyor</i>');
     const labels = keyboard(m).map((r) => r.map((b) => b.text));
     expect(labels).toEqual([['Pano Gönder ve al: iki kopyayla dene, s…'], ['Raporu yaz']]);
     expect(labels.flat().join()).not.toContain('Paywall');
@@ -550,7 +551,7 @@ describe('commands (M4, N5, N6, P4)', () => {
     tapEdit(2);
     await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2));
     e = lastEdit();
-    expect(String(e.params.text)).toBe('<b>Seni bekleyen 2 iş</b>\n<i>1 iş sürüyor · bugün 1 iş bitti</i>');
+    expect(String(e.params.text)).toBe('<b>Seni bekleyen 2 iş</b>\n<i>1 iş sürüyor</i>');
     expect(keyboard(e)).toHaveLength(2);
   });
 
@@ -595,7 +596,7 @@ describe('commands (M4, N5, N6, P4)', () => {
     chat();
     await writeState({ pad: [{ id: 'n1', section: 'now', text: 'Paywall testini bitir', at: 1 }, { id: 'n2', section: 'done', text: 'Bitmiş', at: 1 }], padSeq: 2 });
     tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
-    await vi.waitFor(() => expect(tg.texts()).toContain('<b>Seni bekleyen iş yok.</b>\n<i>1 iş sürüyor · bugün 1 iş bitti</i>'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('<b>Seni bekleyen iş yok.</b>\n<i>1 iş sürüyor</i>'));
     expect(tg.sent().filter((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('callback_data'))).toHaveLength(0);
   });
 

@@ -194,7 +194,7 @@ export const LOCAL_ASSET_SOURCES = ['dashboard/src/components/appLink/viewerPath
 /** The two pure modules, as source: the path rules first, then the inliner minus its import of them. */
 export function renderLocalAssets(sources: readonly string[] = LOCAL_ASSET_SOURCES.map((f) => readFileSync(f, 'utf-8'))): string {
   const [paths, assets] = sources;
-  const body = assets.replace(/^import \{ parentDir, resolveDocumentRef \} from '[^']+';\n/m, '');
+  const body = assets.replace(/^import \{ isDocumentRelativeRef, resolveDocumentRef \} from '[^']+';\n/m, '');
   if (body === assets) throw new Error('htmlLocalAssets.ts no longer imports viewerPaths the way this copy expects');
   return `${HEADER(LOCAL_ASSET_SOURCES.join(' + '))}\n${paths.trimEnd()}\n\n${body}`;
 }

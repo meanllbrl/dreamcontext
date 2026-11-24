@@ -9,7 +9,8 @@ import {
   fastSlotPaths,
   heavySlotPaths,
   heavySlotsHeld,
-  machineHeavySlots,
+  machineStepLimit,
+  stepsHeld,
   machineLoad,
   type HeavyHold,
 } from './builder-tools.js';
@@ -70,7 +71,7 @@ export interface HeavyAcquired {
 
 export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyAcquired> {
   const read = o.heavyLimit ?? currentHeavyLimit;
-  const safeRead = async () => { try { return clampHeavyLimit(await read()); } catch { return machineHeavySlots(); } };
+  const safeRead = async () => { try { return clampHeavyLimit(await read()); } catch { return machineStepLimit(); } };
   const first = await safeRead();
   const waitS = o.maxWaitS ?? (first === 1 ? HEAVY_HOT_WAIT_S : HEAVY_DEFAULT_WAIT_S);
   const started = Date.now();
@@ -152,6 +153,7 @@ async function tryFast(o: HeavyAcquireOpts, job: NonNullable<HeavyAcquireOpts['j
   };
   const held = await acquireFastSlot({
     waitMs: waitS * 1000, paths: fastSlotPaths(o.slotDir), limit,
+    room: () => heat - stepsHeld(o.slotDir),
     turn: (now) => { const mine = place.myTurn(now); if (!mine) tell(now); return mine; },
   });
   if (held || hot) { place.leave(); return { held, hot, busy: null }; }

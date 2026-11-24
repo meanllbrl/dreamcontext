@@ -283,6 +283,24 @@ describe('restart', { timeout: 30_000 }, () => {
     }, W);
   });
 
+  it('a finished child whose done waits untold closes quietly: the done stays, no gone (Doc 2026-11-21)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    makeVault({
+      children: { c1: { ...child('c1'), row: 'done', finishedAt: 2 }, c2: child('c2') },
+      queue: [item({ id: 'q-fin', kind: 'done', state: 'pending', sessionId: 'c1' })],
+    });
+    await startSuperInbox([root]);
+    vi.advanceTimersByTime(READOPT_GRACE_MS + 10);
+    await vi.waitFor(async () => {
+      const s = await readSuperState(root);
+      expect(s.queue.filter((q) => q.kind === 'gone').map((q) => q.sessionId)).toEqual(['c2']);
+    }, W);
+    const s = await readSuperState(root);
+    expect(s.children.c1.row).toBe('gone');
+    expect(s.queue.find((q) => q.id === 'q-fin')?.state).toBe('pending');
+    expect(nextBatch(s).items.map((q) => q.id)).toContain('q-fin');
+  });
+
   it('three children all re-registering → no gone at all, queue intact', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     makeVault({

@@ -11,6 +11,7 @@
 import { TG_DOWNLOAD_MAX_BYTES, TG_UPLOAD_MAX_BYTES, type TgUserRef } from './contract.js';
 import { redactToken } from './config.js';
 import { redactSecrets, telegramHtmlToPlain } from './format.js';
+import { mp4VideoParams } from './mp4-info.js';
 
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: unknown; signal?: AbortSignal }) => Promise<{
   ok: boolean;
@@ -219,6 +220,10 @@ export class TelegramTransport {
   sendChatAction(chatId: number, action: 'typing' | 'upload_photo' | 'upload_document' | 'record_voice' = 'typing'): Promise<unknown> {
     return this.call('sendChatAction', { chat_id: chatId, action });
   }
+  /** A message's buttons replaced; `null` removes them. */
+  editMessageReplyMarkup(chatId: number, messageId: number, keyboard: unknown[][] | null): Promise<unknown> {
+    return this.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}) });
+  }
   answerCallbackQuery(id: string, text?: string): Promise<unknown> {
     return this.call('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) });
   }
@@ -241,7 +246,7 @@ export class TelegramTransport {
     return this.upload('sendDocument', { chat_id: chatId, ...(caption ? { caption, parse_mode: 'HTML' } : {}) }, { document: file });
   }
   sendVideo(chatId: number, file: UploadFile, caption?: string): Promise<TgSentMessage> {
-    return this.upload('sendVideo', { chat_id: chatId, ...(caption ? { caption, parse_mode: 'HTML' } : {}) }, { video: file });
+    return this.upload('sendVideo', { chat_id: chatId, ...mp4VideoParams(file.data), ...(caption ? { caption, parse_mode: 'HTML' } : {}) }, { video: file });
   }
   sendSticker(chatId: number, file: UploadFile): Promise<TgSentMessage> {
     return this.upload('sendSticker', { chat_id: chatId }, { sticker: file });

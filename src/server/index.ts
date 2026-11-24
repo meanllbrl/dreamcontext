@@ -18,6 +18,7 @@ import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSoc
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
 import { isDesktop } from './desktop.js';
+import { wireSuperWake } from './headless-super.js';
 import { isLoopback } from './routes/agent-spawn-shared.js';
 import { assistantContextRoot, assistantExists, isAssistantVault } from '../lib/assistant/home.js';
 import { declineAllProposals } from '../lib/assistant/proposals.js';
@@ -40,7 +41,7 @@ import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
 import { setWindowControlBase } from '../lib/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperAgendaDays, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperAgendaDays, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer, handleSuperFirstReadGet, handleSuperFirstReadPost } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -178,6 +179,10 @@ import {
   handleAutomationsPhotoUpload,
   handleAutomationsSay,
 } from './routes/automations.js';
+import {
+  handleScorecardCheck, handleScorecardCriteria, handleScorecardDraft, handleScorecardFresh, handleScorecardGet, handleScorecardGoal,
+  handleScorecardLessonUndo, handleScorecardLessonUse, handleScorecardRate, handleScorecardVerdict,
+} from './routes/agent-scorecard.js';
 import { handleLearnedDrop, handleLearnedGet, handleLearnedKeep, handleLearnedUndo } from './routes/learned.js';
 import {
   handleAgentsList,
@@ -244,7 +249,7 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
-import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
+import { handleOnboardingAgents, handleOnboardingFix, handleOnboardingGithubProbe, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
 import { handleAgentStats, handleAgentStatsPrice } from './routes/agent-stats.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import { claimOwnedPort } from './owned-ports.js';
@@ -297,6 +302,7 @@ import { handleFederationInboxGet, handleFederationSyncPost } from './routes/fed
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
 import { handleRecallGet, handleRecallPromptPost, handleRecallHaikuGet } from './routes/recall.js';
+import { handleAgentWorkSelect } from './routes/agent-work.js';
 import { recallCloudRoutes } from './routes/recall-cloud.js';
 import { recallOptionsRoutes } from './routes/recall-options.js';
 import {
@@ -351,6 +357,8 @@ import { closeMcpClients } from '../lib/apps/mcp-bridge.js';
 import { readLauncherTheme } from './routes/launcher.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren, publishDesktopServer } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
+import { sweepEnded } from '../lib/super/worktree-sweep.js';
+import { superWorktreeRoot } from '../lib/super/store.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
@@ -359,6 +367,8 @@ import { warmLoginPath } from '../lib/tool-finder.js';
 import { startProjectCatchUpJob } from './project-catch-up-job.js';
 import { startBrainAutoSyncJob } from './brain-auto-sync-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
+import { registerShareRoutes } from './routes/shares.js';
+import { closeAllShares, sweepShareDirs } from './shares/registry.js';
 import { setThermalSource } from '../lib/voice/whisperPressure.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
@@ -399,6 +409,8 @@ export function buildRouter(): Router {
   router.get('/api/handsfree/phone', handleHandsfreePhone);
   // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
   registerHandsfreeMacRoutes(router);
+  // Live links: one app or one board over its own quick tunnel (src/server/routes/shares.ts).
+  registerShareRoutes(router);
   // Telegram bindings (W2): page-called under /api/telegram, Rust-called under their own prefixes.
   registerTelegramRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
@@ -684,6 +696,8 @@ export function buildRouter(): Router {
   // The owner answers one item in place from his bar or the Super chat card (uye-bildirim K5, G4).
   router.post('/api/super/owner-answer', handleSuperOwnerAnswer);
   router.post('/api/super/enable', handleSuperEnable);
+  router.get('/api/super/first-read', handleSuperFirstReadGet);
+  router.post('/api/super/first-read', handleSuperFirstReadPost);
   router.post('/api/super/disable', handleSuperDisable);
   router.post('/api/super/layout', handleSuperLayout);
   router.post('/api/super/activity', handleSuperActivity);
@@ -867,6 +881,8 @@ export function buildRouter(): Router {
   router.get('/api/onboarding/readiness', handleOnboardingReadiness);
   router.post('/api/onboarding/fix', handleOnboardingFix);
   router.post('/api/onboarding/fix/cancel', handleOnboardingFixCancel);
+  router.post('/api/onboarding/agents', handleOnboardingAgents);
+  router.get('/api/onboarding/github-probe', handleOnboardingGithubProbe);
   // Hand off an initial prompt of ANY size to a terminal session about to be opened: POST the
   // text, get a token, put the token (not the text) in the WS upgrade URL. Names its own vault
   // in the body and validates it there, so it is vault-agnostic at the router level.
@@ -1035,6 +1051,8 @@ export function buildRouter(): Router {
   router.get('/api/agents', handleAgentsList);
   router.post('/api/agents', handleAgentsCreate);
   // Agent sync (B1): literal segments BEFORE `/:slug`, which would otherwise capture them.
+  // A member's past work (uye-gecmis-is C3): its hook asks this server's warm index (loopback only).
+  router.post('/api/agents/work/select', handleAgentWorkSelect);
   router.get('/api/agents/sync', handleAgentSyncState);
   router.post('/api/agents/sync/confirm', handleAgentSyncConfirm);
   router.get('/api/agents/inbox', handleAgentsInbox);
@@ -1054,6 +1072,17 @@ export function buildRouter(): Router {
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.get('/api/agents/:slug/stage', handleAgentsStage);
   router.get('/api/agents/:slug/history', handleAgentsHistory);
+  // The member scorecard (plan uye-karnesi C5).
+  router.get('/api/agents/:slug/scorecard', handleScorecardGet);
+  router.post('/api/agents/:slug/scorecard/rate', handleScorecardRate);
+  router.post('/api/agents/:slug/scorecard/criteria', handleScorecardCriteria);
+  router.post('/api/agents/:slug/scorecard/verdict', handleScorecardVerdict);
+  router.post('/api/agents/:slug/scorecard/lessons/:id/undo', handleScorecardLessonUndo);
+  router.post('/api/agents/:slug/scorecard/lessons/:id/use', handleScorecardLessonUse);
+  router.post('/api/agents/:slug/scorecard/goal', handleScorecardGoal);
+  router.post('/api/agents/:slug/scorecard/check', handleScorecardCheck);
+  router.post('/api/agents/:slug/scorecard/draft', handleScorecardDraft);
+  router.post('/api/agents/:slug/scorecard/fresh', handleScorecardFresh);
   router.get('/api/agents/:slug/amendments', handleAgentsAmendments);
   router.post('/api/agents/:slug/amendments/:id/revert', handleAgentsAmendmentRevert);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
@@ -1223,7 +1252,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-group', '/api/agent/voice/summary', '/api/telegram-manager', '/api/mac-owner'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/shares', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-group', '/api/agent/voice/summary', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1704,6 +1733,18 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // open across the relaunch (K2, kart-alta-yapisma-2).
         noteServerStopping();
         console.log('\n  Shutting down...');
+        // Reap spawned children (chat `claude` groups, agent-terminal PTYs) FIRST and
+        // synchronously. Each chat child is its own process group, so the desktop shell's
+        // signal to this server's group never reaches it, and the shell SIGKILLs this server
+        // 1.5 s after its SIGTERM: anything left for after an await below (the Mac-mode stop
+        // can take seconds) was skipped, and the children lived on under launchd, writing
+        // beside the next server's resumed copy. A SIGKILL from the parent still skips this;
+        // `reapOrphanCopies` (orphan-chats.ts) ends such a leftover before its conversation
+        // is resumed.
+        killTrackedChildren();
+        // Live links first (before the app runtimes and gateways they hold): every share's
+        // cloudflared is killed (SIGKILL after 3 s), awaited below inside the 5 s exit.
+        const sharesDone = closeAllShares('shutdown').catch(() => undefined);
         unpublishDesktopServer();
         stopAppsSweeper();
         stopAllRuntimes();
@@ -1719,10 +1760,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
-        void macDone.finally(() => {
-          // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
-          // when this server exits — SIGKILL from the parent would skip this, but a
-          // graceful SIGTERM or the parent-death watchdog both route through here.
+        void Promise.all([macDone, sharesDone]).finally(() => {
+          // A child tracked while the Mac-mode stop ran is reaped too (no-op otherwise).
           killTrackedChildren();
           // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
           declineAllProposals();
@@ -1756,6 +1795,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // self-update moves, so a global strictly newer than this process is an upgrade too.
       startUpgradeReadyWatch(dreamcontextVersion(), () => readyVersionOnDisk());
       startOrphanSweep();
+      // Live links are memory-only: what a dead server left in ~/.dreamcontext/shares goes.
+      try { sweepShareDirs(); } catch { /* best-effort */ }
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
       // The retired per-routine Telegram channel's token files: deleted once, here.
@@ -1797,11 +1838,21 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // any chat can register (plan-r7 D16): a handed-over child's first question is already
     // kept out of the notch, and children the window restores get their re-adoption grace.
     // A parked child is not coming back on its own: it gets no re-adoption grace.
+    // A stopped Super holding team mail is started by the server with no window (owner
+    // 2026-11-22): the desktop server only, the same server the Telegram wake runs in.
+    // Wired before the inbox boots, so team mail held from before a restart is woken by its first pump.
+    wireSuperWake({ wake: isDesktop() });
     void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')), { parked: (sid) => parkedSince(sid) !== null })
       .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
       // Queued super sends a relaunch must not lose (lib/super/outbox.ts).
       .then(() => {
         armSuperOutbox(); armSuperSuccession();
+        // D14: one ended-child janitor round per vault at start (then hourly from the tidy clock),
+        // one vault after another, never awaited: removes ended children's clean worktrees, keeps
+        // every branch, gives back what is home.
+        void (async () => {
+          for (const v of listVaults()) await sweepEnded({ root: superWorktreeRoot(), contextRoot: join(v.path, '_dream_context'), trigger: 'start' });
+        })().catch((err) => console.warn(`[super] start-up worktree janitor failed: ${(err as Error).message}`));
         // The Super automations' fires (super-rutin): the desktop server only, one deliverer per Mac.
         if (isDesktop()) startSuperSchedule({ log: (l) => console.warn(l) });
       })

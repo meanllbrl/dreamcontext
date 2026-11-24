@@ -191,7 +191,7 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     const read = () => {
       void Promise.all(targets.map((v) => readFoldedMarks(v).then((m) => [v, m] as const))).then((pairs) => {
         if (gone) return;
-        const got = pairs.filter((pair): pair is readonly [string, { marks: SuperMarks; ekip: DrawerEkipFacts }] => pair[1] !== null);
+        const got = pairs.filter((pair): pair is readonly [string, { marks: SuperMarks; ekip: DrawerEkipFacts; tabs: number | null }] => pair[1] !== null);
         setMarks(Object.fromEntries(got.map(([v, r]) => [v, r.marks])));
         setTeams(Object.fromEntries(got.map(([v, r]) => [v, r.ekip])));
         timer = setTimeout(read, pollMs(DRAWER_POLL_MS));

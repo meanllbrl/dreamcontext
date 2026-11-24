@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { refreshScorecard } from '../../../hooks/useScorecard';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi } from '../../../context/VaultContext';
 import { fetchAgentHistory } from '../../../hooks/useAgents';
@@ -48,6 +50,7 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
     );
   }, [api, member]);
 
+  const qc = useQueryClient();
   const refresh = useCallback(() => {
     const g = gen.current;
     if (!stateRef.current.loaded) return;
@@ -55,7 +58,9 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
       (page) => { if (gen.current === g) setState((s) => landFresh(s, page)); },
       () => { /* a failed live re-read changes nothing; the next one tries again */ },
     );
-  }, [api, member]);
+    // The stars under each run read the card: it follows the feed's poll (W3 C14).
+    refreshScorecard(qc, member);
+  }, [api, member, qc]);
 
   useEffect(() => {
     gen.current += 1;
@@ -182,10 +187,10 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
       // No onBoundary: a run's boundary is a plain line. A run is drawn as a Super turn (owner
       // 2026-11-14): its answer, its document, and while it runs the chat's own live steps line.
       runFoot: (meta, ctx) => (
-        <RunFoot meta={meta} onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined} />
+        <RunFoot meta={meta} member={member} onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined} />
       ),
       onDividerScrolled: () => {},
       onPinned: (pinned) => setState((s) => withPinned(s, pinned)),
     };
-  }, [enabled, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen]);
+  }, [enabled, member, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen]);
 }

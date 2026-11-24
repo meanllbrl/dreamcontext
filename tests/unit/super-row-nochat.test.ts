@@ -86,7 +86,9 @@ describe('the surface wiring', () => {
 
   it('open-on-restore yields to a page the window was opened for or already went to', () => {
     expect(surface).toMatch(/if \(navigatedRef\.current \|\| openedForLink\(\)\) \{ openedOnRestoreThisWindow = true; return; \}/);
-    expect(surface).toMatch(/useInstanceEvent\('dreamcontext-navigate', \(\) => \{\s*navigatedRef\.current = true;/);
+    expect(surface).toMatch(/useInstanceEvent<\{ keepChat\?: boolean \} \| undefined>\('dreamcontext-navigate', \(signal\) => \{\s*navigatedRef\.current = true;/);
+    // A chat opened after the press survives that press's landing (Shell.tsx `NavigateSignal`).
+    expect(surface).toMatch(/navigatedRef\.current = true;\s*if \(signal\?\.keepChat\) return;\s*setExpanded\(\(cur\) => \(cur \? false : cur\)\);/);
     // The link flag survives App.tsx stripping `&open=` (it is marked before the strip).
     expect(surface).toMatch(/const openedForLink = wasOpenedForLink;/);
     const app = readFileSync(fileURLToPath(new URL('../../dashboard/src/App.tsx', import.meta.url)), 'utf-8');

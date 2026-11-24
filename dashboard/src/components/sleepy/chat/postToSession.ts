@@ -42,13 +42,15 @@ export type ChatDelivery = 'steered' | 'queued' | 'sent';
  * while the child kept working). A busy chat gets it in the running turn at its next tool
  * boundary, so a long turn no longer holds the message until it ends.
  */
-export function deliverToChat(session: ChatSession, text: string): ChatDelivery {
+export function deliverToChat(session: ChatSession, text: string, lead?: string): ChatDelivery {
   if (session.asking) { session.enqueue(text, { steerWhenPossible: true }); return 'queued'; }
   if (session.busy) {
     if (session.steer(text)) return 'steered';
     session.enqueue(text, { steerWhenPossible: true });
     return 'queued';
   }
-  session.send(text);
+  // A new turn: the hand-off-first line (super send to a big idle child) and the text, as ONE
+  // user frame. A steered or queued text never carries it: the child is mid-turn.
+  session.send(lead ? `${lead}\n\n${text}` : text);
   return 'sent';
 }

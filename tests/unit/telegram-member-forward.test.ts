@@ -196,3 +196,71 @@ describe('a routine that reaches his phone writes by the one Telegram rule (owne
     expect(routineReachesPhone({ ...plain, reply: 'telegram' })).toBe(true);
   });
 });
+
+describe('W3 C11: an ok result carries its stars on its last part, once', () => {
+  let realHome: string | undefined;
+  beforeEach(async () => {
+    realHome = process.env.HOME;
+    // The thread files are named by this machine's id under HOME: the request reads them there.
+    process.env.HOME = home;
+    rmSync(join(root, 'agents', 'ua-manager.md'));
+    const { createAgent } = await import('../../src/lib/agents/store.js');
+    const { createAutomation } = await import('../../src/lib/automations/store.js');
+    const now = new Date('2026-11-08T08:00:00.000Z');
+    createAgent(root, { slug: 'ua-manager', title: 'UA', prompt: 'UA manages the fictional Acme ads.', learning: false }, { approve: { now, home } });
+    createAutomation(root, { slug: 'daily', title: 'Günlük rapor', agent: 'ua-manager', days: 'daily', at: '09:00' }, { approve: { now, home } });
+    // Re-bind under the new agent file (the binding is the member's).
+    writeBinding(scopeOfContextRoot(root), 'ua-manager', { token: TOKEN, botId: 222222, botUsername: 'ua_bot', chatId: 777, userId: 777, boundAt: 'now' }, home);
+  });
+  afterEach(() => { if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome; });
+  const finish = () => {
+    appendThreadEntry(root, 'daily', { runId: RUN, kind: 'system', event: 'started', text: '', via: 'runner', now: new Date(Date.parse(RUN)) });
+    post('Harcama düştü, ROAS arttı.');
+    appendThreadEntry(root, 'daily', { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner', now: new Date(Date.parse(RUN) + 60_000) });
+  };
+
+  it('the last part ends with "Bu işi puanla:" and carries one row of five star buttons; a second build sends none', async () => {
+    optIn();
+    finish();
+    await buildRoutineForward(input())!();
+    const msgs = tg.sent();
+    const last = msgs.at(-1)!;
+    expect(String(last.params.text)).toMatch(/<i>Bu işi puanla:<\/i>$/);
+    const kb = (last.params.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }).inline_keyboard;
+    expect(kb).toHaveLength(1);
+    expect(kb[0].map((b) => b.text)).toEqual(['1 ★', '2 ★', '3 ★', '4 ★', '5 ★']);
+    expect(kb[0][0].callback_data).toMatch(/^s:[0-9a-f]{16}:1$/);
+    for (const m of msgs.slice(0, -1)) expect(m.params.reply_markup).toBeUndefined();
+    const { readScorecard } = await import('../../src/lib/agents/scorecard.js');
+    const ask = readScorecard(dirname(root), 'ua-manager', home).card.telegramAsks[`daily::${RUN}`];
+    expect(ask?.messageId).toBeDefined();
+    // The same run's result built again: no second request, no stars.
+    const before = tg.sent().length;
+    await buildRoutineForward(input())!();
+    const again = tg.sent().slice(before);
+    expect(again.some((m) => m.params.reply_markup)).toBe(false);
+    expect(again.map((m) => String(m.params.text)).join('\n')).not.toContain('Bu işi puanla');
+  });
+
+  it('a result that asks nothing (a failed run, a review waiting on him) sends what it sent before', async () => {
+    optIn();
+    finish();
+    await buildRoutineForward(input({ reviewPending: true }))!();
+    await buildRoutineForward(input({ status: 'failed', error: 'boom' }))!();
+    for (const m of tg.sent()) {
+      expect(m.params.reply_markup).toBeUndefined();
+      expect(String(m.params.text)).not.toContain('Bu işi puanla');
+    }
+  });
+
+  it('a result filling its last part still sends, the stars on the last part', async () => {
+    optIn();
+    appendThreadEntry(root, 'daily', { runId: RUN, kind: 'system', event: 'started', text: '', via: 'runner', now: new Date(Date.parse(RUN)) });
+    post(Array.from({ length: 40 }, (_, i) => `Satır ${i}: ${'harcama ve ROAS özeti '.repeat(6)}`).join('\n\n'));
+    appendThreadEntry(root, 'daily', { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner', now: new Date(Date.parse(RUN) + 60_000) });
+    await buildRoutineForward(input())!();
+    const msgs = tg.sent();
+    for (const m of msgs) expect(String(m.params.text).length).toBeLessThanOrEqual(4096);
+    expect(msgs.at(-1)!.params.reply_markup).toBeDefined();
+  });
+});

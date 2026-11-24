@@ -80,6 +80,18 @@
   border-radius: 14px;
   transform-origin: 50% 50%;
 }
+/* There it comes and goes like a page, not like a window out of a dock: a short fade with a
+   breath of scale in (transform and opacity only), and gone at once on the way out. The zoom
+   kept a shrinking ghost of the chat on screen for 280 ms after a page was picked (owner,
+   2026-11-22), and a surface left to fade would be laid out once more at the width the drawer
+   just gave back. The page under it brings its own entrance (Shell.tsx). */
+.project-instance[data-shell="new"][data-instance] .agent-surface.expanded {
+  animation: agent-surface-page-in 180ms cubic-bezier(0.2, 0, 0, 1) backwards;
+}
+.project-instance[data-shell="new"][data-instance] .agent-surface.closing {
+  display: none;
+  animation: none;
+}
 @media (max-width: 600px) {
   .project-instance[data-shell="new"][data-instance] .agent-surface.expanded,
   .project-instance[data-shell="new"][data-instance] .agent-surface.closing {
@@ -113,10 +125,18 @@
   40%  { opacity: 1; }
   to   { transform: scale(0.22) translateY(28px); opacity: 0; border-radius: var(--radius-xl, 16px); }
 }
-@media (prefers-reduced-motion: reduce) {
-  .agent-surface.expanded { animation: none; }
-  .agent-surface.closing { display: none; animation: none; }
+@keyframes agent-surface-page-in {
+  from { transform: scale(0.985); opacity: 0; }
+  to   { transform: none; opacity: 1; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .agent-surface.expanded,
+  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded { animation: none; }
+  .agent-surface.closing,
+  .project-instance[data-shell="new"][data-instance] .agent-surface.closing { display: none; animation: none; }
+}
+/* Light mode moves nothing either: the same gate as `softMotionOff()` (lib/softMotion.ts). */
+:root[data-light='true'] .project-instance[data-shell="new"][data-instance] .agent-surface.expanded { animation: none; }
 .agent-surface > * {
   flex: 1 1 auto;
   min-height: 0;
@@ -2236,3 +2256,7 @@
   padding: 1px 5px;
 }
 .agent-model-row.on .agent-model-row-tag { margin-left: 8px; }
+
+/* The Chat page's landing (ChatLanding): its process-less pane fills the surface like a tab's. */
+.agent-chat-landing { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: 100%; }
+.agent-chat-landing > .agent-pane-chat { flex: 1 1 auto; min-height: 0; }

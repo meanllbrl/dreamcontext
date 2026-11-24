@@ -3,28 +3,31 @@ import { scheduleVerb } from '../super-schedule.js';
 import { appendOpenLog } from '../../lib/window-open-log.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
-  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, type WindowIdentity, type WindowResult,
+  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, windowGone, type WindowIdentity, type WindowResult,
 } from '../../lib/window-control.js';
-import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superRecordPath, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
-import type { OwnerWakeOutcome } from '../../lib/super/types.js';
-import { isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
-import { mintCrewTicket, noteDelegating, vaultDelegating } from '../../lib/super/delegating.js';
+import { JOB_RISKS, type JobContext, type JobRisk, type OwnerWakeOutcome } from '../../lib/super/types.js';
+import { childPolicy, type PolicyAllowedBy, type PolicyVerdict } from '../../lib/model-facts.js';
+import { ownerPictureOk } from '../../lib/t3-bridge/pictures.js';
+import { setCutChildResumer } from '../../lib/super/inbox.js';
+import { batchHasFirstReadDone, closeMemberRequestDraft, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
+import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, SUPER_SLUG_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
+  PRESENT_ITEM_ID_RE, QUEUE_STEP_OPS, notePresentLayout, ownerQueueStep, withdrawPresent, type QueueStepOp,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
+import { armTeamJobWatches, askOwnerToApprove, cancelTeamJob, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamJobUnsaid, teamPostsDue, teamProgressRead, type RequestChildFact, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { ensureMemberSuper } from '../../lib/super/member-birth.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
@@ -38,11 +41,17 @@ import { agentActivity, automationJobById, currentReplyJob, runIsActive, whenRep
 import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
+import { quoteTypedHere } from '../../lib/owner-quote.js';
+import { findRelayedTurn } from '../../lib/super/owner-relay.js';
 import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
-import { checkApproval } from '../../lib/automations/registry.js';
+import { checkApproval, registerProject } from '../../lib/automations/registry.js';
+import { laneIntentAt, raiseLaneIntentToFull, writeLaneIntent } from '../../lib/lane-intent.js';
+import { boardFactLine, opsBlock, readOpsCard } from '../../lib/ops-card.js';
+import { cardKey, REPEATED_NOTE, shellAteField, shellAteMessage } from '../../lib/super/ask-card.js';
+import { startChildHeadless } from '../headless-child.js';
 import {
-  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
+  agendaMissing, backgroundBusy, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
@@ -53,23 +62,31 @@ import { getAgent } from '../../lib/agents/store.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
-import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteMemberToMain, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
-import { ownerMessageGist } from '../../lib/super/owed.js';
-import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteMemberToMain, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgEntry, superOwnerMsgRef, superOwnerMsgWords, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { owedClock, ownerMessageGist } from '../../lib/super/owed.js';
+import { MAX_OUTWARD, RULE_GONE_LINE, RULE_ID_RE, isRuleGrant, messageCovers, outwardLine, ruleCovers, type OutwardGrant } from '../../lib/super/outward.js';
+import { locateRule } from './learned.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { linkLineRef, ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
 import { tryOwnerMark } from '../../lib/super/owner-marks.js';
 import { agendaDays, agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
 import { hasOwnerKey } from '../owner-key.js';
+import { clearPending, FIRST_READ_PROMPT, firstReadEligible, serverCanStartClaude, writeFirstReadClaim } from '../../lib/first-read.js';
+import { pickedAgents } from '../../lib/agent-pick.js';
+import { getReadiness } from '../../lib/onboarding/readiness.js';
+import { serverProbeContext } from '../install-runs.js';
+import { readUsageLimits, type UsageLimitsResponse } from '../../lib/claude-usage.js';
+import { resolveConfigDir } from '../../lib/claude-accounts.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
+import { checkMigrationDue, clearMigrationStarting, isMigrationStarting, migrationChildBrief, migrationChildPrompt, noteMigrationStarting, openMigrationWork, readDueMigrations } from '../../lib/super/migration-event.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, askStillOpen, recordAskShow } from '../../lib/super/ask-show.js';
+import { askShowState, recordAskShow } from '../../lib/super/ask-show.js';
 import { askWarning, planReportRefusal } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
@@ -80,33 +97,38 @@ import { childMcpNeedingSignIn, connectorOnAccount, knownChildMcp, unknownMcpNam
 import { listClaudeAccounts } from '../../lib/claude-accounts.js';
 import { readStatusCache } from '../../lib/mcp-live.js';
 import {
-  WorktreeRefused, createChildWorktree, discardFreshWorktree, git, mergeChildren, removeChildWorktree, repoOfWorktree,
-  worktreeStatus, type CreatedWorktree,
+  MERGE_RETURNS_MS, WorktreeRefused, bounded, childCheckout, createChildWorktree, discardFreshWorktree, git, mergeChildren, reattachChildWorktree, removeChildWorktree, repoOfWorktree,
+  worktreeStatus, plannedChildWorktree, type CreatedWorktree, type MergeChild,
 } from '../../lib/super/worktrees.js';
+import { pendingReturns } from '../../lib/super/returns.js';
+import { renderReturnsPage } from '../../lib/super/returns-page.js';
+import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { IMAGE_EXT_RE, PDF_EXT_RE, VIDEO_EXT_RE, ownerFileTarget } from '../../lib/super/owner-file.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { BOARD_EXT_RE, boardRerouteNote, whiteboardSlugOfBoardRef } from '../../lib/super/board-ref.js';
 import { insightPath } from '../../lib/lab/store.js';
 import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
 import { noteDismissed } from '../../lib/super/proactive.js';
 import { RECORD_FULL_MESSAGE, cardCounts, cardOutcome, makeRoom, noCardWarnings, roomPossible } from '../../lib/super/room.js';
 import { childIsLive, isLiveChatCard } from '../../lib/super/live.js';
-import { activityOf, crewHandle, dropOwnerWait, getChat, onChatChange, pendingRequest } from '../../lib/assistant/chat-registry.js';
-import { permissionResponse, questionResponse, type OpenRequest, type RequestResponse } from '../../lib/super/request-answer.js';
+import { activityOf, crewHandle, dropOwnerWait, getChat, onChatChange, pendingRequest, pendingRequestIds } from '../../lib/assistant/chat-registry.js';
+import { permissionResponse, questionResponse, superAnswerPicks, type OpenRequest, type RequestResponse } from '../../lib/super/request-answer.js';
 import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { lastMainChainContext, readHandoffRecord, resolveHandoffFor } from '../../lib/context-watch.js';
+import { newWorkLead } from '../../lib/super/send-rotation.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
 import { END_PARK_CONTEXT, findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox, keepFirstPrompt } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
-import { applySweep, machineGuards, planSweep, publicPlan } from '../../lib/super/worktree-sweep.js';
+import { applySweep, holdForResume, machineGuards, noteWorkBranch, planSweep, publicPlan, removingWorktrees, sweepEnded } from '../../lib/super/worktree-sweep.js';
 import { readMachineFacts } from './machine.js';
 import { homedir, tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
@@ -165,7 +187,7 @@ export function _setDelegateWaitsForTests(w: { answerMs: number; graceMs: number
 }
 
 /** A start the window has not answered yet but may still open (`delegate_pending`). */
-interface StartingJob { prompt: string; fromRow?: string; since: number; until: number }
+interface StartingJob { prompt: string; fromRow?: string; since: number; until: number; migration?: string[] }
 /** Per super (superKey): the starts still pending. In memory: they live as long as the wait does. */
 const startingJobs = new Map<string, StartingJob[]>();
 function startingOf(key: string, prompt: string, fromRow: string | undefined, now = Date.now()): StartingJob | null {
@@ -645,10 +667,82 @@ function childTestMinutes(now: number): (worktree: string, branch?: string) => T
   };
 }
 
+/** What a child hears when the owner asks for full verification of a fast job. */
+export const FULL_VERIFY_MESSAGE = 'The owner asked for full verification (tam doğrula). Your worktree\'s lane is full now: take the same diff through the whole chain (dreamcontext builder lane, then the review it names and the project\'s own QA), fix what it finds, and report.';
+
+/**
+ * Make a child's worktree lane full (`update --full`, `resume --full`, plan sirket-yavaslik D4b):
+ * only ever up, written from the repo side. null = done; otherwise why not, and the child hears
+ * nothing.
+ */
+async function raiseToFull(c: SuperCaller, child: string): Promise<{ error: string; message: string } | null> {
+  const ch = c.state.children[child];
+  const root = c.who.contextRoot;
+  if (!ch?.worktree) return { error: 'no_worktree', message: 'that child has no worktree of its own, so there is no lane to raise; delegate the full check as a new job' };
+  if (!existsSync(ch.worktree)) return { error: 'no_worktree', message: `that child's worktree ${ch.worktree} is gone; delegate the full check as a new job` };
+  const repo = await repoOfWorktree(dirname(root), ch.worktree);
+  if (!repo) return { error: 'no_worktree', message: `${ch.worktree} is not a worktree of a linked repo any more` };
+  try {
+    raiseLaneIntentToFull(repo.path, ch.worktree, { superId: c.superId, child, contextRoot: root });
+  } catch (err) {
+    return { error: 'lane_not_written', message: `the lane could not be written: ${(err as Error).message.slice(0, 200)}` };
+  }
+  return null;
+}
+
+/**
+ * What a child is told before its job (plan sirket-yavaslik D10): the ops card as data, and the
+ * lane its worktree records. The line is for the child to read; the code reads only the file in
+ * the worktree's git folder. Empty when there is neither.
+ */
+export function childFacts(root: string, worktree: string | undefined, lane: 'fast' | 'full' | undefined): string {
+  let block: string | null = null;
+  let boardLine: string | null = null;
+  try {
+    const card = readOpsCard(root, worktree ? { worktree } : {});
+    block = opsBlock(card);
+    // D2: after the end marker, outside the block's cut; only when the card names a board.
+    boardLine = boardFactLine(card);
+  } catch { block = null; }
+  const laneLine = lane === 'fast'
+    ? 'Lane: fast (a look or copy change; `dreamcontext builder lane` confirms it from the diff, money never takes it).'
+    : lane === 'full' ? 'Lane: full (the owner asked for full verification).' : null;
+  const parts = [block, boardLine, laneLine].filter((x): x is string => !!x);
+  return parts.length ? `${parts.join('\n\n')}\n\n` : '';
+}
+
 export function worktreePreamble(w: Pick<CreatedWorktree, 'path' | 'branch' | 'repo'>, outward?: OutwardGrant): string {
+  const merge = outward && !isRuleGrant(outward) && !!outward.merge;
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
     + 'cd there first, then work and commit only there; if that folder is missing, do no work anywhere else: say so and stop. '
-    + (outward ? 'Never merge into another branch; push only as the next line says.' : 'Never push and never merge into another branch.');
+    + (merge ? 'Never merge locally; merge only as the next line says.'
+      : outward ? 'Never merge into another branch; push only as the next line says.' : 'Never push and never merge into another branch.');
+}
+
+/** The ops card's staging host (S2 b), or null. */
+function stagingHostOf(root: string): string | null {
+  try { const u = readOpsCard(root)?.staging_url; return u ? new URL(u).host : null; } catch { return null; }
+}
+
+/** His standing rule `id`, only when its status is exactly `active` (S1): its quoted words, or null. */
+export function activeRuleWords(root: string, id: string): string | null {
+  if (!RULE_ID_RE.test(id)) return null;
+  try {
+    const found = locateRule(root, id);
+    if (!found || found.view.status !== 'active' || found.view.moved_to) return null;
+    const said = found.view.sayings.map((x) => x.text).filter((t): t is string => typeof t === 'string' && t.trim() !== '');
+    const words = said.join(' / ').trim();
+    if (!words) return null;
+    return words.length > MAX_OUTWARD ? `${words.slice(0, MAX_OUTWARD - 1)}…` : words;
+  } catch { return null; }
+}
+
+/** C7: a `rule` grant is checked again when its child starts; a rule no longer active grants nothing. */
+function liveGrant(root: string, o: OutwardGrant | undefined): { grant?: OutwardGrant; gone?: true } {
+  if (!o) return {};
+  if (!isRuleGrant(o)) return { grant: o };
+  const words = activeRuleWords(root, o.rule);
+  return words !== null && ruleCovers(o.step, words, stagingHostOf(root)).ok ? { grant: o } : { gone: true };
 }
 
 /** `--outward "<step>"` (on `delegate` and `pool add`): refused unless it names a message of HIS
@@ -656,16 +750,39 @@ export function worktreePreamble(w: Pick<CreatedWorktree, 'path' | 'branch' | 'r
  *  no word of his). Checked once, here; the grant then lives with its job (outward.ts). Absent =
  *  no grant; present but empty, several lines or too long = refused, never read as none. */
 function outwardGrant(c: SuperCaller, b: Record<string, unknown>, ref: string | undefined): { grant?: OutwardGrant } | { error: string; message: string } {
-  if (b.outward === undefined || b.outward === null) return {};
+  if (b.outward === undefined || b.outward === null) {
+    if (b.rule !== undefined && b.rule !== null) return { error: 'invalid_args', message: '--rule goes with --outward "<step>": the staging step his standing rule covers' };
+    return {};
+  }
   if (typeof b.outward !== 'string' || /[\r\n]/.test(b.outward) || !oneLine(b.outward)) return { error: 'invalid_args', message: '--outward is one non-empty line: the push, PR or deploy his message named' };
   const step = oneLine(b.outward);
   if (step.length > MAX_OUTWARD) return { error: 'invalid_args', message: `--outward is at most ${MAX_OUTWARD} characters: the step alone, the job goes in the prompt` };
   const why = 'a push, PR or deploy is the owner\'s word only: ';
-  if (!ref) return { error: 'outward_needs_owner', message: `${why}give --origin <ref> of HIS message that named it; no message of his asked for it: \`super ask\` him first` };
+  // D5: one of his ACTIVE standing rules covers a staging step (S1, S2): never a merge, never prod.
+  if (b.rule !== undefined && b.rule !== null) {
+    const id = typeof b.rule === 'string' ? b.rule.trim() : '';
+    if (!RULE_ID_RE.test(id)) return { error: 'invalid_args', message: '--rule <id> names one of his rules (`dreamcontext learned list`)' };
+    const words = activeRuleWords(c.who.contextRoot, id);
+    if (words === null) return { error: 'outward_needs_owner', message: `${why}rule ${id} is not one of his active standing rules; give --origin <ref> of HIS message that named it, or \`super ask\` him` };
+    const v = ruleCovers(step, words, stagingHostOf(c.who.contextRoot));
+    if (!v.ok) return { error: v.error, message: v.message };
+    return { grant: { source: 'rule', step, rule: id, words } };
+  }
+  if (!ref) return { error: 'outward_needs_owner', message: `${why}give --origin <ref> of HIS message that named it, or --rule <id> of his active standing rule for a staging step; no message of his asked for it: \`super ask\` him first` };
   const words = ownerMessageGist(c.state, ref);
   const thisTurn = ownersTurn(c) && !!c.state.session && superOwnerMsgRef(c.state.session) === ref;
   if (words === null && !thisTurn) return { error: 'outward_needs_owner', message: `${why}no message of his has ref ${ref}; name the one that asked for it, or \`super ask\` him` };
-  return { grant: { step, ref, ...(words ? { words } : {}) } };
+  // D13: a merge only in the one shape and only when his words name merging.
+  const v = messageCovers(step, words ?? (thisTurn && c.state.session ? superOwnerMsgWords(c.state.session) : null));
+  if (!v.ok) return { error: v.error, message: v.message };
+  return { grant: { step, ref, ...(words ? { words } : {}), ...(v.merge ? { merge: v.merge } : {}) } };
+}
+
+/** What a view shows of a grant: its source and limits, the step fenced (never his words). */
+function outwardView(vault: string, o: OutwardGrant): Record<string, unknown> {
+  return isRuleGrant(o)
+    ? { source: 'rule', rule: o.rule, step: wrapUntrusted(vault, o.step) }
+    : { source: 'msg', ref: o.ref, step: wrapUntrusted(vault, o.step), ...(o.merge ? { merge: o.merge } : {}) };
 }
 
 /** `super state`'s MCP part: the names `delegate --mcp` can grant, and among them the ones that
@@ -719,6 +836,8 @@ const TIDY_IO: TidyIo = {
   read: (root) => readSuperState(root, superSanitizeOpts()),
   write: (root, fn) => writeSuper(root, fn),
   retire: { live: (root, sid) => retireLive(root, sid), end: (root, sids) => retireChildren(root, sids) },
+  // D14: the ended-child janitor, hourly per vault (never on the first tick: start-up just ran it).
+  janitor: (root) => sweepEnded({ root: superWorktreeRoot(), contextRoot: root, trigger: 'hourly' }),
 };
 
 /** The super's last `open image|pdf|video`, per vault and kind (image-group.ts): the next one of
@@ -876,6 +995,14 @@ function finishAskShow(
   };
 }
 
+/** D6 (C4): an open question's content key, from the card it stored (every `super ask` stores its spec). */
+/** Case and spacing folded, for the D6 twin checks of `queue ask` and `team ask`. */
+const foldCard = (t: string): string => t.toLocaleLowerCase('tr').replace(/\s+/g, ' ').trim();
+
+function openAskKey(q: Pick<SuperQueueItem, 'ask' | 'ownerText'>): string | null {
+  return q.ask ? cardKey(q.ask) : null;
+}
+
 /** Pool rows a `delegate --from` is starting right now, per vault: a second claim is refused. */
 const claims = new Map<string, Set<string>>();
 
@@ -894,14 +1021,19 @@ const newPoolId = () => `p-${Date.now().toString(36)}-${randomBytes(4).toString(
  * Keep a job in the pool (plan r4 D9): the same prompt is pooled once (the row is reused), a
  * full pool (MAX_POOL rows or MAX_POOL_BYTES) keeps nothing. Returns the row's id, or why not.
  */
-async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant; workOrigin?: SuperWorkOrigin } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
+async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant; workOrigin?: SuperWorkOrigin; context: JobContext | undefined }, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
   if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) return { error: 'too_large' };
   const hash = promptHash(job.prompt);
   let out: { id: string; reused: boolean } | { error: 'pool_full' | 'too_large' } = { error: 'pool_full' };
   const state = await writeSuper(root, id, (s) => {
     const have = s.pool.find((p) => p.hash === hash);
     // The same job again: a grant his message made now rides the row it already has.
-    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; if (extra.workOrigin) have.workOrigin = extra.workOrigin; out = { id: have.id, reused: true }; return; }
+    if (have) {
+      if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; if (extra.workOrigin) have.workOrigin = extra.workOrigin;
+      // C11: the new acceptance's context replaces the old one's (never a mix of two turns).
+      if (extra.context) have.context = extra.context; else delete have.context;
+      out = { id: have.id, reused: true }; return;
+    }
     if (s.pool.length >= MAX_POOL) { out = { error: 'pool_full' }; return; }
     const row: SuperPoolItem = {
       id: newPoolId(), title: job.title, prompt: job.prompt, hash, createdAt: Date.now(),
@@ -912,9 +1044,12 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.slug ? { slug: job.slug } : {}), ...(job.base ? { base: job.base } : {}),
       ...(job.mcp ? { mcp: job.mcp } : {}),
       ...(job.tool ? { tool: job.tool } : {}),
+      ...(job.laneIntent ? { laneIntent: job.laneIntent } : {}),
       ...(extra.held ? { held: true } : {}),
       ...(extra.outward ? { outward: extra.outward } : {}),
       ...(extra.workOrigin ? { workOrigin: extra.workOrigin } : {}),
+      ...(extra.context ? { context: extra.context } : {}),
+      ...(job.migration?.length ? { migration: job.migration } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
     s.pool.push(row);
@@ -942,7 +1077,7 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
       ...rest,
       title: wrapUntrusted(vault, title),
       ...(note ? { note: wrapUntrusted(vault, note) } : {}),
-      ...(outward ? { outward: { ref: outward.ref, step: wrapUntrusted(vault, outward.step) } } : {}),
+      ...(outward ? { outward: outwardView(vault, outward) } : {}),
       promptBytes: Buffer.byteLength(prompt, 'utf-8'),
     };
   });
@@ -959,13 +1094,162 @@ function safeCodexStartModel(): string {
   } catch { return ''; }
 }
 
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin, outward?: OutwardGrant): Promise<void> {
+/**
+ * The live child that already works in this worktree (its path or its `super/<slug>` branch), or
+ * null: one worktree, one live session. `except` is the child being resumed. Two sessions writing
+ * the same tree overwrote each other (21 Kas: a restart resume and a new child briefed into the
+ * same worktree), so a second one is refused and names the first.
+ */
+function liveChildInWorktree(s: Pick<SuperState, 'children' | 'queue'>, where: { path?: string; branch?: string }, except?: string): string | null {
+  const samePath = (a?: string) => !!a && !!where.path && normalize(a) === normalize(where.path);
+  for (const [sid, ch] of Object.entries(s.children)) {
+    if (sid === except) continue;
+    if (!samePath(ch.worktree) && !(where.branch && ch.branch === where.branch)) continue;
+    if (isLiveChat(sid) || childIsLive(s, sid)) return sid;
+  }
+  return null;
+}
+
+/** 409 `worktree_busy`: the worktree already has a live child; the way on is that child, never a second one. */
+function refuseWorktreeBusy(res: ServerResponse, holder: string, where: { path?: string; branch?: string }, verb: 'delegate' | 'resume'): void {
+  refuse(res, 409, 'worktree_busy',
+    `child ${holder} already works in ${where.path ?? where.branch}; a second session there would overwrite it. Message it with \`dreamcontext super send ${holder} "<text>"\`, or \`dreamcontext super end ${holder}\` first (it must be idle), then ${verb} again`,
+    { worktreeBusy: true, child: holder, ...(where.path ? { worktree: where.path } : {}), ...(where.branch ? { branch: where.branch } : {}) });
+}
+
+/** What a server-started delegate adds (plan ilk-acilis C15): never set by an agent verb. */
+interface DelegateExtra {
+  /** Never pooled: the held branch refuses, and a start that never opens keeps nothing. */
+  noPool?: boolean;
+  /** The project's first read: its own ticket rides the frame, the child is marked. */
+  firstRead?: boolean;
+  /** Called once where the child's start is recorded (in time or late), with its start error. */
+  onRecorded?: (sid: string, startError: string | null) => void;
+  /** Called once when a late wait ends with no child. */
+  onLateEmpty?: () => void;
+  /** C11: what the job was accepted with (origin, pictures, policy). */
+  context?: JobContext;
+}
+
+/** C10: `--risk <kind>`, the closed set; absent = none. */
+function riskArg(b: Record<string, unknown>): { risk?: JobRisk } | { error: string } {
+  if (b.risk === undefined || b.risk === null || b.risk === '') return {};
+  return typeof b.risk === 'string' && (JOB_RISKS as readonly string[]).includes(b.risk) ? { risk: b.risk as JobRisk } : { error: `--risk is one of ${JOB_RISKS.join(' | ')}` };
+}
+/** C10: his words a job's settings may rest on (S1: only what the server recorded). */
+function jobWords(ctx: JobContext | undefined, extra?: { words: string } | null): string[] {
+  return [ctx?.origin?.words, ...(ctx?.policy?.grants ?? []).map((g) => g.words), extra?.words].filter((w): w is string => !!w);
+}
+/** C10: his message of this turn (or the `--origin` one) as a possible grant. */
+function turnGrant(c: SuperCaller, ref: string | undefined): { ref: string; words: string; at: number } | null {
+  if (!ref) return null;
+  const ctx = resolveJobContext(c, ref);
+  return ctx?.origin && ctx.origin.words ? { ref, words: ctx.origin.words, at: ctx.origin.at } : null;
+}
+/** C10, C11: the context with the verdict that allowed its settings written in. */
+function withPolicy(ctx: JobContext | undefined, v: Extract<PolicyVerdict, { ok: true }>, grant: { ref: string; words: string; at: number } | null): JobContext {
+  const base: JobContext = ctx ? { ...ctx } : { pictures: [] };
+  const grants = [...(base.policy?.grants ?? [])];
+  if (v.allowedBy === 'words' && grant && !grants.some((g) => g.ref === grant.ref)) grants.push(grant);
+  base.policy = { model: v.model, effort: v.effort, ...(v.risk ? { risk: v.risk } : {}), allowedBy: v.allowedBy, grants: grants.slice(-4) };
+  return base;
+}
+
+/** C8: his earlier messages' pictures count back this far from the origin. */
+const PICTURE_WINDOW_MS = 10 * 60_000;
+
+/**
+ * C8, C11: the context a job is accepted with, from the message `ref` it answers: this turn's
+ * entry (before its debt lands) or the debt whose ref or part is `ref`; its pictures plus those of
+ * his `msg` debts in [its arrival − 10 min, its arrival). Never a picture he sent after it. No ref,
+ * or one no message of his has: undefined (no pictures).
+ */
+export function resolveJobContext(c: Pick<SuperCaller, 'state'>, ref: string | undefined): JobContext | undefined {
+  if (!ref) return undefined;
+  const sid = c.state.session;
+  const entry = sid ? superOwnerMsgEntry(sid) : null;
+  const msgs = (c.state.owed ?? []).filter((d) => d.kind === 'msg');
+  const debt = msgs.find((d) => d.ref === ref || (d.parts ?? []).includes(ref));
+  let at: number | undefined; let words = ''; let own: string[] = [];
+  if (entry && (entry.ref === ref || entry.parts.includes(ref))) { at = entry.at; words = entry.words; own = entry.pictures; }
+  else if (debt) { at = debt.at; words = debt.gist; own = debt.pictures ?? []; }
+  if (at === undefined) return undefined;
+  const from = at - PICTURE_WINDOW_MS;
+  const before = msgs.filter((d) => d !== debt && d.at >= from && d.at < at!).sort((x, y) => x.at - y.at).flatMap((d) => d.pictures ?? []);
+  const pictures = [...new Set([...own, ...before])].slice(0, 8);
+  return { origin: { ref, at, words: words.slice(0, 300) }, pictures };
+}
+
+/** D8: copy his pictures into `tmp/super-prompts/<name>/ref/` (S3 checked again; never through a link). */
+function copyRefPictures(root: string, name: string, pictures: readonly string[]): { paths: string[]; missing: number } {
+  const out: string[] = [];
+  let missing = 0;
+  const base = join(root, 'tmp', 'super-prompts');
+  const dir = join(base, name, 'ref');
+  try {
+    for (const p of [join(root, 'tmp'), base, join(base, name), dir]) {
+      try { if (lstatSync(p).isSymbolicLink()) return { paths: [], missing: pictures.length }; } catch { /* made below */ }
+    }
+    mkdirSync(dir, { recursive: true });
+  } catch { return { paths: [], missing: pictures.length }; }
+  pictures.forEach((src, i) => {
+    if (!ownerPictureOk(src, root)) { missing++; return; }
+    const ext = extname(src).toLowerCase() === '.jpeg' ? '.jpg' : extname(src).toLowerCase();
+    const dest = join(dir, `ref-${i + 1}${ext}`);
+    try {
+      try { lstatSync(dest); rmSync(dest, { force: true }); } catch { /* none yet */ }
+      copyFileSync(src, dest, fsConstants.COPYFILE_EXCL);
+      out.push(dest);
+    } catch { missing++; }
+  });
+  return { paths: out, missing };
+}
+
+/** D8, D9: the child's lines for its reference pictures (none: empty, the prompt unchanged). */
+export function referenceLines(r: { paths: string[]; missing: number }): string {
+  const gone = r.missing ? ` ${r.missing === 1 ? '1 picture was' : `${r.missing} pictures were`} no longer there.` : '';
+  if (!r.paths.length) return gone ? `${gone.trim()}\n\n` : '';
+  return `${REFERENCE_LINE_HEAD} ${r.paths.join(', ')}.${gone}\n\n${REFERENCE_PAIRS_LINE}\n\n`;
+}
+export const REFERENCE_LINE_HEAD = 'Reference pictures from his messages (match them exactly unless his words say otherwise):';
+export const REFERENCE_PAIRS_LINE = "End with result screenshots at the reference's width, `result-<n>.png` beside `ref/`, and list the pairs in your report.";
+
+/** The child's worktree runs the full lane (a `--full` delegate, `resume|update --full`, or a broken intent file, read as full). */
+function childLaneFull(ch: SuperChild): boolean {
+  return !!ch.worktree && laneIntentAt(ch.worktree)?.intent === 'full';
+}
+
+/** C10: the mode and effort a child already runs and what allowed it, for a later change that does not raise it. */
+function childPrior(ch: SuperChild): { mode: string; effort?: string; allowedBy?: PolicyAllowedBy } {
+  return { mode: ch.mode ?? 'basic', ...(ch.effort ? { effort: ch.effort } : {}), ...(ch.context?.policy?.allowedBy ? { allowedBy: ch.context.policy.allowedBy } : {}) };
+}
+
+/** C3: the delegating Super chat's keys (its pin id and the record's session), plus a `--succeeds`
+ *  predecessor's own `delegatedBy`, deduped, at most 8. */
+function delegatedByKeys(c: SuperCaller, s: SuperState, succeeds?: string): string[] {
+  const keys = [c.who.sessionId, s.session, ...(succeeds ? s.children[succeeds]?.delegatedBy ?? [] : [])]
+    .filter((k): k is string => typeof k === 'string' && k !== '' && k.length <= 200);
+  return [...new Set(keys)].slice(0, 8);
+}
+
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin, outwardIn?: OutwardGrant, extra: DelegateExtra = {}): Promise<void> {
+  // C7: a standing rule's grant is checked again as its child starts (pool start, `--succeeds`,
+  // the carried grant); a rule no longer active grants nothing and the child is told so.
+  const checked = liveGrant(root, outwardIn);
+  const outward = checked.grant;
+  const ruleGone = checked.gone === true;
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
   // Antigravity names its effort in the model id (`-high`), so it gets none of ours.
   // No --model: the tool's own default (an Antigravity account's choice included); the model it
   // really runs on reaches the record from its first `system/init` (agent-chat.ts noteChildModel).
   const job: Job = jobIn.effort || jobIn.tool === 'antigravity' ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
+  // One worktree, one live session: refused before anything is made, pooled or counted.
+  if (job.worktree) {
+    const planned = plannedChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug });
+    const holder = planned ? liveChildInWorktree(c.state, planned, succeeds) : null;
+    if (planned && holder) { refuseWorktreeBusy(res, holder, planned, 'delegate'); return; }
+  }
   // D11: the cap is the ONLY hold on a NEW delegation (calls in flight count too). The
   // machine's facts never hold (owner, 2026-10-21): `super state` shows them as information.
   // The vault-wide count is read FIRST (its records); no await between the cap check and the
@@ -982,6 +1266,10 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     const running = ownFull
       ? `${room.live + inFlight} children are running (at most ${room.max})`
       : `${room.vaultLive} children are running in this project across every Super (at most ${room.vaultMax} together)`;
+    if (extra.noPool) {
+      refuse(res, 409, 'held', `${running}; nothing was kept`, { ...facts, kept: false });
+      return;
+    }
     if (fromRow) {
       // A grant given with this start stays with the row, so the later start still has it.
       if (outward && fromRow.outward !== outward) {
@@ -1000,7 +1288,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
-    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
+    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}), context: extra.context }, c.superId);
     if ('error' in kept) {
       refuse(res, 409, kept.error === 'too_large' ? 'not_kept' : 'pool_full', `${running}; the job did NOT start and was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, notKept);
       return;
@@ -1032,6 +1320,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   try {
     if (job.worktree) {
       wt = await createChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug, base: job.base });
+      // The lane's one home (plan sirket-yavaslik D3): written before the child hears of the
+      // worktree. The brain is registered so a worktree's reader may accept its contextRoot.
+      if (job.laneIntent) {
+        try { registerProject(dirname(root)); } catch { /* already registered, or the registry is unreadable: the card is then not read */ }
+        writeLaneIntent(wt.repoPath, wt.path, { intent: job.laneIntent, base: wt.base, contextRoot: root, superId: c.superId, child: sid0 });
+      }
     }
     // The window refuses the frame after `deadline` (epoch ms); the server waits that long
     // plus a grace, so a child the window opens is (almost always) answered in time. A frame
@@ -1044,7 +1338,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // record read when the call came in (the owner may have taken that chat meanwhile).
     const lateMs = succeeds ? 0 : delegateLateMs;
     const deadline = sentAt + delegateAnswerMs + lateMs;
-    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`;
+    // D8, D9: his reference pictures, copied for this child (S3 checked again at the copy).
+    const refs = extra.context?.pictures.length ? copyRefPictures(root, job.slug && /^[a-z0-9][a-z0-9-]{0,60}$/.test(job.slug) ? job.slug : fromRow?.id ?? sid0, extra.context.pictures) : null;
+    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ruleGone ? `${RULE_GONE_LINE}\n\n` : ''}${refs ? referenceLines(refs) : ''}${DEV_SERVER_LINE}\n\n${childFacts(root, wt?.path, job.laneIntent)}${job.prompt}`;
     const r = await sendSuperCommand(c.token, 'delegate', {
       prompt: firstPrompt,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
@@ -1055,6 +1351,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // child's connection, which ties it to EXACTLY this super from its first spawn (the
       // `memberCrew` hint beside it only narrows). Main's frame carries neither, unchanged.
       ...(memberOfSuperId(c.superId) ? { memberCrew: memberOfSuperId(c.superId), crewTicket: mintCrewTicket(root, c.superId, sid0, Date.now(), deadline - Date.now() + delegateGraceMs) } : {}),
+      // The first read (C15a): its one-time ticket in the same field; the window binds it to the
+      // child, whose spawn the server then decides (auto, no MCP). `firstRead` only labels it.
+      ...(extra.firstRead && c.superId === 'main' ? { crewTicket: mintFirstReadTicket(root, Date.now(), deadline - Date.now() + delegateGraceMs), firstRead: true } : {}),
     }, { timeoutMs: delegateAnswerMs + delegateGraceMs, ...(lateMs > 0 ? { late: { lateMs: lateMs + delegateGraceMs, onLate: (lr) => { void landLate(lr); } } } : {}) });
     const sid = sessionIdOf(r);
     appendOpenLog('delegate_answer', { superId: c.superId, ms: Date.now() - sentAt, ok: r.ok, ...(r.ok ? { child: sid ?? null, ...windowTiming(r.result) } : { error: r.error, sent: r.sent }) });
@@ -1062,7 +1361,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // Written and not answered in time: the window is slow, not gone. The start is kept (its
       // worktree too) and recorded by itself when the window opens it (`landLate`); the agent is
       // told so in plain words, never asked to delegate it again.
-      pending = { prompt: job.prompt, ...(fromRow ? { fromRow: fromRow.id } : {}), since: sentAt, until: deadline + delegateGraceMs };
+      pending = { prompt: job.prompt, ...(fromRow ? { fromRow: fromRow.id } : {}), since: sentAt, until: deadline + delegateGraceMs, ...(job.migration?.length ? { migration: job.migration } : {}) };
+      if (job.migration?.length) noteMigrationStarting(root, pending.until);
       startingJobs.set(dKey, [...(startingJobs.get(dKey) ?? []), pending]);
       // From here the start counts against the cap as a pending start (startingCount), and no
       // longer as a delegate in flight: that count marks every lean child spawned meanwhile.
@@ -1083,6 +1383,15 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         do: `The Mac is slow to open the chat (the window did not answer in ${Math.round((delegateAnswerMs + delegateGraceMs) / 1000)} s). The start is NOT lost: when the window opens it, by ${clock(pending.until)}, it is recorded by itself and shows in \`dreamcontext super state\`. Do not delegate this job again before then. ${poolable ? 'If it has not opened by then, it waits in the pool with the reason (a full pool keeps nothing: then delegate it again).' : 'If it has not opened by then, delegate it again (a prompt over 16 KB is not kept in the pool).'}`,
       });
       return;
+    }
+    // No window to send the frame to at all (the app's window closed): the server starts the
+    // child itself, with the same fields (plan sirket-yavaslik D12). Not a hand-over: its old
+    // child keeps the work until a window is there.
+    // Only a window that is really gone: one reconnecting opens the tab itself (AC14).
+    if (!r.ok && r.error === 'no_window' && r.sent === false && !succeeds && windowGone(c.token)) {
+      const h = await startChildHeadless({ contextRoot: root, prompt: firstPrompt, mode: job.mode, model: job.model, effort: job.effort, mcp: job.mcp ?? [], tool: job.tool, member: memberOfSuperId(c.superId) });
+      appendOpenLog('delegate_headless', { superId: c.superId, ok: h.ok, ...(h.ok ? { child: h.sessionId } : { why: h.why }) });
+      if (h.ok && SESSION_ID_RE.test(h.sessionId)) { ok(res, { ...(await recordStart(h.sessionId)), headless: true }); return; }
     }
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
       // Unconfirmed: the window timed out (it may still have opened the child) or answered
@@ -1151,12 +1460,16 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(recordModel ? { model: recordModel } : {}), ...(job.effort ? { effort: job.effort } : {}),
         ...(job.mcp ? { mcp: job.mcp } : {}),
         ...(job.tool ? { tool: job.tool } : {}),
-        ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
+        ...(wt ? { worktree: wt.path, branch: wt.branch, repo: wt.repo } : {}),
         ...(job.task ? { task: job.task } : {}),
         ...(awaited ? { awaited: true as const } : {}),
         ...(awaited && origin ? { origin } : {}),
         ...(workOrigin ? { workOrigin } : {}),
         ...(outward ? { outward } : {}),
+        ...(extra.firstRead ? { firstRead: true as const } : {}),
+        delegatedBy: delegatedByKeys(c, s, succeeds),
+        ...(extra.context ? { context: extra.context } : {}),
+        ...(job.migration?.length ? { migration: job.migration } : {}),
       };
       startError = takeStartError(sid);
       if (startError) startFailedDraft(s, sid, startError, now);
@@ -1181,6 +1494,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // A failing day archive on a full pad takes this line out again (store.ts): `noteRefused`.
       onPadRefused: (ids) => { if (noted && noted !== 'full' && ids.includes(noted.id)) noted = 'full'; },
     });
+    // The first read's claim is written exactly here (C15 step 4), by the caller's hook.
+    try { extra.onRecorded?.(sid, startError); } catch (err) { console.warn(`[super] ${sid}: after-start step failed: ${(err as Error).message}`); }
     // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
     if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
     // Its first prompt is kept until a turn of its own is on disk: a restart before then gives it
@@ -1235,7 +1550,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       const discarded = wt ? await discardFreshWorktree(wt).then(() => !existsSync(wt!.path)).catch(() => false) : false;
       const keptWt = wt && !discarded ? wt : null;
       const why = lateWhy(lr);
-      if (fromRow) {
+      if (extra.noPool) {
+        extra.onLateEmpty?.();
+      } else if (fromRow) {
         await writeSuper(root, c.superId, (s) => {
           const row = s.pool.find((x) => x.id === fromRow.id);
           if (!row) return;
@@ -1244,7 +1561,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
           else if (keptWt) { row.maybeStarted = true; row.startedIn = keptWt.path; row.startedBranch = keptWt.branch; }
         });
       } else {
-        const kept = await keepInPool(root, job, { note: why, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
+        const kept = await keepInPool(root, job, { note: why, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}), context: extra.context }, c.superId);
         // Not kept (a prompt over 16 KB, a full pool): the agent was told to delegate it again.
         if ('error' in kept) appendOpenLog('delegate_late_lost', { superId: c.superId, why: kept.error, error: lr.ok ? 'no_session_id' : lr.error });
       }
@@ -1252,7 +1569,50 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       appendOpenLog('delegate_late_error', { superId: c.superId, error: (err as Error).message });
     } finally {
       if (p) dropStarting(dKey, p);
+      // A migration start has landed (a child, or the pool) or is lost: either way not starting.
+      if (job.migration?.length) clearMigrationStarting(root);
     }
+  }
+}
+
+/** What `delegate --migration` may not be combined with: the server builds the whole job. */
+const MIGRATION_REFUSED_ARGS = ['prompt', 'from', 'worktree', 'slug', 'succeeds', 'mcp', 'tool'] as const;
+
+/**
+ * `super delegate --migration` (task her-ozellik-eski-kullaniciyi-..., C4): main Super only. The
+ * server re-reads due work from the installed CLI, refuses while a migration child is live,
+ * starting or held (`migration_busy`) or when nothing is due (`no_migration_due`), and starts ONE
+ * child in this project (no worktree, Develop) whose prompt it builds from a constant plus the due
+ * ids. Nothing the Super typed reaches the child's prompt.
+ */
+async function delegateMigration(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse, root: string): Promise<void> {
+  if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent starts the migration session'); return; }
+  const mixed = MIGRATION_REFUSED_ARGS.filter((k) => b[k] !== undefined && b[k] !== false && b[k] !== '');
+  if (mixed.length) { refuse(res, 400, 'invalid_args', `--migration builds the whole job; drop ${mixed.map((k) => `--${k}`).join(', ')}`); return; }
+  const due = await readDueMigrations(root);
+  if (!due.length) { refuse(res, 409, 'no_migration_due', 'no migration work is waiting in this project (`dreamcontext migrations pending` is empty)'); return; }
+  // Read the record fresh: the call's snapshot may predate a start that just landed.
+  const fresh = await readSuperState(root, superSanitizeOpts());
+  const open = openMigrationWork(fresh);
+  if (open || isMigrationStarting(root)) {
+    const what = open?.child ? `the migration child ${open.child} is still running` : open?.pooled ? `the migration job ${open.pooled} waits in the pool (start it with \`super delegate --from ${open.pooled}\`)` : 'a migration child is starting right now';
+    refuse(res, 409, 'migration_busy', `${what}; one migration session at a time`, { ...(open?.child ? { child: open.child } : {}), ...(open?.pooled ? { pooled: open.pooled } : {}) });
+    return;
+  }
+  const parsed = parseJob({ prompt: migrationChildPrompt(due), brief: migrationChildBrief(due), mode: 'develop', model: b.model, effort: b.effort });
+  if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
+  const job: Job = { ...parsed.job, migration: due.map((d) => d.id) };
+  const note = b.note === undefined ? undefined : cleanPadText(b.note);
+  if (note === '') { refuse(res, 400, 'invalid_args', '--note is one line of text'); return; }
+  const origin = jobOrigin(c, b);
+  if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+  // Marked starting with no await since the busy check: a second call refuses `migration_busy`.
+  noteMigrationStarting(root, Date.now() + delegateAnswerMs + delegateLateMs + 2 * delegateGraceMs);
+  try {
+    await delegateJob(c, res, root, job, undefined, undefined, note, origin.ref, undefined, undefined);
+  } finally {
+    // Still pending in the window (landLate clears it), else the record or the pool covers it now.
+    if (!(startingJobs.get(superKey(root, c.superId)) ?? []).some((j) => j.migration?.length && j.until > Date.now())) clearMigrationStarting(root);
   }
 }
 
@@ -1329,7 +1689,9 @@ function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; 
 
 /** ajanda-filtre C1: the owner message `ref` as an agenda line links it: the ref plus when it
  *  ARRIVED. His current turn's message carries its arrival (inbox.ts `superOwnerMsgAt`); a
- *  `--origin` outside his turn takes the open debt's time for that message, else now. */
+ *  `--origin` (or `note link`) outside his turn takes the open debt's time for that message,
+ *  else now: the filter reads a pair no message fits as "linked after it arrived" and takes the
+ *  newest message with that ref before it (lineThread.ts; field 2026-11-20). */
 function ownerPair(c: SuperCaller, ref: string | undefined): PadRef | undefined {
   if (!ref || !MSG_REF_RE.test(ref)) return undefined;
   const sid = c.state.session;
@@ -1741,7 +2103,7 @@ function workForArg(c: Pick<SuperCaller, 'superId' | 'state'>, b: Record<string,
 }
 
 /**
- * THE switch of `super team ask`. Live since Wave 3 (the window spawns a member's Super when its
+ * THE switch of `super team ask`. Live since Wave 3 (the window, or with no window the server's wake, spawns a member's Super when its
  * record holds `pending` items): `request` = a request in the member's OWN Super (plan-r10 1), shown
  * on its stage as "Super Agent'tan", closed by its `super team done`. `say` = the Wave 1 headless
  * chain, kept only for tests of that machinery: in-flight Wave 1 headless team jobs keep their own
@@ -1805,16 +2167,29 @@ async function teamAskRequest(
   try { settings = call.manifest ?? settings; } catch { /* its own pick stands */ }
   const used = spawnModel(settings as Parameters<typeof spawnModel>[0], override);
   const requestId = newQueueId();
+  // His message this job answers (C5): only as THIS Super's conversation recorded it in the ledger.
+  const relayed = originRef && c.state.session ? findRelayedTurn(originRef, c.state.session) : null;
   let queued = false;
+  let repeatedReq: string | null = null;
+  const sameText = foldCard(text);
   await writeSuper(root, memberId, (s) => {
+    // D6: the same job to the same member, still open, is that job: never a second one.
+    const twin = s.queue.find((q) => q.kind === 'request' && q.state !== 'done' && typeof q.text === 'string' && foldCard(q.text) === sameText);
+    if (twin) { repeatedReq = twin.id; return; }
     if (!s.session || openRequests(s) >= MAX_OPEN_REQUESTS) return;
     s.queue.push({
       id: requestId, sessionId: s.session, kind: 'request', state: 'pending', createdAt: Date.now(), text,
+      ...(relayed ? { owner: relayed } : {}),
       ...(override?.model ? { model: override.model } : {}), ...(override?.effort ? { effort: override.effort } : {}),
       ...(light ? { light: true as const } : {}),
     });
     queued = true;
   });
+  if (repeatedReq) {
+    const job = c.state.team.find((j) => j.request === repeatedReq);
+    ok(res, { ...(job ? { job: job.id } : {}), member, request: repeatedReq, id: repeatedReq, repeated: true, note: 'that job is already open with this member: nothing was sent again' });
+    return;
+  }
   if (!queued) { refuse(res, 429, 'member_queue_full', `${member} already has ${MAX_OPEN_REQUESTS} open jobs from you`); return; }
   // The member's ONE conversation (plan-r10 1b): its request root, when it has one, is followed up
   // on the same card; a Wave 1 headless root keeps its own card job and this one starts the chain.
@@ -1833,6 +2208,8 @@ async function teamAskRequest(
   void pumpSuper(root, memberId);
   ok(res, {
     job: job.id, member, request: requestId, queued: true, status: 'queued',
+    // Whether his message rides to the member as his own words (`<owner-relay>`), and why not.
+    ...(originRef ? { relayed: !!relayed, ...(relayed ? {} : { relay: 'his message was not found in this Super\'s conversation (a ref from an earlier session finds none): the member reads your text only' }) } : {}),
     ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}), ...(light ? { light: true } : {}),
   });
 }
@@ -1905,6 +2282,7 @@ const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: strin
   'team-answer': { error: 'main_only', message: 'only the project\'s Super Agent answers a member\'s question' },
   adopt: { error: 'main_only', message: 'a member\'s Super never adopts a chat: open your own children with `super delegate`' },
   schedule: { error: 'main_only', message: 'only the project\'s Super Agent sets the owner\'s scheduled jobs' },
+  'team-cancel': { error: 'main_only', message: 'only the project\'s Super Agent cancels a job it gave a member; you close yours with `super team done`' },
 };
 const MEMBER_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-done': { error: 'member_only', message: 'only a member\'s Super closes the request it was given' },
@@ -1933,11 +2311,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const q = s.queue.find((x) => x.id === id && x.kind === 'request');
       if (!q) return;
       if (q.state === 'done') { already = true; return; }
-      q.state = 'done';
-      q.result = result.slice(0, MAX_REQUEST_RESULT);
       // Its questions to main close with it: a later ask to main is never stuck on ask_open.
-      for (const a of s.queue) if (a.kind === 'ask' && a.state !== 'done' && a.workOrigin === `main:${id}`) a.state = 'done';
-      closed = true;
+      closed = closeMemberRequestDraft(s, id, result);
     });
     if (already) { refuse(res, 409, 'already_done', 'that request is already closed'); return; }
     if (!closed) { refuse(res, 404, 'unknown_item', 'that request is gone'); return; }
@@ -2007,10 +2382,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const testsOf = childTestMinutes(now);
     for (const [sid, ch] of Object.entries(c.state.children)) {
       const e = getChat(sid);
-      const live = liveChildStatus(ch, e ? activityOf(e, now) : null, parkedSince(sid) !== null);
+      const bg = !!e && backgroundBusy(e, now);
+      const live = liveChildStatus(ch, e ? activityOf(e, now) : null, parkedSince(sid) !== null, bg);
       const { line: last, limit } = childLastLine(e?.lastAssistantText ?? [], live);
+      const bgSince = live === 'background' && e?.lastTurn ? Date.parse(e.lastTurn.endedAt) : Number.NaN;
       const row = {
         status: live,
+        // Its turn ended, its background work did not (super-sessiz-kalmaz D3a): how many and since when.
+        ...(live === 'background' ? { background: { count: e?.backgroundTasks ?? 0, ...(Number.isFinite(bgSince) ? { since: owedClock(bgSince) } : {}) } } : {}),
         // What it runs on: the tool (absent in the record = Claude) and the model its own
         // `system/init` reported, else the one it was started with (`default`: not known yet).
         tool: ch.tool ?? 'claude',
@@ -2020,12 +2399,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
         ...(last.length > 600 ? { lastLineCut: `cut at 600 of ${last.length} characters; the whole reply: dreamcontext super read ${sid}` } : {}),
         ...(limit ? { limit: wrapUntrusted(vault, limit) } : {}),
-        asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
+        // What it asks right now, from its own process (the registry), so the Super can settle
+        // it with `super answer <child> <requestId> <option>` whatever the queue says.
+        asking: askingRow(e, vault),
         // Today's checks in its worktree: minutes waiting in line and running, and full runs past a red on purpose.
         ...(ch.worktree ? { testsToday: testsOf(ch.worktree, ch.branch) } : {}),
       };
       // The live row rides on the child itself; `status[]` stays for older readers.
-      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...(ch.outward ? { outward: { ref: ch.outward.ref, step: wrapUntrusted(vault, ch.outward.step) } } : {}), ...row };
+      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...(ch.outward ? { outward: outwardView(vault, ch.outward) } : {}), ...row };
       status.push({ sessionId: sid, ...row, ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}) });
     }
     let machine: unknown = null;
@@ -2082,6 +2463,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireHandedOver(c, res)) return;
     if (!requireMemberReady(c, res)) return;
     const root = c.who.contextRoot;
+    if (b.migration !== undefined && b.migration !== false) { await delegateMigration(c, b, res, root); return; }
     // `--from <pool id>`: the job the pool kept, exactly as it was kept (plan r4 D9).
     const fromId = str(b.from);
     const fromRow = fromId ? c.state.pool.find((p) => p.id === fromId) : undefined;
@@ -2099,7 +2481,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const parsed = parseJob(fromRow ? { ...fromRow, brief: fromRow.title } : b);
     if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
-    const job = parsed.job;
+    // A held migration job keeps its marker onto the child (the server wrote it on the row).
+    const job: Job = fromRow?.migration?.length ? { ...parsed.job, migration: fromRow.migration } : parsed.job;
     if (job.task && !(await taskFileOk(root, job.task))) { refuse(res, 404, 'unknown_task', `no task "${job.task}" in this project (state/<slug>.md)`); return; }
     if (mcpRefused(root, job, res)) return;
     // One job, one owner: the child this one takes the work over from (succession.ts).
@@ -2137,7 +2520,27 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     try {
       // A member's child does the work of the turn that started it unless `--for` names another.
       const childOrigin = startOrigin(workFor.origin, fromRow, c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
-      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward);
+      // C11: an explicit --origin resolves anew; else the row's or the predecessor's; else this turn's.
+      const explicit = b.origin !== undefined && b.origin !== null && b.origin !== '';
+      let context = explicit ? resolveJobContext(c, origin.ref)
+        : fromRow ? fromRow.context
+        : succeeds !== undefined ? c.state.children[succeeds]?.context
+        : resolveJobContext(c, origin.ref);
+      // C10: the model and effort from the job's facts. A pool row or a predecessor made before
+      // this build (no context) starts as today; a successor naming none takes the old one's.
+      const pred = succeeds !== undefined ? c.state.children[succeeds] : undefined;
+      if (pred && !str(b.model) && pred.model) job.model = pred.model;
+      if (pred && !str(b.effort) && pred.effort) job.effort = pred.effort;
+      // A wrong --risk is refused on every path, the trusted ones too.
+      const rk = riskArg(b);
+      if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+      const trusted = fromRow ? !explicit : pred ? (!!pred.context?.policy && pred.context.policy.model === job.model && pred.context.policy.effort === (job.effort ?? pred.context.policy.effort)) || (!pred.context && !str(b.model) && !str(b.effort)) : false;
+      if (!trusted && !(fromRow && !fromRow.context && !explicit)) {
+        const v = childPolicy({ tool: job.tool, mode: job.mode, model: job.model, effort: job.effort, risk: rk.risk ?? pred?.context?.policy?.risk, full: b.full === true || job.laneIntent === 'full' || (!!pred && childLaneFull(pred)), ...(pred ? { prior: childPrior(pred) } : {}) }, jobWords(context));
+        if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+        if (!v.skipped) { job.model = v.model; job.effort = v.effort; context = withPolicy(context, v, context?.origin ? { ref: context.origin.ref, words: context.origin.words, at: context.origin.at } : null); }
+      }
+      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward, { context });
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
       if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(claimKey); }
@@ -2398,7 +2801,18 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const root = c.who.contextRoot;
       const live = liveSayJob(root, j);
       let text = '';
-      try { text = teamJobAnswer(root, j, live); } catch { text = ''; }
+      // While it runs or waits, the facts of THIS job (super-sessiz-kalmaz D3b); after, its answer.
+      // A request whose children all stopped without the member closing it (its Super was not
+      // running when they finished, 2026-11-21 Doc) is not "running": what those children wrote
+      // last is the job's answer so far, ahead of a queued line.
+      const kids = j.request ? await requestChildren(root, j) : [];
+      const childLive = kids.some((k) => !!getChat(k.sid));
+      let progress = '';
+      try { progress = teamProgressRead(root, j, Date.now(), kids) ?? ''; } catch { progress = ''; }
+      if (progress && (!j.request || childLive)) text = progress;
+      if (!text) { try { text = teamJobAnswer(root, j, live); } catch { text = ''; } }
+      if (!text && j.request) text = await requestChildrenReplies(root, j);
+      if (!text) text = progress;
       ok(res, {
         team: j.id, member: j.member, status: teamJobStatus(root, j, live).status,
         text: wrapUntrusted(vaultNameOf(root), text || '(no answer from the member yet)'),
@@ -2465,6 +2879,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       : [];
     const text = typeof b.text === 'string' && b.text.trim() ? b.text.slice(0, MAX_OWNER_TEXT) : undefined;
     if (!choices.length && !text) { refuse(res, 400, 'invalid_args', 'give an option label or --text'); return; }
+    // A label the card does not offer is refused HERE, by name, before any window or the server's
+    // fallback (field 2026-11-22: "Devam" for "Devam (önerilen)" came back as `no_window`, so the
+    // Super read a delivery failure and went on to `super send`).
+    const picks = pq.questions ? superAnswerPicks(pq.questions, choices, text) : null;
+    if (picks && !picks.ok) {
+      const labels = pq.questions!.map((q, i) => `${pq.questions!.length > 1 ? `question ${i + 1}: ` : ''}${q.options.map((o) => `"${o.label}"`).join(' | ')}`).join('; ');
+      // The labels are the child's own text: fenced (D10), cut BEFORE the fence so it stays whole.
+      refuse(res, 400, picks.error, `that answer does not fit the card; give the option label exactly as it reads, or --text for words of your own. The card's options: ${wrapUntrusted(vaultNameOf(c.who.contextRoot), labels.slice(0, 1500))}`);
+      return;
+    }
     const r = await sendSuperCommand(c.token, 'answer', { child, requestId, choices, ...(text ? { text } : {}), deadline: windowDeadline() });
     // No window answered: the server answers the card itself, built as the window builds it.
     const byServer = serverDelivers(r, () => answerByServer(child, requestId, (req) => questionResponse(req, choices, text)));
@@ -2555,8 +2979,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // child's `writeOwnerTurn`, and its hand-over note rides with it). Noted as the Super's own:
     // it answers no wait the child has on the owner (owner-wait.ts).
     noteSuperSend(child, text);
+    // New work on a big idle child (super-cocuk-tasarruf D2): one hand-off-first line the window
+    // puts ahead of the text only when it delivers a new turn; read after a wake, from the pane's
+    // CURRENT conversation. `--keep` sends the text alone.
+    const lead = sendLeadFor(c.who.contextRoot, child, c.state.children[child], b.keep === true);
     // `deadline`: a window that wakes after the server gave up refuses it (the fallback below).
-    const sendArgs = () => ({ tab: child, text, deadline: windowDeadline() });
+    const sendArgs = () => ({ tab: child, text, deadline: windowDeadline(), ...(lead ? { lead } : {}) });
     let r = await sendWindowCommand(c.token, 'send', sendArgs(), { noted: true });
     // The window still draws the tab as parked, or the resumed process is not up yet: it answers
     // "not running" until it is. Wake it (once) and ask again for a few seconds.
@@ -2573,20 +3001,31 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     // No window answered (field 2026-11-13: the app in the background): a running child gets the
     // words straight from the server, as the server's own turn, never the owner's.
-    const byServer = serverDelivers(r, () => isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text));
+    // The lead rides here only when the registry reads the child idle at this moment (a new turn).
+    let serverLead = false;
+    const byServer = serverDelivers(r, () => {
+      if (!isLiveChat(child)) return false;
+      const e = getChat(child);
+      serverLead = !!lead && !!e && activityOf(e) === 'idle';
+      return !!crewHandle(child)?.sendServerTurn(serverLead ? `${lead}\n\n${text}` : text);
+    });
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
-    // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent'.
-    const how = r.ok ? (r.result as { delivered?: unknown } | undefined)?.delivered : 'sent';
+    // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent', or
+    // 'queued' when the child holds a request open: the CLI reads it only after that request.
+    const how = r.ok ? (r.result as { delivered?: unknown } | undefined)?.delivered
+      : pendingRequestIds(getChat(child)).length ? 'queued' : 'sent';
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
-    if (how === 'queued') await addToOutbox(superKey(c.who.contextRoot, c.superId), child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
+    // The server's own turn is already in the CLI's stdin: kept nowhere else, or it goes in twice.
+    if (how === 'queued' && r.ok) await addToOutbox(superKey(c.who.contextRoot, c.superId), child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
     // The job moved on: the pictures shown for it before now go to Others (tidy.ts).
     const sentAt = Date.now();
     // The message already went in: a stamp that could not be written must not refuse (and resend) it.
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
       .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
     await markOwnersJob(c, child, b);
-    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(byServer ? { via: 'server' } : {}), ...(woke ? { woke: true } : {}), ...(notOpened ?? {}), ...(how === 'queued' ? { waits: SEND_QUEUED_WAITS } : {}) });
+    const led = byServer ? serverLead : r.ok && (r.result as { lead?: unknown } | undefined)?.lead === true;
+    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(byServer ? { via: 'server' } : {}), ...(woke ? { woke: true } : {}), ...(notOpened ?? {}), ...(how === 'queued' ? { waits: SEND_QUEUED_WAITS } : {}), ...(led ? { lead: true } : {}) });
   },
 
   'queue-list': async (c, _b, res) => {
@@ -2626,6 +3065,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (item.state === 'done') { refuse(res, 409, 'stale_request', 'that question is already answered'); return; }
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
+    // D7: a `$` the shell ate in his caption.
+    const ate = shellAteField({ questions: [{ question: text, options: [] }] });
+    if (ate) { refuse(res, 400, 'shell_ate_text', shellAteMessage('text'), { field: 'text' }); return; }
+    // D6: the same caption on a question already his is that card, never a second send or prep.
+    if (item.state === 'escalated' && item.superAsked && foldCard(item.ownerText ?? '') === foldCard(text)) {
+      ok(res, { item: id, id, repeated: true, note: REPEATED_NOTE });
+      return;
+    }
     // Its pictures (task a-picture-question…): `--show`, the child's own option previews (read
     // against its worktree, or the project); nothing else is guessed.
     const child = item.sessionId;
@@ -2689,7 +3136,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     // An owner wait the Super closes (he did it another way) is answered: it never comes back.
     if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id, item.card ? { postingSession: item.card.postingSession } : {});
-    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      const q = s.queue.find((x) => x.id === id);
+      if (!q || q.kind === 'permission') return;
+      // A cut's returns card the Super closes counts as answered (D16): only this route writes "done".
+      if (q.kind === 'ask' && q.state !== 'done') for (const r of Object.values(s.returnsAsked ?? {})) if (r.askId === id && r.answer === undefined) r.answer = 'done';
+      q.state = 'done';
+    });
     // A card's result still held leaves with it, its typed secret too (sahip-karti-yerinde K6):
     // `super queue done` closes a card, it never acts on one.
     if (item.card) await ownerCardItemsLeft(superKey(c.who.contextRoot, callerSuper(c)), [item]).catch(() => undefined);
@@ -2727,6 +3180,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   'pool-add': async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
+    // The migration marker is the server's alone (`delegate --migration` at the cap keeps it).
+    if (b.migration !== undefined) { refuse(res, 400, 'invalid_args', 'a migration job is started with `super delegate --migration`, never pooled by hand'); return; }
     const parsed = parseJob(b);
     if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
     const job = parsed.job;
@@ -2739,7 +3194,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
     const named = outwardGrant(c, b, origin.ref);
     if ('error' in named) { refuse(res, 400, named.error, named.message); return; }
-    const kept = await keepInPool(root, job, { note, ...(named.grant ? { outward: named.grant } : {}) }, c.superId);
+    let context = resolveJobContext(c, origin.ref);
+    const rk = riskArg(b);
+    if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+    const v = childPolicy({ tool: job.tool, mode: job.mode, model: job.model, effort: job.effort, risk: rk.risk, full: b.full === true || job.laneIntent === 'full' }, jobWords(context));
+    if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+    if (!v.skipped) { job.model = v.model; job.effort = v.effort; context = withPolicy(context, v, context?.origin ? { ref: context.origin.ref, words: context.origin.words, at: context.origin.at } : null); }
+    const kept = await keepInPool(root, job, { note, ...(named.grant ? { outward: named.grant } : {}), context }, c.superId);
     if ('error' in kept) { refuse(res, 409, 'pool_full', `the pool is full (at most ${MAX_POOL} jobs, ${MAX_POOL_BYTES / 1024} KB); the job was NOT kept`); return; }
     ok(res, { pooled: kept.id, reused: kept.reused });
   },
@@ -2762,11 +3223,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const request = str(b.request);
     const text = typeof b.text === 'string' ? b.text : '';
     if (!request) { refuse(res, 400, 'invalid_args', 'name the group request (its id is in the turn that brought it)'); return; }
+    // Files the result attaches: absolute paths (the CLI resolves them), read by the runner.
+    const files = b.files === undefined ? [] : b.files;
+    if (!Array.isArray(files) || files.length > 10 || !files.every((f) => typeof f === 'string' && isAbsolute(f))) { refuse(res, 400, 'invalid_args', 'files: up to 10 absolute paths'); return; }
     const rooms = (await import('../telegram/hub.js')).telegramHub()?.rooms;
     if (!rooms) { refuse(res, 503, 'telegram_unavailable', 'Telegram works only in the Mac app'); return; }
-    const r = await rooms.say({ root: resolve(c.who.contextRoot), superId: c.superId }, request, text);
+    const r = await rooms.say({ root: resolve(c.who.contextRoot), superId: c.superId }, request, text, files as string[]);
     if (!r.ok) { refuse(res, r.status, r.error, r.message); return; }
-    ok(res, { group: r.group });
+    ok(res, { group: r.group, ...(r.notSent ? { notSent: r.notSent } : {}) });
   },
   schedule: async (c, b, res) => {
     if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent sets the owner\'s scheduled jobs'); return; }
@@ -2801,6 +3265,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId, ownerPair(c, origin.ref));
     if (added === 'full') { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
     ok(res, { note: added });
+  },
+
+  'note-link': async (c, b, res) => {
+    // The Super ties messages it judged to be about a line (his follow-up with a second example):
+    // each ref joins the line's thread, so pressing the line shows it and its answers.
+    const id = str(b.id);
+    const refs = Array.isArray(b.refs) ? b.refs : [];
+    if (!refs.length || !refs.every((r) => typeof r === 'string' && MSG_REF_RE.test(r))) {
+      refuse(res, 400, 'invalid_args', 'name his messages by ref: six characters each, from their <owner-msg ref="…">');
+      return;
+    }
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    const pairs = [...new Set(refs as string[])].map((r) => ownerPair(c, r)).filter((p): p is PadRef => !!p);
+    let note: SuperPadItem | null = null;
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      for (const pair of pairs) linkLineRef(s, { note: id }, pair);
+      note = s.pad?.find((p) => p.id === id) ?? null;
+    });
+    if (!note) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    ok(res, { note });
   },
 
   'note-keep': async (c, b, res) => {
@@ -2876,119 +3360,41 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     ok(res, { cleared, ...(section ? { section } : {}) });
   },
 
-  ask: async (c, b, res) => {
-    // The super agent's OWN question to the owner (plan r4 D7): never about a permission, one
-    // open at a time, its options drawn and sent exactly as validated here.
-    if (!requireHandedOver(c, res)) return;
-    const session = c.state.session as string;
-    // A member's Super names whose work the question is about (`--for <item|owner>`, plan-r10 1);
-    // its routing by audience is Wave 2 step A2.
-    const askFor = workForArg(c, b);
-    if ('error' in askFor) { refuse(res, askFor.status, askFor.error, askFor.message); return; }
-    // Its audience (plan-r10 1): a member's question goes where the turn's work came from (`--for`
-    // overrides): the owner, or main Super for a request it gave. One open ask per audience.
-    const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
-    const toMain = isMainWork(audience);
-    // A member's question asked in HIS own conversation with it (the turn is his message's, not
-    // work the Super Agent gave): his alone, never routed through the Super Agent (owner 2026-11-15).
-    const ownerTalk = c.superId !== 'main' && !toMain && memberTurnOrigin(session) === 'owner';
-    const openAsk = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain);
-    if (openAsk) {
-      // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
-      // close it once he has moved on, so a card he left open never blocks the next question.
-      refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\` and ask again`);
-      return;
-    }
-    // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
-    let spec: SuperAskSpec;
-    if (b.ask !== undefined) {
-      const r = cleanAskSpec(b.ask);
-      if (!r.ok) { refuse(res, 400, 'invalid_ask', r.error); return; }
-      spec = r.spec;
-    } else {
-      const raw = typeof b.text === 'string' ? askLine(b.text) : '';
-      if (!raw) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
-      if (raw.length > MAX_OWNER_TEXT) { refuse(res, 400, 'invalid_args', `the question is at most ${MAX_OWNER_TEXT} characters`); return; }
-      const legacy = cleanAskOptions(b.options);
-      if (!legacy) {
-        refuse(res, 400, 'invalid_options', `at most ${MAX_ASK_OPTIONS} options, each one line of 1-${MAX_ASK_OPTION} characters, no duplicates (a longer label is refused, never cut)`);
-        return;
-      }
-      spec = askSpecFromLegacy(raw, legacy);
-    }
-    // A card read cold carries what it points at (owner 2026-11-08: "örnek yok ama örnekteki
-    // gibi diyor"); only an explicit --show of the cards it means stands in for that.
-    const offCard = offCardReferences(spec, { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true });
-    if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
-    const { ownerText: raw, options } = askSummary(spec);
-    if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
-    // Its pictures (task a-picture-question…): `--show`, else the option previews; nothing else.
-    const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
-    if (!prep) return;
-    const batch = superOpenBatch(session);
-    const id = newQueueId();
-    const now = Date.now();
-    let pushed = false;
-    let shown: ReturnType<typeof applyAskShow> = null;
-    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
-      // Refused by a question already open: no card is opened, nothing mirrors (D6).
-      // One open ask per audience (plan-r10 1): a member's question to main Super never holds his.
-      if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin))) return;
-      s.queue.push({
-        id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
-        ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
-        ...(askFor.origin ? { workOrigin: askFor.origin } : {}),
-        ...(ownerTalk ? { ownerTalk: true as const } : {}),
-      });
-      pushed = true;
-      noteOwnerBatch(s, batch ?? undefined);
-      shown = applyAskShow(s, id, prep, c.who.contextRoot, now);
-      // The report cards it shows: his card points at them, "To read: <card> →" (owner 2026-10-30).
-      const read = readCardsOf(s, shown);
-      if (read.length) {
-        const item = s.queue.find((q) => q.id === id);
-        if (item) item.read = read;
-      }
-    });
-    if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner: wait for his answer, or if he said to drop it, close it with `dreamcontext super queue done <ask id>` (`super state`) and ask again'); return; }
-    // The record's queue was full: the store dropped it (its cards are put back on the next write).
-    if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
-    const show = finishAskShow(c, state, id, prep, shown);
-    // Its turn's end is no second ping once the question reached him (owner-question.ts); a
-    // Telegram copy counts only once it landed, so its send is waited for (bounded).
-    await settleOwnerReach(id);
-    const reach = ownerQuestionReach(state, id);
-    if (reach.reached) noteSuperEscalation(session);
-    const head = superQueueHead(state);
-    // A start/approve question with no report card, or a preview that is a text to read: sent
-    // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
-    const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
-    // A member's Super: what really carries it is main's bar (its mirror), Super first (K8, K9).
-    const via = callerSuper(c) !== 'main' && !toMain
-      ? await memberAskReach(superKey(c.who.contextRoot, callerSuper(c)), state, id).catch(() => null) : null;
-    const told = via ? { ...reach, note: via.note, mirrored: via.mirrored, ...(via.superFirst ? { superFirst: true } : {}), ...(via.mirrored ? { reached: true } : {}) } : reach;
-    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...told, show, ...(warning ? { warning } : {}) });
-  },
+  ask: (c, b, res) => askOwner(c, b, res),
+
+  'returns-ask': (c, b, res) => returnsAsk(c, b, res),
 
   merge: async (c, b, res) => {
     const root = c.who.contextRoot;
     const ids = Array.isArray(b.children) ? (b.children as unknown[]).filter((x): x is string => typeof x === 'string') : [];
     if (!ids.length) { refuse(res, 400, 'invalid_args', 'name the children to merge'); return; }
-    const members = [];
-    for (const id of ids) {
-      const ch = hasChild(c.state, id) ? c.state.children[id] : undefined;
-      if (!ch) { refuse(res, 404, 'unknown_child', `${id} is not one of your children`); return; }
-      if (!ch.worktree || !ch.branch) { refuse(res, 409, 'no_branch', `${id} has no worktree branch`); return; }
-      members.push({ sessionId: id, worktree: ch.worktree, branch: ch.branch });
-    }
+    if (b.base !== undefined && typeof b.base !== 'string') { refuse(res, 400, 'invalid_args', 'base must be a ref'); return; }
+    // Each child's checkout from git (K7, D15): a live worktree as before, an ended child whose
+    // worktree the janitor removed through its branch in its recorded repo.
+    const members: MergeChild[] = [];
+    let repo: { name: string; path: string } | null = null;
     try {
-      const repo = await repoOfWorktree(dirname(root), members[0].worktree);
-      if (!repo) { refuse(res, 409, 'worktree_not_listed', `${members[0].worktree} is not a worktree of a linked repo`); return; }
-      for (const m of members.slice(1)) {
-        const other = await repoOfWorktree(dirname(root), m.worktree);
-        if (other?.path !== repo.path) { refuse(res, 409, 'mixed_repos', 'every child merged together must work in the same repo'); return; }
+      for (const id of ids) {
+        const ch = hasChild(c.state, id) ? c.state.children[id] : undefined;
+        if (!ch) { refuse(res, 404, 'unknown_child', `${id} is not one of your children`); return; }
+        const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+        if (!co.branch) { refuse(res, 409, 'no_branch', `${id} has no worktree branch`); return; }
+        if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${id}: ${co.why ?? 'no linked repo holds its branch'}`); return; }
+        // Its work is not on the branch the record names: never merge that branch in its place.
+        if (co.elsewhere) { refuse(res, 409, co.elsewhere.kind === 'detached' ? 'detached' : 'work_elsewhere', `child ${id}: ${co.elsewhere.message}`, { child: id, where: co.elsewhere.where }); return; }
+        if (repo && co.repo.path !== repo.path) { refuse(res, 409, 'mixed_repos', 'every child merged together must work in the same repo'); return; }
+        repo = co.repo;
+        members.push(co.worktree
+          ? { sessionId: id, worktree: co.worktree, branch: ch.branch ?? co.branch }
+          : { sessionId: id, branch: co.branch });
       }
-      ok(res, await mergeChildren({ projectRoot: dirname(root), repo: repo.name, children: members, topic: b.into }));
+      if (!repo) { refuse(res, 409, 'worktree_not_listed', 'no linked repo found'); return; }
+      ok(res, await mergeChildren({
+        projectRoot: dirname(root), repo: repo.name, children: members, topic: b.into,
+        ...(b.base !== undefined ? { base: b.base } : {}),
+        // K2: what of the topic is not back in remote dev, against the running CLI's build.
+        returns: (repoPath, topic) => pendingReturns(repoPath, topic),
+      }));
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
       throw err;
@@ -2999,10 +3405,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const root = c.who.contextRoot;
     const rows = [];
     for (const [sid, ch] of Object.entries(c.state.children)) {
-      if (!ch.worktree || !ch.branch) continue;
-      const repo = await repoOfWorktree(dirname(root), ch.worktree);
-      const st = repo ? await worktreeStatus(repo.path, ch.worktree, ch.branch) : { listed: false, dirty: null, merged: null };
-      rows.push({ child: sid, worktree: ch.worktree, branch: ch.branch, repo: repo?.name ?? null, ...st });
+      if (!ch.worktree && !ch.branch) continue;
+      const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+      if (!co.branch) continue;
+      // A dal-yalnız child: its branch only, merged and resumed from it (D15).
+      const st = co.repo && co.worktree ? await worktreeStatus(co.repo.path, co.worktree, co.branch) : { listed: false, dirty: null, merged: null };
+      rows.push({ child: sid, worktree: co.worktree, branch: co.branch, repo: co.repo?.name ?? null, ...st, ...(co.why ? { why: co.why } : {}), ...(co.elsewhere ? { elsewhere: co.elsewhere.message } : {}) });
     }
     ok(res, { worktrees: rows });
   },
@@ -3025,12 +3433,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const plan = await planSweep({ root: realRoot, guards, testTmp: await oldTestTmp(tmpdir()), warnings });
     if (!apply) { ok(res, { dryRun: true, ...publicPlan(plan) }); return; }
     const fresh = (await take()).guards;
-    const result = await applySweep(plan, fresh, {
-      onRemoved: async (item) => {
-        if (!item.child || item.category === 'build-output') return;
-        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) { delete x.worktree; delete x.branch; } });
-      },
-    });
+    // Each removal is re-checked right before it acts and written into its child's OWN record
+    // (main or member), inside applySweep (recheckBeforeActing, noteWorkBranch).
+    const result = await applySweep(plan, fresh, { contextRoot: root, home: homedir() });
     forgetLeftovers();
     ok(res, {
       dryRun: false, ...result,
@@ -3043,13 +3448,19 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!child) return;
     const root = c.who.contextRoot;
     const ch = c.state.children[child];
-    if (!ch.worktree || !ch.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
     try {
-      const repo = await repoOfWorktree(dirname(root), ch.worktree);
-      if (!repo) { refuse(res, 409, 'worktree_not_listed', `${ch.worktree} is not a worktree of a linked repo`); return; }
-      await removeChildWorktree({ repoPath: repo.path, worktree: ch.worktree, branch: ch.branch });
-      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x) { delete x.worktree; delete x.branch; } });
-      ok(res, { child, removed: ch.worktree, branchKept: ch.branch });
+      const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+      // A listed worktree on a detached HEAD is still its worktree: removeChildWorktree's own rule
+      // (D13) decides whether its commits are kept elsewhere.
+      const wt = co.worktree ?? (co.elsewhere?.kind === 'detached' ? co.elsewhere.where : null);
+      if (!wt || !co.branch) { refuse(res, 409, 'no_branch', 'that child has no worktree'); return; }
+      if (!co.repo) { refuse(res, 409, 'worktree_not_listed', `${wt} is not a worktree of a linked repo`); return; }
+      // Before (D15): the record learns the branch the worktree is on, as the janitor's removal does.
+      if (co.liveBranch) await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x) noteWorkBranch(x, co.liveBranch); });
+      await removeChildWorktree({ repoPath: co.repo.path, worktree: wt, branch: co.branch });
+      // K5: the worktree goes from the record, never the branch.
+      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x && x.worktree === wt) delete x.worktree; });
+      ok(res, { child, removed: wt, branchKept: co.branch });
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
       throw err;
@@ -3078,7 +3489,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
       const results = [];
       for (const r of mine) results.push(await endChild(c, r.sid, false));
-      ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+      ok(res, endAnswer(results));
       return;
     }
     const raw = Array.isArray(b.children) ? b.children : typeof b.child === 'string' ? [b.child] : [];
@@ -3094,10 +3505,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     for (const id of ids) results.push(await endChild(c, id, force));
     if (results.length === 1 && !results[0].ended) {
       const r = results[0];
-      refuse(res, 409, r.reason ?? 'refused', r.message ?? 'the child was not ended', { child: r.child, ...(r.background ? { background: r.background } : {}) });
+      refuse(res, 409, r.reason ?? 'refused', r.message ?? 'the child was not ended', { refused: true, ended: false, child: r.child, ...(r.background ? { background: r.background } : {}) });
       return;
     }
-    ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+    ok(res, endAnswer(results));
   },
 
   resume: async (c, b, res) => {
@@ -3105,6 +3516,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireMemberReady(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    if (b.full === true) {
+      // "Tam doğrula" on a finished or parked child: the worktree's lane becomes full, the child
+      // comes back the usual way, then it hears to take the same diff through the whole chain.
+      const why = await raiseToFull(c, child);
+      if (why) { refuse(res, 409, why.error, why.message); return; }
+      const back = await resumeCore(c, { ...b, full: undefined });
+      if (back.json.ok !== true) { refuse(res, back.status >= 400 ? back.status : 409, String(back.json.error ?? 'not_resumed'), `the lane is full now, but the child did not come back: ${String(back.json.message ?? '')}`); return; }
+      await SUPER_VERB_HANDLERS.send(c, { child, text: FULL_VERIFY_MESSAGE }, res);
+      return;
+    }
     const originArg = jobOrigin(c, b);
     if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
     const root = c.who.contextRoot;
@@ -3133,12 +3554,29 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ok(res, { child, resumed: false, running: true, ...cardOutcome(container, child, after) });
       return;
     }
+    // One worktree, one live session: a child parked in a worktree another live child works in
+    // stays parked. Only this verb: a restart's window restore and 'continue' turns do not pass here.
+    if (ch.worktree || ch.branch) {
+      const holder = liveChildInWorktree(c.state, { path: ch.worktree, branch: ch.branch }, child);
+      if (holder) { refuseWorktreeBusy(res, holder, { path: ch.worktree, branch: ch.branch }, 'resume'); return; }
+    }
     const mode = str(b.mode) ?? ch.mode ?? 'basic';
     if (!(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
     const model = str(b.model) ?? ch.model;
     if (model && !sanitizeModel(model)) { refuse(res, 400, 'invalid_args', 'model is not a model id'); return; }
-    const effort = str(b.effort) ?? ch.effort;
+    let effort = str(b.effort) ?? ch.effort;
     if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
+    // C10 when the call changes a setting (a child made before this build, resumed as it was, never).
+    let policyCtx: JobContext | undefined;
+    if (!ch.adopted && (str(b.mode) || str(b.model) || str(b.effort))) {
+      const rk = riskArg(b);
+      if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+      const grant = turnGrant(c, originArg.ref);
+      const v = childPolicy({ tool: ch.tool, mode, model, effort, risk: rk.risk ?? ch.context?.policy?.risk, full: childLaneFull(ch), prior: childPrior(ch) }, jobWords(ch.context, grant),
+        { lowerOnModeSwitch: !!str(b.mode) && !str(b.effort) && mode !== (ch.mode ?? 'basic'), modelKept: true });
+      if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+      if (!v.skipped) { effort = v.effort; policyCtx = withPolicy(ch.context, v, grant); }
+    }
     // A resumed child is a live child again: the same cap as a delegate.
     const room = delegationAllowed(c.state, Date.now(), (await readVaultLive(c.who.contextRoot).catch(() => 0)) + vaultDelegating(c.who.contextRoot) + vaultStarting(c.who.contextRoot));
     if (!room.ok) {
@@ -3150,10 +3588,32 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     if (!liveTranscriptPath(root, child)) { refuse(res, 404, 'no_transcript', 'that child has no transcript to resume'); return; }
+    // A dal-yalnız child (its clean worktree removed after its end, D15): the worktree comes back
+    // at the path its conversation is keyed by, on its branch, before the window reopens it (K7).
+    // Not possible (branch checked out elsewhere, gone): it starts without one and says so.
+    let reattached: { worktree: string; branch: string; repo: string } | null = null;
+    let worktreeNote: string | undefined;
     // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
     noteResuming(child, true);
+    // Held before its checkout is read, until the record says it runs: the janitor leaves it.
+    holdForResume(child, true);
     try {
-      const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+    if (ch.branch || ch.lastBranch) {
+      const co = await childCheckout(dirname(root), ch, { removing: removingWorktrees() });
+      // A detached worktree is still listed: the session reopens in it, nothing to say.
+      if (co.elsewhere?.kind === 'moved') worktreeNote = `resumed without re-attaching super/*: ${co.elsewhere.message}`;
+      else if (!co.elsewhere && !co.worktree && co.branch) {
+        const r = await reattachChildWorktree({ projectRoot: dirname(root), child: ch, removing: removingWorktrees() });
+        if ('why' in r) worktreeNote = `resumed without its worktree: ${r.why}`;
+        else reattached = r;
+      }
+    }
+    let r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+    // No window at all: the server reopens its own recorded child itself (plan sirket-yavaslik D12).
+    if (!r.ok && r.error === 'no_window' && r.sent === false && ch.endedAt === undefined && windowGone(c.token)) {
+      const h = await startChildHeadless({ contextRoot: root, resumeId: child, mode, model, effort, mcp: ch.mcp ?? [], tool: ch.tool, member: memberOfSuperId(c.superId) });
+      if (h.ok) r = { ok: true, result: undefined };
+    }
       if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
       // What the window ACTUALLY started it with: a parked tab comes back as it was parked, so
       // the record holds that, never a request the window did not apply. An older window that
@@ -3167,11 +3627,15 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (phoneHeld(child)) throw new PhoneHeldError(child);
         delete x.endedAt;
         setRow(x, 'working');
+        // The re-attached worktree goes back into the record (the grant index reads it there).
+        if (reattached) { x.worktree = reattached.worktree; x.repo ??= reattached.repo; }
         startError = takeStartError(child);
         if (startError) startFailedDraft(s, child, startError);
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
         if (used.model) x.model = used.model; else if (used.reported) delete x.model;
         if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
+        // C10: the record holds what was actually used.
+        if (policyCtx?.policy) x.context = { ...policyCtx, policy: { ...policyCtx.policy, model: used.model ?? policyCtx.policy.model, effort: used.effort ?? policyCtx.policy.effort } };
         container = ensureChatContainer(s, child, x.brief, true);
       });
       if (startError) void pumpSuper(root, c.superId); else if (!isLiveChat(child)) expectChild(root, child);
@@ -3182,9 +3646,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         child, resumed: !startError, ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}),
         ...cardOutcome(container, child, after),
         ...(ignored.length ? { note: `it came back as it was parked (${ignored.join(', ')} unchanged); \`super update\` changes that` } : {}),
+        ...(reattached ? { worktree: reattached.worktree, branch: reattached.branch } : {}),
+        ...(worktreeNote ? { worktreeNote } : {}),
       });
     } finally {
       noteResuming(child, false);
+      holdForResume(child, false);
     }
   },
 
@@ -3194,6 +3661,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireHandedOver(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    if (b.full === true) {
+      // `--full` is a change on its own: the lane only ever goes up, and the child is told.
+      if (str(b.mode) || str(b.model) || str(b.effort)) { refuse(res, 400, 'invalid_args', 'run --full on its own, then --mode, --model or --effort in a second call'); return; }
+      const why = await raiseToFull(c, child);
+      if (why) { refuse(res, 409, why.error, why.message); return; }
+      await SUPER_VERB_HANDLERS.send(c, { child, text: FULL_VERIFY_MESSAGE }, res);
+      return;
+    }
     const ch = c.state.children[child];
     const mode = str(b.mode);
     if (mode && !(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
@@ -3214,19 +3689,39 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'adopted', 'that is the owner\'s own chat; change it only when he asks, with --force');
       return;
     }
+    // C10 on the settings the call leaves (his chats are outside the policy). A mode switch that
+    // keeps an effort nothing allows for the new mode lowers it, as its own step before the respawn.
+    let effortStep = effort;
+    let policyCtx: JobContext | undefined;
+    if (!ch.adopted) {
+      const originArg = jobOrigin(c, b);
+      if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
+      const rk = riskArg(b);
+      if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+      const grant = turnGrant(c, originArg.ref);
+      const nextMode = mode ?? ch.mode ?? 'basic';
+      const v = childPolicy({ tool: ch.tool, mode: nextMode, model: model ?? ch.model, effort: effort ?? ch.effort, risk: rk.risk ?? ch.context?.policy?.risk, full: b.full === true || childLaneFull(ch), prior: childPrior(ch) },
+        jobWords(ch.context, grant), { lowerOnModeSwitch: !!mode && !effort && nextMode !== (ch.mode ?? 'basic'), modelKept: true });
+      if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+      if (!v.skipped) {
+        if (v.effortLowered) effortStep = v.effort;
+        policyCtx = withPolicy(ch.context, v, grant);
+      }
+    }
     // Model and effort first: they apply in place, and a mode change then respawns the chat
     // carrying them (a mode sent first would leave the next verb naming a tab being replaced).
     const steps: Array<{ verb: 'model' | 'effort' | 'mode'; args: Record<string, unknown> }> = [];
     if (model) steps.push({ verb: 'model', args: { tab: child, model } });
-    if (effort) steps.push({ verb: 'effort', args: { tab: child, level: effort } });
+    if (effortStep) steps.push({ verb: 'effort', args: { tab: child, level: effortStep } });
     if (mode) steps.push({ verb: 'mode', args: { tab: child, mode } });
     const applied: Record<string, unknown> = {};
     const record = () => writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const x = s.children[child];
       if (!x) return;
       if ('model' in applied && model) x.model = model;
-      if ('effort' in applied && effort) x.effort = effort;
+      if ('effort' in applied && effortStep) x.effort = effortStep;
       if ('mode' in applied && mode) { if (mode === 'basic') delete x.mode; else x.mode = mode; }
+      if (policyCtx && Object.keys(applied).length === steps.length) x.context = policyCtx;
     });
     for (const step of steps) {
       const r = await sendWindowCommand(c.token, step.verb, step.args);
@@ -3240,7 +3735,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       applied[step.verb] = r.result ?? true;
     }
     await record();
-    ok(res, { child, applied });
+    ok(res, { child, applied, ...(effortStep && effortStep !== effort ? { note: `effort lowered to ${effortStep}: nothing allows a higher one for develop (\`--risk\`, \`--full\` or his words)` } : {}) });
   },
 
   adopt: async (c, b, res) => {
@@ -3303,8 +3798,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const a = amendMember(root, {
         member, why: text(b.why) ?? '', prompt: text(b.prompt), soul: text(b.soul), job: text(b.job), routine: str(b.routine), session: c.who.sessionId,
         self: memberOfSuperId(c.superId), quote: text(b.quote),
+        // G1 (D13): his words typed in THIS Super's conversation, relays included.
+        ...(text(b.quote) ? { ownerQuote: { here: quoteTypedHere(text(b.quote)!, { keys: [c.who.sessionId].filter((k): k is string => !!k) }) } } : {}),
       });
       ok(res, {
+        receipt: `AMENDED ${a.id}${a.waits ? ' waits' : ''}`,
         amendment: a.id,
         changed: a.changes.map((x) => (x.routine ? `${x.routine}:${x.field}` : x.field)),
         approved: approvedTargets(root, member),
@@ -3319,6 +3817,48 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (err instanceof AutomationError) { refuse(res, 400, 'invalid_args', wrapUntrusted(vaultNameOf(root), err.message)); return; }
       throw err;
     }
+  },
+
+  'team-cancel': async (c, b, res) => {
+    // `super team cancel <job>` (Tilki 2026-11-21: a deleted member's job read "working" for 16
+    // days and nothing could close it): the Super closes a job it gave, open or never ended. Its
+    // member's request closes with it when its record holds one; nothing is deleted.
+    const id = str(b.job);
+    const root = c.who.contextRoot;
+    const j = id && TEAM_JOB_ID_RE.test(id) ? c.state.team.find((x) => x.id === id) : undefined;
+    if (!j) { refuse(res, 404, 'unknown_team', 'name one of your team jobs (`dreamcontext super state` lists them under `team`)'); return; }
+    const why = oneLine(typeof b.why === 'string' ? b.why : '').slice(0, MAX_BRIEF);
+    // A headless run still going would end unheard: its member's work goes on, so it ends first.
+    if (!j.request && (sayJobRuns(liveSayJob(root, j)) || runIsActive(agentActivity(root, j.member), j.runId))) {
+      refuse(res, 409, 'still_running', 'its member\'s run is still going: wait for its ending (its event comes by itself)');
+      return;
+    }
+    let cancelled = false;
+    await writeSuper(root, c.superId, (s) => { if (cancelTeamJob(s, j.id)) cancelled = true; });
+    if (!cancelled) { refuse(res, 409, 'already_closed', 'that job already ended: its done or stuck was told'); return; }
+    // The member's own request closes too (with what waits on it). A member already working on it
+    // hears the cancel as its own event, so it stops; what it already did it tells main itself.
+    let requestClosed = false;
+    let memberTold = false;
+    const memberId = superIdOfMember(j.member);
+    if (j.request && existsSync(superRecordPath(root, memberId))) {
+      const request = j.request;
+      const line = why ? `Cancelled by the Super Agent: ${why}` : 'Cancelled by the Super Agent.';
+      try {
+        await writeSuper(root, memberId, (s) => {
+          const q = s.queue.find((x) => x.id === request && x.kind === 'request');
+          const started = !!q && (q.state === 'delivered' || q.acceptedAt !== undefined);
+          if (!closeMemberRequestDraft(s, request, line)) return;
+          requestClosed = true;
+          if (!started || !s.session) return;
+          s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'reply', state: 'pending', createdAt: Date.now(), text: `${j.brief}. ${line}`.slice(0, MAX_REQUEST_TEXT), workOrigin: `main:${request}`, cancels: true });
+          memberTold = true;
+        });
+      } catch { /* main's job is closed; the member's record keeps its request */ }
+      if (memberTold) void pumpSuper(root, memberId);
+    }
+    void pumpSuper(root);
+    ok(res, { job: j.id, member: j.member, cancelled: true, ...(j.request ? { requestClosed, memberTold } : {}) });
   },
 
   'team-ask': async (c, b, res) => {
@@ -3526,7 +4066,7 @@ const suspect = new Map<string, 'gone' | 'lost'>();
  */
 function watchTeamJob(root: string, teamJobId: string): void {
   const key = `${root}\u0000${teamJobId}`;
-  if (jobWatches.has(key)) return;
+  if (jobWatches.has(key) || unsaidRead.has(key)) return;
   const t = setInterval(() => {
     void checkTeamJob(root, teamJobId)
       // An ending told stops this watch; the record may still want the late-post one.
@@ -3546,13 +4086,26 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   const s = await readSuperState(root, superSanitizeOpts());
   const j = s.team.find((x) => x.id === teamJobId);
   if (!j || !s.enabled || !s.session) return false;
+  const key = `${root}\u0000${teamJobId}`;
+  // A request job: its member's own Super tells its ending. The one ending only this watch sees is
+  // its member gone from the AI Team (on a second tick in a row): stuck, told once, final.
+  if (j.request) {
+    if (!teamJobOwed(j)) return false;
+    if (memberScope(root, j.member) !== null) { suspect.delete(key); return true; }
+    if (suspect.get(key) !== 'gone') { suspect.set(key, 'gone'); return true; }
+    suspect.delete(key);
+    await teamJobSettled(root, teamJobId, undefined, 'gone');
+    return false;
+  }
+  // An old record never owed an event (before `open`): nobody waits for its ending, so it is never
+  // told; a member gone or a turn lost only stops it reading "running". Read once per process.
+  if (teamJobUnsaid(j)) return settleUnsaid(root, j, key);
   // Its ending was told: only a late post can still come.
   if (!teamJobOwed(j)) {
     if (!teamJobTrailing(j)) return false;
     if (teamPostsDue(root, s, j)) await teamJobPosted(root, teamJobId);
     return true;
   }
-  const key = `${root}\u0000${teamJobId}`;
   const live = liveSayJob(root, j);
   const end = teamJobEnding(root, j, live);
   // Two endings only the watch can see, each on a second tick in a row: the member is gone (the
@@ -3581,6 +4134,56 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   }
   await teamJobSettled(root, teamJobId);
   return end.kind === null || end.kind === 'question';
+}
+
+/** The last reply of each of a member's children that worked on main's request `j.request`
+ *  (`workOrigin: main:<request>`), newest first, each headed by its brief; '' when none wrote one. */
+async function requestChildrenReplies(root: string, j: SuperTeamJob): Promise<string> {
+  let m: SuperState;
+  try { m = await readSuperState(root, superIdOfMember(j.member), superSanitizeOpts()); } catch { return ''; }
+  const kids = Object.values(m.children)
+    .filter((ch) => ch.workOrigin === `main:${j.request}`)
+    .sort((a, b) => b.startedAt - a.startedAt);
+  const parts: string[] = [];
+  let used = 0;
+  for (const ch of kids) {
+    const path = liveTranscriptPath(root, ch.sessionId);
+    if (!path) continue;
+    let reply = '';
+    try { reply = (await readLastReply(path)).text; } catch { reply = ''; }
+    if (!reply) continue;
+    const part = `The member has not closed this job; its child (${ch.brief}) wrote last:\n\n${reply}`;
+    if (used + part.length > MAX_READ_BYTES) continue;
+    parts.push(part);
+    used += part.length;
+  }
+  return parts.join('\n\n---\n\n');
+}
+
+/** Old records already read this process (`teamJobUnsaid`): never watched again until a restart. */
+const unsaidRead = new Set<string>();
+
+/** One tick of an old record's read: its thread ended it (nothing to do), or, on a second tick in
+ *  a row, its member is gone or nothing runs it: concluded quietly (no event), so its card and
+ *  `super state` read failed. False once it is settled either way. */
+async function settleUnsaid(root: string, j: SuperTeamJob, key: string): Promise<boolean> {
+  const live = liveSayJob(root, j);
+  // Ended in its thread (done or failed): that ending stands, whatever became of its member.
+  const status = teamJobStatus(root, j, live).status;
+  if (status === 'done' || status === 'failed') { suspect.delete(key); unsaidRead.add(key); return false; }
+  const seen = memberScope(root, j.member) === null ? 'gone'
+    : teamJobEnding(root, j, live).kind === null && !runIsActive(agentActivity(root, j.member), j.runId) && !sayJobRuns(live) ? 'lost'
+    : null;
+  // Still running (its run holds the member), or asking: it keeps its watch.
+  if (!seen) return true;
+  if (suspect.get(key) !== seen) { suspect.set(key, seen); return true; }
+  suspect.delete(key);
+  unsaidRead.add(key);
+  await writeSuper(root, (s) => {
+    const x = s.team.find((y) => y.id === j.id);
+    if (x && teamJobUnsaid(x)) x.concluded = seen;
+  });
+  return false;
 }
 
 /** A post no ending carries becomes its own event. */
@@ -3652,9 +4255,26 @@ function childStatus(sid: string, now = Date.now()): string {
   return e ? activityOf(e, now) : 'gone';
 }
 
+/** The member's children doing main's request `j.request` (its record's `main:<req>` work). */
+async function requestChildren(root: string, j: SuperTeamJob): Promise<RequestChildFact[]> {
+  if (!j.request) return [];
+  let s: SuperState;
+  try { s = await readSuperState(root, superIdOfMember(j.member), superSanitizeOpts()); } catch { return []; }
+  const out: RequestChildFact[] = [];
+  for (const [sid, ch] of Object.entries(s.children)) {
+    if (ch.endedAt !== undefined || ch.workOrigin !== `main:${j.request}`) continue;
+    const texts = getChat(sid)?.lastAssistantText ?? [];
+    out.push({ sid, ...(ch.row ? { row: ch.row } : {}), since: ch.workingSince ?? ch.startedAt, last: texts[texts.length - 1] ?? '' });
+  }
+  return out;
+}
+
 /** What `super state` says a child is: the registry's activity while a process runs it, else
- *  `ended` (super end), `parked` (its tab is dormant) or `gone`. Never null. */
-export function liveChildStatus(ch: Pick<SuperChild, 'endedAt'>, activity: string | null, parked: boolean): string {
+ *  `ended` (super end), `parked` (its tab is dormant) or `gone`. Never null. An idle child whose
+ *  background work still holds it (`backgroundBusy`) is `background`, never idle (D3a: a reviewer
+ *  running in the background read as idle, and the Super nudged a child that was never stuck). */
+export function liveChildStatus(ch: Pick<SuperChild, 'endedAt'>, activity: string | null, parked: boolean, background = false): string {
+  if (activity === 'idle' && background) return 'background';
   if (activity && activity !== 'gone') return activity;
   if (ch.endedAt !== undefined) return 'ended';
   return parked ? 'parked' : 'gone';
@@ -3676,6 +4296,27 @@ export function childLastLine(texts: readonly string[], status: string): { line:
 }
 
 /**
+ * The `[dreamcontext]` hand-off-first line for new work sent to this child, or null
+ * (send-rotation.ts `newWorkLead`): Eco on for its pane, a Claude child, its current
+ * conversation at or past the child ladder's first rung, no record already rotating. Never throws.
+ */
+export function sendLeadFor(contextRoot: string, child: string, ch: { tool?: string; task?: string } | undefined, keep: boolean): string | null {
+  try {
+    if (keep) return null;
+    const tool = ch?.tool ?? 'claude';
+    if (tool !== 'claude') return null;
+    const ladder = resolveHandoffFor(contextRoot, dirname(contextRoot), child, { child: true });
+    if (!ladder.enabled) return null;
+    const path = liveTranscriptPath(contextRoot, child);
+    const ctx = path ? lastMainChainContext(path) : null;
+    const task = typeof ch?.task === 'string' && /^[a-z0-9][a-z0-9-]{0,200}$/.test(ch.task) ? ch.task : null;
+    return newWorkLead({ enabled: ladder.enabled, ctx, ladder, keep, task, tool, record: readHandoffRecord(contextRoot, child) });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * THE fallback of every Super verb that writes into a child through the window (`super allow`,
  * `super answer`, `super send`; field 2026-11-13: with the app in the background the window
  * answered none of them for minutes). Only when the window delivered nothing: it never answered
@@ -3692,6 +4333,19 @@ function serverDelivers(r: WindowResult, deliver: () => boolean): boolean {
 function answerByServer(child: string, requestId: string, respond: (req: OpenRequest) => RequestResponse | null): boolean {
   if (!pendingRequest(getChat(child), requestId)) return false;
   return crewHandle(child)?.answerRequest?.(requestId, respond) === true;
+}
+
+/** A child's open request as `super state` shows it: the newest one its process waits on, with
+ *  a question's words and option labels (fenced: a child's strings, D10). */
+function askingRow(e: ReturnType<typeof getChat>, vault: string): Record<string, unknown> | null {
+  const pq = e?.status === 'asking' ? e.pendingQuestion : null;
+  if (!pq) return null;
+  // The ones raised before it wait too (a batch of parallel calls): their ids, so none is hidden.
+  const earlier = (e?.earlierPending ?? []).map((p) => ({ requestId: p.requestId, kind: p.isPermission ? 'permission' : 'question' }));
+  const more = earlier.length ? { alsoWaiting: earlier } : {};
+  if (pq.isPermission) return { requestId: pq.requestId, kind: 'permission', ...more };
+  const words = [pq.text, ...pq.options.map((o, i) => `${i + 1}. ${o}`)].filter(Boolean).join('\n');
+  return { requestId: pq.requestId, kind: 'question', ...(words ? { question: wrapUntrusted(vault, words) } : {}), ...more };
 }
 
 function isLiveChat(sid: string): boolean {
@@ -3727,6 +4381,15 @@ const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
 
 /** An idle child's window to leave on stdin EOF before it is cut. A forced end gives none. */
 const END_EXIT_GRACE_MS = 2000;
+
+/** `end`'s answer for several children: a refusal is never silent, `refused` lists them and `notEnded` + `warning` say so. */
+function endAnswer(results: EndResult[]): Record<string, unknown> {
+  const refused = results.filter((x) => !x.ended);
+  return {
+    ended: results.filter((x) => x.ended).map((x) => x.child), refused,
+    ...(refused.length ? { notEnded: true, warning: `${refused.length} child${refused.length === 1 ? ' was' : 'ren were'} NOT ended (${refused.map((x) => `${x.child}: ${x.reason ?? 'refused'}`).join('; ')}): they still run` } : {}),
+  };
+}
 
 interface EndResult { child: string; ended: boolean; reason?: string; message?: string; background?: number; noProcess?: boolean }
 
@@ -3848,6 +4511,206 @@ export async function retireChildren(contextRoot: string, sids: readonly string[
   return ended;
 }
 
+/**
+ * The super agent's OWN question to the owner (plan r4 D7): never about a permission, one open
+ * at a time, its options drawn and sent exactly as validated here. `super ask` and `super returns
+ * ask` (K8) both go through it: `o.onQueued` runs once the ask is really queued (never on a
+ * refusal), `o.extra` rides on the answer.
+ */
+async function askOwner(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse, o: { onQueued?: (id: string) => Promise<void>; extra?: (id: string) => Record<string, unknown> } = {}): Promise<void> {
+  if (!requireHandedOver(c, res)) return;
+  const session = c.state.session as string;
+  // A member's Super names whose work the question is about (`--for <item|owner>`, plan-r10 1);
+  // its routing by audience is Wave 2 step A2.
+  const askFor = workForArg(c, b);
+  if ('error' in askFor) { refuse(res, askFor.status, askFor.error, askFor.message); return; }
+  // Its audience (plan-r10 1): a member's question goes where the turn's work came from (`--for`
+  // overrides): the owner, or main Super for a request it gave. One open ask per audience.
+  const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
+  const toMain = isMainWork(audience);
+  // A member's question asked in HIS own conversation with it (the turn is his message's, not
+  // work the Super Agent gave): his alone, never routed through the Super Agent (owner 2026-11-15).
+  const ownerTalk = c.superId !== 'main' && !toMain && memberTurnOrigin(session) === 'owner';
+  const openAsk = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain);
+  // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
+  let spec: SuperAskSpec;
+  if (b.ask !== undefined) {
+    const r = cleanAskSpec(b.ask);
+    if (!r.ok) { refuse(res, 400, 'invalid_ask', r.error); return; }
+    spec = r.spec;
+  } else {
+    const raw = typeof b.text === 'string' ? askLine(b.text) : '';
+    if (!raw) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
+    if (raw.length > MAX_OWNER_TEXT) { refuse(res, 400, 'invalid_args', `the question is at most ${MAX_OWNER_TEXT} characters`); return; }
+    const legacy = cleanAskOptions(b.options);
+    if (!legacy) {
+      refuse(res, 400, 'invalid_options', `at most ${MAX_ASK_OPTIONS} options, each one line of 1-${MAX_ASK_OPTION} characters, no duplicates (a longer label is refused, never cut)`);
+      return;
+    }
+    spec = askSpecFromLegacy(raw, legacy);
+  }
+  // D7: a `$` the shell ate (`$6,99` arrived as `,99`): refused, naming the field (after --json too).
+  const ate = shellAteField(spec);
+  if (ate) { refuse(res, 400, 'shell_ate_text', shellAteMessage(ate), { field: ate }); return; }
+  // D6 (C4): the same card again is the open card, never a second one, and no second --show prep.
+  const key = cardKey(spec);
+  const sameOpen = !!openAsk && openAskKey(openAsk) === key;
+  if (openAsk && (sameOpen && toMain)) { ok(res, { item: openAsk.id, id: openAsk.id, repeated: true, note: REPEATED_NOTE }); return; }
+  if (openAsk && !sameOpen) {
+    // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
+    // close it once he has moved on, so a card he left open never blocks the next question.
+    refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\``);
+    return;
+  }
+  // A card read cold carries what it points at (owner 2026-11-08: "örnek yok ama örnekteki
+  // gibi diyor"); only an explicit --show of the cards it means stands in for that.
+  const offCard = offCardReferences(spec, { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true });
+  if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
+  const { ownerText: raw, options } = askSummary(spec);
+  if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
+  // Its pictures (task a-picture-question…): `--show`, else the option previews; nothing else.
+  // The same card already open (D6): no prep; the write below confirms it is still open, and
+  // if it was answered meanwhile the new card gets its prep and one more try (never pictureless).
+  let prep: AskShowPrep | null = null;
+  if (!sameOpen) {
+    prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
+    if (!prep) return;
+  }
+  const batch = superOpenBatch(session);
+  const id = newQueueId();
+  const now = Date.now();
+  let pushed = false;
+  let repeated: string | null = null;
+  let needPrep = false;
+  let shown: ReturnType<typeof applyAskShow> = null;
+  const write = () => writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+    // Refused by a question already open: no card is opened, nothing mirrors (D6).
+    // One open ask per audience (plan-r10 1): a member's question to main Super never holds his.
+    const open = s.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin));
+    if (open) { if (openAskKey(open) === key) repeated = open.id; return; }
+    if (!prep) { needPrep = true; return; }
+    s.queue.push({
+      id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
+      ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
+      ...(askFor.origin ? { workOrigin: askFor.origin } : {}),
+      ...(ownerTalk ? { ownerTalk: true as const } : {}),
+    });
+    pushed = true;
+    noteOwnerBatch(s, batch ?? undefined);
+    shown = applyAskShow(s, id, prep, c.who.contextRoot, now);
+    // The report cards it shows: his card points at them, "To read: <card> →" (owner 2026-10-30).
+    const read = readCardsOf(s, shown);
+    if (read.length) {
+      const item = s.queue.find((q) => q.id === id);
+      if (item) item.read = read;
+    }
+  });
+  let state = await write();
+  if (needPrep && !repeated) {
+    prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
+    if (!prep) return;
+    needPrep = false;
+    state = await write();
+  }
+  if (repeated) { ok(res, { item: repeated, id: repeated, repeated: true, note: REPEATED_NOTE }); return; }
+  if (!pushed || !prep) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner: wait for his answer, or if he said to drop it, close it with `dreamcontext super queue done <ask id>` (`super state`) and ask again'); return; }
+  // The record's queue was full: the store dropped it (its cards are put back on the next write).
+  if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
+  const show = finishAskShow(c, state, id, prep, shown);
+  // Its turn's end is no second ping once the question reached him (owner-question.ts); a
+  // Telegram copy counts only once it landed, so its send is waited for (bounded).
+  await settleOwnerReach(id);
+  const reach = ownerQuestionReach(state, id);
+  if (reach.reached) noteSuperEscalation(session);
+  const head = superQueueHead(state);
+  // A start/approve question with no report card, or a preview that is a text to read: sent
+  // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
+  const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
+  // A member's Super: what really carries it is main's bar (its mirror), Super first (K8, K9).
+  const via = callerSuper(c) !== 'main' && !toMain
+    ? await memberAskReach(superKey(c.who.contextRoot, callerSuper(c)), state, id).catch(() => null) : null;
+  const told = via ? { ...reach, note: via.note, mirrored: via.mirrored, ...(via.superFirst ? { superFirst: true } : {}), ...(via.mirrored ? { reached: true } : {}) } : reach;
+  if (o.onQueued) await o.onQueued(id);
+  ok(res, { item: id, asked: true, waiting: head?.id !== id, ...told, show, ...(warning ? { warning } : {}), ...(o.extra ? o.extra(id) : {}) });
+}
+
+/**
+ * `super returns ask --topic <t>` (K8, D16): the server computes the cut's returns, writes the
+ * Turkish report page, opens it as a card and asks the owner ONE fixed card through the same
+ * path as `super ask`. The same list (`key`) answered before is never asked again, from any
+ * session; `returnsAsked[t]` is written only once the ask is really queued.
+ */
+async function returnsAsk(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse): Promise<void> {
+  if (!requireHandedOver(c, res)) return;
+  const topic = str(b.topic);
+  if (!topic || !SUPER_SLUG_RE.test(topic)) { refuse(res, 400, 'invalid_args', '--topic is the cut\'s topic (a-z, 0-9, -): super/<topic>'); return; }
+  const root = c.who.contextRoot;
+  const branch = `super/${topic}`;
+  const repos = resolveLinkedRepos(dirname(root)).filter((r) => r.present && r.path).map((r) => ({ name: r.name, path: r.path as string }));
+  let repo: { name: string; path: string } | undefined;
+  const named = str(b.repo);
+  if (named) {
+    repo = repos.find((r) => r.name === named);
+    if (!repo) { refuse(res, 404, 'unknown_repo', `no linked repo named ${named} on this machine`); return; }
+  } else {
+    const holders: Array<{ name: string; path: string }> = [];
+    for (const r of repos) if ((await git(r.path, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])).code === 0) holders.push(r);
+    if (holders.length !== 1) {
+      refuse(res, 409, holders.length ? 'ambiguous_repo' : 'unknown_topic', holders.length
+        ? `${branch} is in several linked repos (${holders.map((h) => h.name).join(', ')}): name one with --repo`
+        : `no linked repo has ${branch}`);
+      return;
+    }
+    repo = holders[0];
+  }
+  const report = await bounded(() => pendingReturns(repo!.path, branch), MERGE_RETURNS_MS);
+  if (!('key' in report)) { refuse(res, 502, 'returns_failed', `the returns of ${branch} could not be read: ${report.error}`); return; }
+  if (!report.awaiting.length) { ok(res, { nothing: true, topic, key: report.key, ...(report.error ? { devError: report.error } : {}) }); return; }
+  const prev = c.state.returnsAsked?.[topic];
+  if (prev && prev.key === report.key && prev.answer !== undefined) {
+    refuse(res, 409, 'returns_asked', `this list of ${branch} was already asked (${prev.askId}) and answered: "${prev.answer}". Act on that answer; a changed list is asked again`, { askId: prev.askId, answer: prev.answer, key: report.key });
+    return;
+  }
+  // A question already open with the owner: refused before the page or its card exist (askOwner
+  // refuses it too; this keeps a refused ask from leaving a stray report card on the stage).
+  const open = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin));
+  if (open) { refuse(res, 409, 'ask_open', `you already have a question open with the owner (${open.id}): wait for his answer, or close it with \`dreamcontext super queue done ${open.id}\` and ask again`); return; }
+  // The report page, then its card: the same open path as `super open web <file>`.
+  const rel = `${basename(root)}/tmp/super/returns-${topic}.html`;
+  await fsp.mkdir(join(root, 'tmp', 'super'), { recursive: true });
+  await fsp.writeFile(join(root, 'tmp', 'super', `returns-${topic}.html`), renderReturnsPage(topic, report), 'utf-8');
+  let opened: string | null = null;
+  await openCards(c, { kind: 'web', ref: rel, title: `Kesim ${topic} → dev'e dönüş` }, res, {
+    full: tooMany,
+    done: (_res, result) => { opened = (result as { container?: { id?: string } }).container?.id ?? null; },
+  });
+  if (!opened) { if (!res.headersSent && !res.writableEnded) refuse(res, 500, 'card_not_opened', 'the report card could not be opened'); return; }
+  const n = report.awaiting.length;
+  const spec = {
+    title: `Kesim ${topic} → dev'e dönüş`,
+    source: 'returns',
+    questions: [{
+      question: `${n} dal dev'e dönmedi, hepsine taslak PR açayım mı?`,
+      header: 'Dev\'e dönüş',
+      description: `Bu dallar kurulu sürümde var ama dev'de yok; bir sonraki dev kesimi onları düşürür. Numaralı liste rapor kartında.`,
+      multiSelect: false,
+      options: [
+        { label: 'Hepsine aç', description: `Bir alt ajan ${n} dalı push eder; açık PR'ı olmayan her biri için dev'e taslak PR açar.` },
+        { label: 'Seçeyim', description: 'Notuna numaraları yaz (ör. 1, 3); yalnız onlara PR açılır.' },
+        { label: 'Şimdi değil', description: 'Hiçbir şey yapılmaz; aynı liste yeniden sorulmaz.' },
+      ],
+    }],
+  };
+  const fresh: SuperCaller = { ...c, state: await readSuperState(root, callerSuper(c), superSanitizeOpts()) };
+  const key = report.key;
+  await askOwner(fresh, { ask: spec, show: [opened] }, res, {
+    onQueued: async (askId) => {
+      await writeSuper(root, callerSuper(c), (s) => { s.returnsAsked = { ...(s.returnsAsked ?? {}), [topic]: { key, at: Date.now(), askId } }; });
+    },
+    extra: (askId) => ({ askId, card: opened, key, branches: report.awaiting.map((g, i) => `${i + 1}. ${g.name}`) }),
+  });
+}
+
 /** Record a child ended (the agent's `super end`, the owner's card close and the retire clock
  *  share it): its card goes, its open queue items close, a done `ended` item records who, when
  *  and its last brief. `guard` (the retire clock): written only while it still holds. */
@@ -3856,10 +4719,12 @@ async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperSt
   let done = false;
   /** The card items the end closes (sahip-karti-yerinde K2): their held results go to the Super. */
   let endedCards: SuperQueueItem[] = [];
+  let worktree: string | undefined;
   await writeSuper(contextRoot, (s) => {
     const x = s.children[sid];
     if (!x || (guard && !guard(s))) return;
     done = true;
+    worktree = x.worktree;
     x.endedAt = now;
     // Its job-list row rests in done (Bitti), never stuck or gone.
     setRow(x, 'done', undefined, now);
@@ -3883,6 +4748,8 @@ async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperSt
   // its kept form only; the receipts and their full forms leave with the item.
   // `contextRoot` is the record's own key here (a root names main, a member's key its record).
   if (endedCards.length) await ownerCardItemsLeft(contextRoot, endedCards).catch(() => undefined);
+  // K5: its clean worktree goes now (the branch stays); never awaited, never thrown to the end.
+  if (done && worktree) void sweepEnded({ root: superWorktreeRoot(), contextRoot: parseSuperKey(contextRoot).root, only: worktree, trigger: 'end' });
   return done;
 }
 
@@ -3900,6 +4767,11 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   // Main-only and member-only verbs (plan-r10 1): refused by WHO calls, before anything runs.
   const roleRefusal = superVerbRefusal(caller.superId, verb);
   if (roleRefusal) { refuse(res, 403, roleRefusal.error, roleRefusal.message); return; }
+  // The turn that tells the owner the first read's result writes one message and starts no work (C16).
+  if (FIRST_READ_BARRED_VERBS.has(verb) && batchHasFirstReadDone(caller.state, superOpenBatch(caller.who.sessionId))) {
+    refuse(res, 403, 'first_read_turn', 'This turn tells the owner the first read\'s result: write him one short message; starting work waits for his answer.');
+    return;
+  }
   // A child may be named by the first characters of its id (child-ref.ts); resolved once, here.
   const expanded = expandChildRefs(caller.state, verb, raw as Record<string, unknown>);
   if ('error' in expanded) {
@@ -3928,6 +4800,10 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     noteStageVerb({ vault: caller.who.vault, contextRoot: caller.who.contextRoot, sessionId: caller.who.sessionId, superId: caller.superId, verb: verb as StageVerbEvent['verb'], ids: cueIds(body as Record<string, unknown>, staged()) });
   }
 }
+
+/** The verbs that start work, refused in the first read's result turn (C16). Exported for tests. */
+// `resume` and `send` restart or feed a child: a second read, the work C16 keeps for his answer.
+export const FIRST_READ_BARRED_VERBS = new Set<SuperVerb>(['delegate', 'pool-add', 'team-ask', 'schedule', 'resume', 'send']);
 
 /** The verbs that change what the owner's window shows: each reply names `window`. */
 const SCREEN_VERBS = new Set<SuperVerb>(['open', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'shape']);
@@ -4138,16 +5014,16 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   // A layout picked on a queued item is that item's own (D8): the queue does not move.
   if (ownerView.presentLayout) notePresentLayout(s);
   // His queue gesture, on the item his window showed (D2, AC2, AC5).
-  if (step) ownerQueueStep(s, step.op, step.item, askStillOpen(s));
+  if (step) ownerQueueStep(s, step.op, step.item);
   return s;
 }
 
-/** The owner's queue gesture in a layout body: `{ op: next|leave|resume, item: pq… }`. */
-export function readQueueStep(body: Record<string, unknown>): { op: 'next' | 'leave' | 'resume'; item: string } | null {
+/** The owner's queue gesture in a layout body: `{ op: next|leave|resume|drop, item: pq… }`. */
+export function readQueueStep(body: Record<string, unknown>): { op: QueueStepOp; item: string } | null {
   const v = body.queue;
   const r = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
-  if (!r || (r.op !== 'next' && r.op !== 'leave' && r.op !== 'resume') || typeof r.item !== 'string' || !PRESENT_ITEM_ID_RE.test(r.item)) return null;
-  return { op: r.op, item: r.item };
+  if (!r || !(QUEUE_STEP_OPS as readonly unknown[]).includes(r.op) || typeof r.item !== 'string' || !PRESENT_ITEM_ID_RE.test(r.item)) return null;
+  return { op: r.op as QueueStepOp, item: r.item };
 }
 
 
@@ -4437,6 +5313,8 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       queued = true;
     });
     if (queued) void pumpSuper(contextRoot, superId);
+    // The owner's New session is a main Super session entry: due migration work gets its event.
+    if (queued && superId === 'main') void checkMigrationDue(contextRoot);
     sendJson(res, 200, { queued });
   },
 };
@@ -4570,3 +5448,213 @@ export async function handleSuperAgendaDays(req: IncomingMessage, res: ServerRes
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');
 export const handleSuperOwedDrop = ownerRoute('owed');
+
+// ─── The first read (plan ilk-acilis C15) ─────────────────────────────────────────
+
+/** Why a first read did not start, as the window says it (C17). */
+export type FirstReadRefusal = 'not_eligible' | 'claude_not_ready' | 'super_off' | 'limited' | 'cap_full' | 'in_flight' | 'no_window' | 'failed';
+
+/** The 1 h ceiling past which a usage reading is too old to refuse on. */
+const USAGE_READ_CEILING_MS = 60 * 60_000;
+
+/** Pure: is the account limited now? Any fresh window at 100% or more that has not reset, or one
+ *  the CLI reports locked. No reading (or a stale one) = not limited. */
+export function usageLimitedNow(u: Pick<UsageLimitsResponse, 'limits' | 'fetchedAtMs'>, now: number): boolean {
+  if (u.fetchedAtMs === null || now - u.fetchedAtMs > USAGE_READ_CEILING_MS) return false;
+  return u.limits.some((l) => l.resetsAt > now && (l.percent >= 100 || !!l.lockedReason));
+}
+
+/** The world the first-read route reads, injectable for tests. */
+export interface FirstReadDeps {
+  eligible: (root: string) => boolean;
+  claudeReady: () => Promise<boolean>;
+  usage: () => Pick<UsageLimitsResponse, 'limits' | 'fetchedAtMs'>;
+  now: () => number;
+}
+
+const defaultFirstReadDeps: FirstReadDeps = {
+  eligible: (root) => firstReadEligible(root),
+  claudeReady: async () => {
+    const picked = pickedAgents();
+    if (picked && !picked.includes('claude')) return false;
+    const report = await getReadiness(serverProbeContext('desktop'));
+    return serverCanStartClaude(report);
+  },
+  usage: () => readUsageLimits(resolveConfigDir(null)),
+  now: Date.now,
+};
+let firstReadDeps: FirstReadDeps = defaultFirstReadDeps;
+/** Tests only. */
+export function setFirstReadDepsForTests(d: Partial<FirstReadDeps> | null): void {
+  firstReadDeps = d ? { ...defaultFirstReadDeps, ...d } : defaultFirstReadDeps;
+}
+
+/** The lock's length (C15 step 2): the whole window a late start may still land in. */
+function firstReadLockMs(): number {
+  return delegateAnswerMs + delegateLateMs + 2 * delegateGraceMs;
+}
+
+/** The project's name as the card says it. */
+function projectTitle(root: string): string {
+  return basename(root).slice(0, 60) || 'this project';
+}
+
+/** Owner window + the shell's key: a no-Origin `curl` passes the window check, never the key. */
+function requireFirstReadOwner(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!requireSuperOwner(req, res)) return false;
+  if (!hasOwnerKey(req)) {
+    sendJson(res, 403, { ok: false, error: 'owner_page_only', message: 'Only the app\'s own window can do this.' });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * GET /api/super/first-read: `{ pending }` only (is the offer up for this project?), never the
+ * marker's path. POST: start the read (C15), from the Start reading click only. No body field is
+ * read. Main's Super only; vault-scoped.
+ */
+export async function handleSuperFirstReadGet(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireFirstReadOwner(req, res)) return;
+  const root = dirname(contextRoot);
+  let pending = false;
+  try { pending = firstReadDeps.eligible(root); } catch { pending = false; }
+  // `starting`: a start is in flight (the lock), its child not recorded yet. A window that
+  // showed "Reading started" for a pending start falls back to the offer only when neither a
+  // claim nor a start in flight remains (review r1: a late start that never opened).
+  sendJson(res, 200, { pending, starting: firstReadLockHeld(contextRoot) });
+}
+
+export async function handleSuperFirstReadPost(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireFirstReadOwner(req, res)) return;
+  const r = await startFirstRead(contextRoot);
+  sendJson(res, r.ok ? 200 : 409, r);
+}
+
+export type FirstReadStart =
+  | { ok: true; child?: string; pending?: true }
+  | { ok: false; error: FirstReadRefusal; message: string };
+
+const FIRST_READ_WORDS: Record<FirstReadRefusal, string> = {
+  not_eligible: 'This project is not offered a first read.',
+  claude_not_ready: 'Claude is not ready on this Mac yet.',
+  super_off: 'The Super Agent is not running in this project yet.',
+  limited: 'Your plan\'s usage limit is reached for now.',
+  cap_full: 'Too many jobs are running right now.',
+  in_flight: 'A first read is already running.',
+  no_window: 'The app window did not open the reading.',
+  failed: 'The reading could not start.',
+};
+
+const refusal = (error: FirstReadRefusal): FirstReadStart => ({ ok: false, error, message: FIRST_READ_WORDS[error] });
+
+/** C15, in order: every refusal writes nothing; the claim is written where the start is recorded. */
+export async function startFirstRead(contextRoot: string): Promise<FirstReadStart> {
+  const root = dirname(contextRoot);
+  const d = firstReadDeps;
+  // 1. Refusals, each writing nothing.
+  let eligible = false;
+  try { eligible = d.eligible(root); } catch { eligible = false; }
+  if (!eligible) return refusal('not_eligible');
+  if (!(await d.claudeReady().catch(() => false))) return refusal('claude_not_ready');
+  let state: SuperState;
+  try { state = await readSuperState(contextRoot, 'main', superSanitizeOpts()); } catch { return refusal('super_off'); }
+  const token = state.enabled && state.session ? superTokenOfSession(state.session) : null;
+  const who = token ? identityOf(token) : null;
+  if (!token || !who) return refusal('super_off');
+  if (usageLimitedNow(d.usage(), d.now())) return refusal('limited');
+  const live = Object.values(state.children).some((ch) => ch.firstRead === true && ch.endedAt === undefined && ch.row !== 'done' && ch.row !== 'gone' && ch.row !== 'stuck');
+  if (live || firstReadLockHeld(contextRoot)) return refusal('in_flight');
+  // 2. The in-process lock.
+  if (!takeFirstReadLock(contextRoot, firstReadLockMs())) return refusal('in_flight');
+  // 3. The delegate core, captured (no HTTP reply of its own), never pooled.
+  let status = 0;
+  let json: Record<string, unknown> = {};
+  const sink = {
+    writeHead: (s: number) => { status = s; return sink; },
+    setHeader: () => sink,
+    setTimeout: () => sink,
+    end: (b?: string) => { try { json = JSON.parse(b ?? '{}') as Record<string, unknown>; } catch { json = {}; } },
+    headersSent: false,
+  } as unknown as ServerResponse;
+  const title = `Reading ${projectTitle(root)}`;
+  const job: Job = { prompt: FIRST_READ_PROMPT, title, brief: title, mode: 'basic', model: 'opus', effort: 'medium', mcp: [] };
+  let recorded = false;
+  const extra: DelegateExtra = {
+    noPool: true,
+    firstRead: true,
+    onRecorded: (sid, startError) => {
+      recorded = true;
+      // 4. The claim, once, only for a child that started; the marker's pending goes with it.
+      if (!startError) {
+        try { writeFirstReadClaim(root, sid); } catch (err) { console.warn(`[super] first read ${sid}: the claim was not written: ${(err as Error).message}`); }
+        clearPending(root);
+      }
+      releaseFirstReadLock(contextRoot);
+    },
+    onLateEmpty: () => releaseFirstReadLock(contextRoot),
+  };
+  try {
+    await delegateJob({ token, who, superId: 'main', state }, sink, contextRoot, job, undefined, undefined, undefined, undefined, undefined, undefined, extra);
+  } catch {
+    releaseFirstReadLock(contextRoot);
+    return refusal('failed');
+  }
+  if (status === 200 && json.ok === true) {
+    const result = (json.result ?? {}) as Record<string, unknown>;
+    if (result.pending === true) return { ok: true, pending: true };
+    const child = typeof result.sessionId === 'string' ? result.sessionId : undefined;
+    if (result.started === false) return refusal('failed');
+    return { ok: true, ...(child ? { child } : {}) };
+  }
+  const error = typeof json.error === 'string' ? json.error : '';
+  // 5. Every other outcome writes nothing and releases the lock; an unconfirmed start keeps it
+  //    until it expires (a child that lands late still writes the claim through step 4).
+  if (error !== 'delegate_unconfirmed' && !recorded) releaseFirstReadLock(contextRoot);
+  if (error === 'held' || error === 'pool_full') return refusal('cap_full');
+  if (error === 'no_window' || error === 'delegate_unconfirmed') return refusal('no_window');
+  return refusal('failed');
+}
+
+/**
+ * The server's own resume of a child whose process ended while its own background work ran
+ * (owner 2026-11-23: three children ended mid-job overnight, their work died with them, and the
+ * owner heard each as `gone`). The same checks as `super resume` (a live process, its transcript,
+ * the worktree's one live session, the live-children cap), the same start (the window, or the
+ * server itself when no window is there). False = not reopened: the Super hears a `gone` that
+ * says the work was cut (inbox CUT_LINE), never a result.
+ */
+export async function resumeCutChild(key: string, child: string): Promise<boolean> {
+  if (isLiveChat(child)) return true;
+  const { root, superId } = parseSuperKey(key);
+  // Main's children only: a member's child's arrival is watched on main's record (expectChild),
+  // so a reopen that never came would leave its row working for good. It gets `gone background=cut`.
+  if (superId !== 'main') return false;
+  const state = await readSuperState(root, superId, superSanitizeOpts()).catch(() => null);
+  const ch = state?.children[child];
+  if (!state || !state.enabled || !ch || ch.endedAt !== undefined || ch.adopted) return false;
+  if (phoneHeld(child) || !liveTranscriptPath(root, child)) return false;
+  if ((ch.worktree || ch.branch) && liveChildInWorktree(state, { path: ch.worktree, branch: ch.branch }, child)) return false;
+  const live = (await readVaultLive(root).catch(() => 0)) + vaultDelegating(root) + vaultStarting(root);
+  if (!delegationAllowed(state, Date.now(), live).ok) return false;
+  const token = state.session ? superTokenOfSession(state.session) : null;
+  const mode = ch.mode ?? 'basic';
+  noteResuming(child, true);
+  try {
+    let r: WindowResult = token
+      ? await sendSuperCommand(token, 'resume', { child, mode, model: ch.model ?? '', effort: ch.effort ?? '', title: ch.brief })
+      : { ok: false, error: 'no_window', sent: false } as WindowResult;
+    if (!r.ok && r.error === 'no_window' && r.sent === false && (!token || windowGone(token))) {
+      const h = await startChildHeadless({ contextRoot: root, resumeId: child, mode, model: ch.model, effort: ch.effort, mcp: ch.mcp ?? [], tool: ch.tool, member: memberOfSuperId(superId) });
+      if (h.ok) r = { ok: true, result: undefined } as WindowResult;
+    }
+    if (!r.ok) return false;
+    if (!isLiveChat(child)) expectChild(root, child);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    noteResuming(child, false);
+  }
+}
+setCutChildResumer(resumeCutChild);

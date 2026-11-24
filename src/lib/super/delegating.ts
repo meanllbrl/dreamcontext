@@ -74,5 +74,55 @@ export function consumeCrewTicket(ticket: unknown, root: string, now = Date.now(
   return memberOfSuperId(v.superId);
 }
 
+// ─── The first read (plan ilk-acilis C15, C15a) ───────────────────────────────────
+
+/**
+ * A first read's start rides the main Super's `delegate` frame with a one-time ticket in the same
+ * `crewTicket` field (the window binds it to the child like a member's), kept in ITS OWN store: a
+ * child connection that presents it is the first-read child and spawns `auto` with no MCP,
+ * whatever the URL says. A forged or replayed ticket finds nothing here and can only narrow.
+ */
+const firstReadTickets = new Map<string, { root: string; until: number }>();
+
+export function mintFirstReadTicket(root: string, now = Date.now(), ttlMs = CREW_TICKET_TTL_MS): string {
+  for (const [t, v] of firstReadTickets) if (now > v.until) firstReadTickets.delete(t);
+  const ticket = randomBytes(18).toString('hex');
+  firstReadTickets.set(ticket, { root: resolve(root), until: now + Math.max(CREW_TICKET_TTL_MS, ttlMs) });
+  return ticket;
+}
+
+/** True once for a valid first-read ticket of this vault (consumed: a second use is false). */
+export function consumeFirstReadTicket(ticket: unknown, root: string, now = Date.now()): boolean {
+  if (typeof ticket !== 'string' || !/^[0-9a-f]{36}$/.test(ticket)) return false;
+  const v = firstReadTickets.get(ticket);
+  if (!v) return false;
+  firstReadTickets.delete(ticket);
+  return now <= v.until && v.root === resolve(root);
+}
+
+/** The per-vault first-read lock (C15 step 2): held from the start call until the claim is
+ *  written, the start failed, or `until` passes. Read by the chat spawn to fail closed. */
+const firstReadLocks = new Map<string, number>();
+
+/** Take the lock for `ms`; false when it is already held (a read is in flight). */
+export function takeFirstReadLock(root: string, ms: number, now = Date.now()): boolean {
+  const k = resolve(root);
+  const until = firstReadLocks.get(k);
+  if (until !== undefined && now <= until) return false;
+  firstReadLocks.set(k, now + ms);
+  return true;
+}
+
+export function releaseFirstReadLock(root: string): void {
+  firstReadLocks.delete(resolve(root));
+}
+
+export function firstReadLockHeld(root: string, now = Date.now()): boolean {
+  const until = firstReadLocks.get(resolve(root));
+  if (until === undefined) return false;
+  if (now > until) { firstReadLocks.delete(resolve(root)); return false; }
+  return true;
+}
+
 /** Tests only. */
-export function _resetDelegating(): void { delegating.clear(); tickets.clear(); }
+export function _resetDelegating(): void { delegating.clear(); tickets.clear(); firstReadTickets.clear(); firstReadLocks.clear(); }

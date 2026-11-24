@@ -263,7 +263,15 @@ export function insertToSection(
     // ran off the section's end — go back under the header, else the content
     // lands glued to the NEXT section's `##` line.
     if (insertAt > section.endLine) insertAt = section.startLine + 1;
-    lines.splice(insertAt, 0, '', ...contentLines);
+    // The scan above stopped past the blank run under the header/comment.
+    // Drop that run and write exactly one blank before and after the new
+    // block, so repeated inserts never accumulate blank lines.
+    let from = insertAt;
+    while (from - 1 > section.startLine && (lines[from - 1]?.trim() ?? '') === '') from--;
+    lines.splice(from, insertAt - from);
+    const block = ['', ...contentLines];
+    if (lines[from] !== undefined && lines[from].trim() !== '') block.push('');
+    lines.splice(from, 0, ...block);
   } else {
     // Insert after the last non-blank content line of the section.
     let last = section.endLine;

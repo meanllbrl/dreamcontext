@@ -116,7 +116,7 @@ export function renderSuperHandoffFile(entries: readonly string[], updated: stri
  * (best-effort): the project's `.gitignore`, and the brain repo's own `_dream_context/.gitignore`
  * when it has one, so a vault set up before this file existed never commits it.
  */
-function ensureSuperDir(contextRoot: string, superId: string = 'main'): string {
+export function ensureSuperDir(contextRoot: string, superId: string = 'main'): string {
   const stateDir = join(contextRoot, 'state');
   const dir = dirname(superHandoffPath(contextRoot));
   const own = dirname(superHandoffPath(contextRoot, superId));

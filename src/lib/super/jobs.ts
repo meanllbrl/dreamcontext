@@ -33,6 +33,14 @@ export interface Job {
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
   tool?: SuperChildTool;
+  /**
+   * `delegate --fast|--full` (plan sirket-yavaslik D3): the lane the server writes into the
+   * worktree's git folder. Only with a worktree; the code still checks the diff (run-lane.ts).
+   */
+  laneIntent?: 'fast' | 'full';
+  /** The due agent migration task ids (`delegate --migration`): set ONLY by the server, never
+   *  parsed from a verb's body, so `pool add` or a plain `delegate` can never carry it. */
+  migration?: string[];
 }
 
 // eslint-disable-next-line no-control-regex
@@ -72,6 +80,9 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
   if ('error' in mcp) return { error: mcp.error };
   const tool = str(b.tool);
   if (tool && tool !== 'claude' && tool !== 'codex' && tool !== 'antigravity') return { error: 'tool must be claude, codex or antigravity' };
+  const laneIntent = str(b.laneIntent);
+  if (laneIntent && laneIntent !== 'fast' && laneIntent !== 'full') return { error: 'laneIntent must be fast or full' };
+  if (laneIntent && !worktree) return { error: '--fast and --full need --worktree: the lane lives in the worktree' };
   const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
   const title = (brief || firstLine(prompt, 60)).slice(0, MAX_TITLE);
   return {
@@ -82,6 +93,7 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
       ...(task ? { task } : {}),
       ...(mcp.names.length ? { mcp: mcp.names } : {}),
       ...(tool === 'codex' || tool === 'antigravity' ? { tool } : {}),
+      ...(laneIntent === 'fast' || laneIntent === 'full' ? { laneIntent } : {}),
     },
   };
 }

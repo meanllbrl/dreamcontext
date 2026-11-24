@@ -963,3 +963,84 @@ describe('shouldRotateForHandoff', () => {
     expect(shouldRotateForHandoff(undefined)).toBe(false);
   });
 });
+
+describe('D18: a taskless Super child at the hard band hands off (iyilesme-360)', () => {
+  const child = {} as NonNullable<NonNullable<Parameters<typeof renderNudge>[4]>['child']>;
+  it('severe: the HANDOFF: step, no "finish small work in this session"', () => {
+    const out = renderNudge(660_000, LADDER, null, 'severe', { child });
+    expect(out).toContain('HANDOFF:');
+    expect(out).toContain('End this turn now');
+    expect(out).not.toContain('finish small work in this session');
+  });
+  it('firm: today\'s text, still naming small work', () => {
+    const out = renderNudge(320_000, LADDER, null, 'firm', { child });
+    expect(out).toContain('finish small work in this session');
+    expect(out).not.toContain('HANDOFF:');
+  });
+  it('a task child and the Super keep their severe text', () => {
+    expect(renderNudge(660_000, LADDER, 'some-task', 'severe', { child })).not.toContain('HANDOFF:');
+    expect(renderNudge(660_000, LADDER, null, 'severe', { superAgent: true })).not.toContain('HANDOFF:');
+  });
+});
+
+// ─── a Super child's ladder (super-cocuk-tasarruf D1, criteria 1-3) ─────────────────────────
+import { superStatePath } from '../../src/lib/super/store.js';
+
+describe('a Super child runs the child ladder; every other pane the human one', () => {
+  const CHILD = '33333333-4444-5555-6666-777777777777';
+  const SUPER_PANE = '44444444-5555-6666-7777-888888888888';
+  const writeSuper = () => {
+    const p = superStatePath(contextRoot);
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, JSON.stringify({ enabled: true, session: SUPER_PANE, children: { [CHILD]: { startedAt: '2026-11-22T10:00:00.000Z' } } }));
+  };
+  const config = (handoff: Record<string, unknown>) => writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({
+    platforms: [], packs: [], multiProduct: false, setupVersion: '1', contextHandoff: handoff,
+  }), 'utf-8');
+  const hook = (tab: string, tokens: number) => maybeNudge(
+    contextRoot,
+    { session_id: tab, transcript_path: transcript([usage({ cache_read_input_tokens: tokens })], `${tab}-${tokens}.jsonl`) },
+    { DREAMCONTEXT_TAB_SESSION: tab } as NodeJS.ProcessEnv,
+  );
+
+  it('the resolver: child 250k / 400k / 50k; the Super pane, an owner pane and a terminal 300k / 650k / 100k', () => {
+    config({ enabled: true });
+    writeSuper();
+    expect(resolveHandoffFor(contextRoot, projectRoot, CHILD)).toEqual({ enabled: true, nudgeAt: 250_000, hardAt: 400_000, remindEvery: 50_000 });
+    expect(resolveHandoffFor(contextRoot, projectRoot, SUPER_PANE)).toEqual({ enabled: true, nudgeAt: 300_000, hardAt: 650_000, remindEvery: 100_000 });
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB)).toEqual({ enabled: true, nudgeAt: 300_000, hardAt: 650_000, remindEvery: 100_000 });
+    expect(resolveHandoffFor(contextRoot, projectRoot, null)).toEqual({ enabled: true, nudgeAt: 300_000, hardAt: 650_000, remindEvery: 100_000 });
+    // The spawn-time hint answers before the record names the child.
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB2, { child: true }).nudgeAt).toBe(250_000);
+    // The toggle echo reads the same answer.
+    expect(applyPaneHandoffToggle(contextRoot, projectRoot, CHILD, false)).toEqual({ enabled: false, nudgeAt: 250_000, hardAt: 400_000, remindEvery: 50_000 });
+  });
+
+  it('a contextHandoff.child block moves the child ladder and survives a config write', () => {
+    config({ enabled: true, child: { nudgeAt: 220_000, remindEvery: 40_000 } });
+    writeSuper();
+    updateSetupConfig(projectRoot, { contextHandoff: { ...readSetupConfig(projectRoot)!.contextHandoff, enabled: false } });
+    expect(readSetupConfig(projectRoot)?.contextHandoff?.child).toEqual({ nudgeAt: 220_000, remindEvery: 40_000 });
+    expect(resolveHandoffFor(contextRoot, projectRoot, CHILD)).toMatchObject({ nudgeAt: 220_000, hardAt: 400_000, remindEvery: 40_000 });
+  });
+
+  it('the hook: a child is nudged at 250k (red on the human ladder), severe from 400k; an owner pane not until 300k', () => {
+    config({ enabled: true });
+    writeSuper();
+    expect(hook(CHILD, 240_000)).toBeNull();
+    const first = hook(CHILD, 260_000);
+    expect(first).toContain('past the 250k handoff threshold');
+    expect(hook(CHILD, 290_000)).toBeNull();
+    expect(hook(CHILD, 312_000)).toContain('[context handoff]');
+    expect(hook(CHILD, 410_000)).toContain('HAND OFF NOW');
+    expect(hook(TAB, 260_000)).toBeNull();
+    expect(hook(TAB, 310_000)).toContain('past the 300k handoff threshold');
+  });
+
+  it('Eco off: no nudge for a child at any size', () => {
+    // The switch is the pane's own CHOSEN answer, else this Mac's Eco mode (`.config.json` no longer decides).
+    writeTabHandoff(contextRoot, CHILD, { enabled: false, chosen: true });
+    writeSuper();
+    expect(hook(CHILD, 900_000)).toBeNull();
+  });
+});

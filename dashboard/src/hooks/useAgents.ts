@@ -463,6 +463,8 @@ export interface AgentHistorySession {
   elsewhere?: true;
   truncated?: true;
   missing?: true;
+  /** A run's rating request facts (W3 C9): its first terminal entry and whether it asks. */
+  request?: { eligible: boolean; endedAt: string; status?: string };
   rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[]; origin?: 'answer' | 'failure' | 'note' }>;
 }
 

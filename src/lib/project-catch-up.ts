@@ -85,6 +85,9 @@ export interface CatchUpDeps {
   stopped?: () => boolean;
   /** Refresh the Codex and Antigravity kits for these projects (tool-kits-refresh.ts). */
   refreshKits?: (cliVersion: string, projects: KitProject[]) => void;
+  /** A project was brought up to the CLI (its `update` ran clean): the server's after-update
+   *  checks (agent migration work for its Super, super/migration-event.ts). Never throws into the run. */
+  onUpdated?: (projectRoot: string) => void;
 }
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
@@ -401,6 +404,7 @@ async function catchUp(deps: CatchUpDeps): Promise<CatchUpResult> {
           triedThisStart.delete(p.path);
           result.updated.push(p.name);
           save();
+          try { deps.onUpdated?.(p.path); } catch { /* the hook's own failure never stops the run */ }
           log(`updated: ${p.name} to ${target}${error ? ` (the run still reported: ${error.split('\n')[0]})` : ''}`);
           continue;
         }

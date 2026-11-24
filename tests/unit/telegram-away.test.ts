@@ -60,3 +60,17 @@ describe('app quit', () => {
     expect(existsSync(statePathOf(home))).toBe(true); // the tick never clears state (F1)
   });
 });
+
+describe('W3 E6: a star tap while the app is quit', () => {
+  it('answers the tap, says the stars were not recorded, records nothing; a tap that is no rating gets the plain line', async () => {
+    const { AWAY_RATE_LINE } = await import('../../src/lib/telegram/away.js');
+    tg.push(TOKEN, { callback_query: { id: 'cb-1', from: { id: 777 }, data: 's:0123456789abcdef:4', message: { message_id: 9, chat: { id: 777, type: 'private' } } } });
+    await telegramAwayTick(deps());
+    expect(tg.texts()).toEqual([AWAY_RATE_LINE]);
+    expect(tg.sent('answerCallbackQuery').map((c) => c.params.callback_query_id)).toEqual(['cb-1']);
+    // Seen once: the next tick says nothing more for it.
+    await telegramAwayTick(deps());
+    expect(tg.texts()).toEqual([AWAY_RATE_LINE]);
+    expect(readPollState(bindingDir(SCOPE, 'super', home), home).offset).toBe(0);
+  });
+});

@@ -16,10 +16,12 @@ describe('a question bar over a presentation', () => {
       const bar = 44;
       const p = planStage(items, present, { width, height: 814 }, { layoutChoices: 3, queueBand: 'step', queueUp: true, queueHeight: bar });
       const bandBottom = STAGE.MARGIN / 2 + bar;
-      expect(p.presentTabs!.y).toBeGreaterThanOrEqual(bandBottom);
+      // A narrow stage (dar-ekran-super, 2026-11-23) has ONE row of tabs, in `tabs`; a wide one the presentation's own row.
+      const row = p.presentTabs ?? p.tabs!.rect;
+      expect(row.y).toBeGreaterThanOrEqual(bandBottom);
       expect(p.controls!.y).toBeGreaterThanOrEqual(bandBottom);
-      expect(p.queue.y + p.queue.height).toBeLessThanOrEqual(p.presentTabs!.y);
-      for (const c of Object.values(p.cards)) if (c.where !== 'others' && !c.hidden) expect(c.rect.y).toBeGreaterThanOrEqual(p.presentTabs!.y + p.presentTabs!.height);
+      expect(p.queue.y + p.queue.height).toBeLessThanOrEqual(row.y);
+      for (const c of Object.values(p.cards)) if (c.where !== 'others' && !c.hidden) expect(c.rect.y).toBeGreaterThanOrEqual(row.y + row.height);
     });
   }
 

@@ -1,15 +1,17 @@
 import { execFile } from 'node:child_process';
 import { freemem, homedir } from 'node:os';
-import { HEAVY_SLOT_FLOOR, clampHeavyLimit, heavySlotDir, heavySlotsHeld, machineHeavySlots } from './builder-tools.js';
+import { clampHeavyLimit, heavySlotDir, heavySlotsHeld, machineLoad, machineStepLimit } from './builder-tools.js';
 import { HEAT_HOT, type MacThermalState } from './handsfree/mac/contract.js';
 import { readMacState } from './handsfree/mac/session.js';
 import { readThermalState } from './handsfree/mac/thermal.js';
 
 /**
  * The machine's real signals and its heavy steps (owner, 2026-10-24, 2026-11-01: speed wins).
- * Every repo together runs {@link machineHeavySlots} heavy steps (`builder heavy` / `builder
- * test`) unless macOS itself says otherwise: 2 at `thermalState` serious, 1 at critical (truly
- * throttling) or at critical memory pressure. High swap or a busy load average lowers nothing.
+ * Every repo together runs at most {@link machineStepLimit} steps (`builder heavy` / `builder
+ * test`, fast line included): 2 on a calm Mac, 1 at `thermalState` serious or critical, at
+ * critical memory pressure, or while the 1-minute load passes the cores (owner, 2026-11-21: load
+ * 124, the 2026-11-01 "busy load lowers nothing" rule let six steps run at once). High swap
+ * alone lowers nothing.
  * Every mode, hands-free on or off: Bag mode alone does not lower it. Children are never limited
  * by this, only heavy steps, and a running step is never stopped.
  */
@@ -39,9 +41,9 @@ export function parseVmStat(text: string): number | null {
 }
 
 /** How many heavy steps the machine runs at once at this reading. */
-export function heavyLimitFor(level: MacThermalState | null, memoryCritical = false, slots: number = machineHeavySlots()): number {
-  if (level === 'critical' || memoryCritical) return 1;
-  return isHot(level) ? HEAVY_SLOT_FLOOR : slots;
+export function heavyLimitFor(level: MacThermalState | null, memoryCritical = false, slots: number = machineStepLimit(), loadBusy = false): number {
+  if (level === 'critical' || memoryCritical || isHot(level) || loadBusy) return 1;
+  return clampHeavyLimit(slots);
 }
 
 /** Free memory the way `capacity.ts` counts it, in GB; null when it cannot be read. */
@@ -85,7 +87,7 @@ export async function readHeatLevel(deps: { platform?: NodeJS.Platform; read?: (
 /** The heavy-step limit at the current reading (what `builder heavy` / `builder test` use). */
 export async function currentHeavyLimit(): Promise<number> {
   const [level, memoryCritical, availGb] = await Promise.all([readHeatLevel(), readMemoryCritical(), readAvailGb()]);
-  return heavyLimitFor(level, memoryCritical, machineHeavySlots({ availGb, held: heavySlotsHeld(heavySlotDir()) }));
+  return heavyLimitFor(level, memoryCritical, machineStepLimit({ availGb, held: heavySlotsHeld(heavySlotDir()) }), machineLoad().busy);
 }
 
 /**

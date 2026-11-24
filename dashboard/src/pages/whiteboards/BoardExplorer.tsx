@@ -10,6 +10,7 @@
  * search, its fields and its scroll. The pure half is explorerLogic.ts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useIsMutating } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
@@ -18,6 +19,7 @@ import {
   useSetWhiteboardGroupOrder, useWhiteboardGroupOrder, useWhiteboardList, type GroupMoveNote, type WhiteboardSummary,
 } from '../../hooks/useWhiteboards';
 import { BoardGlyph, ChevronRightGlyph, ClockGlyph, DotsGlyph, FolderGlyph, PinGlyph, PlusGlyph, SearchGlyph, SidebarGlyph } from './boardGlyphs';
+import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
 import { TrashSection } from './BoardTrash';
 import { DEFAULT_BOARD_SLUG, canDeleteBoard, fold, isDefaultBoard, newBoardName } from './boardSwitcherLogic';
 import {
@@ -55,6 +57,16 @@ export interface BoardExplorerProps {
   phone: boolean;
   /** The owner just asked for it: put focus in its search field. */
   focusOnMount?: boolean;
+  /** `embedded`: drawn inside the local new shell's sidebar under the project's row (tek-kenar
+   *  C4): no title, hide button or search field (the sidebar's "Search boards…" filters it), its
+   *  New board / New folder portalled into `footSlot`, every other function kept. */
+  variant?: 'embedded';
+  /** The sidebar's board search (embedded). */
+  query?: string;
+  /** Where New board / New folder go (embedded): the sidebar's foot, above Settings. */
+  footSlot?: HTMLElement | null;
+  /** The project, for each board row's `data-row-key` (embedded; the sidebar's anchor layer). */
+  vault?: string | null;
 }
 
 /** Focus went nowhere: to <body>, or with an element that has since left the page. */
@@ -73,11 +85,16 @@ const isTextField = (el: EventTarget | null) => el instanceof HTMLElement && !!e
 /** Shift+F10 or the Menu key: the keyboard's right-click. */
 const isMenuKey = (e: KeyboardEvent<HTMLElement>) => e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
 
-export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, focusOnMount }: BoardExplorerProps) {
+export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, focusOnMount, variant, query: outerQuery, footSlot, vault }: BoardExplorerProps) {
   const { t } = useI18n();
   const list = useWhiteboardList();
   const boards = useMemo(() => list.data ?? [], [list.data]);
-  const [query, setQuery] = useState('');
+  const embedded = variant === 'embedded';
+  const [ownQuery, setQuery] = useState('');
+  const query = embedded ? (outerQuery ?? '') : ownQuery;
+  /** Menus are placed against the explorer, or against the window when it sits in the sidebar's
+   *  scroll (a menu there is `position: fixed`, so the narrow column never clips it). */
+  const hostRect = () => (embedded ? new DOMRect(0, 0, window.innerWidth, window.innerHeight) : rootRef.current?.getBoundingClientRect());
   const [menu, setMenu] = useState<Menu>(null);
   const [field, setField] = useState<Field>(null);
   const [note, setNote] = useState<Note>(null);
@@ -328,16 +345,21 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
 
   const menuAt = (el: HTMLElement, slug: string | null): MenuAt => {
     trigger.current = { el, slug };
-    const host = rootRef.current?.getBoundingClientRect();
+    const host = hostRect();
     const r = el.getBoundingClientRect();
     if (!host) return { top: r.bottom + 4 };
+    if (embedded) {
+      // In the sidebar: under (or over) its button, kept inside the window.
+      const left = Math.max(4, Math.min(r.left, window.innerWidth - POINT_MENU_WIDTH - 8));
+      return host.bottom - r.bottom < MENU_ROOM ? { bottom: host.bottom - r.top + 4, left } : { top: r.bottom + 4, left };
+    }
     return host.bottom - r.bottom < MENU_ROOM ? { bottom: host.bottom - r.top + 4 } : { top: r.bottom - host.top + 4 };
   };
 
   /** A right-click's menu: at the pointer, kept inside the window; focus goes back to `el`. */
   const menuAtPoint = (e: ReactMouseEvent, el: HTMLElement | null, slug: string | null): MenuAt => {
     trigger.current = { el, slug };
-    const host = rootRef.current?.getBoundingClientRect();
+    const host = hostRect();
     if (!host) return { top: e.clientY, left: e.clientX };
     const left = Math.max(4, Math.min(e.clientX - host.left, window.innerWidth - host.left - POINT_MENU_WIDTH - 8));
     return window.innerHeight - e.clientY < MENU_ROOM
@@ -367,6 +389,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         key={`${where}:${b.slug}`}
         className="wbx-row"
         data-slug={b.slug}
+        data-row-key={embedded && vault ? `board:${vault}/${b.slug}` : undefined}
         data-current={current ? 'true' : undefined}
         data-dragging={drag === b.slug ? '' : undefined}
         draggable={!b.corrupt}
@@ -498,7 +521,8 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   const menuSiblings = menuGroup ? (menuGroup.parent ? view.groups.find((g) => g.key === menuGroup.parent)?.subs ?? [] : view.groups) : [];
 
   return (
-    <aside className="wbx" ref={rootRef} aria-label={t('whiteboard.explorer.title')} data-phone={phone ? '' : undefined}>
+    <aside className="wbx" ref={rootRef} aria-label={t('whiteboard.explorer.title')} data-phone={phone ? '' : undefined} data-embedded={embedded ? '' : undefined}>
+      {!embedded && (<>
       <div className="wbx-head">
         <h2 className="wbx-title">{t('whiteboard.explorer.title')}</h2>
         <button type="button" className="wbx-icon" aria-label={t('whiteboard.switcher.new')} title={t('whiteboard.switcher.new')} onClick={() => setField({ kind: 'new-board', group: null })}>
@@ -519,6 +543,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
           onKeyDown={onSearchKey}
         />
       </label>
+      </>)}
       {note && (
         <div className="wbx-note" role="alert">
           <span>{note.text}</span>
@@ -528,7 +553,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
       )}
 
       <div className="wbx-scroll" ref={scrollRef} onDragEnd={endDrag}>
-        {list.isLoading && <p className="wbx-hint">{t('common.loading')}</p>}
+        {list.isLoading && <LoadingSkeleton shape="list" label={t('common.loading')} />}
         {list.isError && <p className="wbx-hint wbx-hint--bad">{t('whiteboard.page.loadFailed')} {list.error?.message}</p>}
 
         {view.pinned.length > 0 && (
@@ -573,14 +598,20 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         {!view.searching && <TrashSection onRestored={open} />}
       </div>
 
-      <div className="wbx-foot">
-        <button type="button" className="wbx-foot-btn wbx-foot-btn--primary" onClick={() => setField({ kind: 'new-board', group: null })}>
-          <PlusGlyph /> {t('whiteboard.switcher.new')}
-        </button>
-        <button type="button" className="wbx-foot-btn" onClick={() => setField({ kind: 'new-group' })}>
-          <FolderGlyph /> {t('whiteboard.explorer.newGroup')}
-        </button>
-      </div>
+      {(() => {
+        const foot = (
+          <div className="wbx-foot" data-testid={embedded ? 'sidebar-boards-foot' : undefined}>
+            <button type="button" className="wbx-foot-btn wbx-foot-btn--primary" onClick={() => setField({ kind: 'new-board', group: null })}>
+              <PlusGlyph /> {t('whiteboard.switcher.new')}
+            </button>
+            <button type="button" className="wbx-foot-btn" onClick={() => setField({ kind: 'new-group' })}>
+              <FolderGlyph /> {t('whiteboard.explorer.newGroup')}
+            </button>
+          </div>
+        );
+        if (!embedded) return foot;
+        return footSlot ? createPortal(foot, footSlot) : null;
+      })()}
 
       {menu && (
         <div

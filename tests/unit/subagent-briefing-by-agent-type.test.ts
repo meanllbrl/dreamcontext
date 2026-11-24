@@ -10,7 +10,7 @@ import { briefingFormForAgent } from '../../src/cli/commands/snapshot.js';
 describe('briefingFormForAgent', () => {
   it('gives the full form to every shipped brain agent', () => {
     for (const t of [
-      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-learn',
+      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-learn',
       'dreamcontext-explore',
       'curator-auditor', 'curator-worker', 'curator-verifier',
       'initializer-scout', 'initializer-ingestor', 'initializer-verifier',

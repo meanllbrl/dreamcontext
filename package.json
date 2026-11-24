@@ -1,7 +1,7 @@
 {
   "name": "dreamcontext",
-  "version": "0.41.23",
-  "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
+  "version": "0.41.24",
+  "description": "Agents that see the big picture. The agentic OS for your projects.",
   "type": "module",
   "bin": {
     "dreamcontext": "./dist/index.js"
@@ -43,6 +43,7 @@
     "test:t3": "vitest run -c vitest.t3.config.ts",
     "test:e2e": "playwright test",
     "verify:look": "node scripts/verify/look.mjs",
+    "verify:shares": "node scripts/verify/shares.mjs",
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "verify:tool-codex-chat": "node scripts/verify/tool-codex-chat.mjs",
@@ -71,7 +72,7 @@
     "verify:file-preview": "node scripts/verify/chat-file-preview.mjs",
     "verify:claude-auth-switch": "node scripts/verify/claude-auth-switch.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node scripts/check-migration-decision.mjs --release && npm run build",
     "prepack": "node scripts/shrinkwrap.mjs write",
     "postpack": "node scripts/shrinkwrap.mjs remove",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",
@@ -132,7 +133,8 @@
     "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs",
     "verify:chat-smooth": "node scripts/verify/chat-smooth.mjs",
     "verify:mobile-chat": "node scripts/verify/mobile-chat.mjs",
-    "verify:sleep-debt": "vitest run --config eval/sleep-debt/vitest.config.ts"
+    "verify:sleep-debt": "vitest run --config eval/sleep-debt/vitest.config.ts",
+    "install:cut": "node scripts/install-cut.mjs"
   },
   "keywords": [
     "ai",

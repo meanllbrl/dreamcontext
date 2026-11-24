@@ -6,6 +6,15 @@ import { KNOWN_SLEEP_MODEL_VALUES } from './model-facts.js';
 
 const CONFIG_REL_PATH = '_dream_context/state/.config.json';
 
+/** The first read of this project happened (plan ilk-acilis C13/D13): written once, never
+ *  edited or cleared; its presence means "never offer it again" on any Mac. */
+export interface FirstReadClaim {
+  /** The Super child id that did the read. */
+  job: string;
+  /** ISO time the child started. */
+  at: string;
+}
+
 export interface SetupConfig {
   platforms: PlatformId[];
   /**
@@ -115,6 +124,8 @@ export interface SetupConfig {
    * M0 fact in `~/.dreamcontext/local/`, never in this file).
    */
   agentSync?: true;
+  /** See {@link FirstReadClaim}. Only `src/lib/first-read.ts` writes it. */
+  firstRead?: FirstReadClaim;
 }
 
 /**
@@ -131,6 +142,11 @@ export interface ContextHandoffConfig {
   hardAt?: number;
   /** Token distance between repeat nudges. Default 100_000. */
   remindEvery?: number;
+  /**
+   * A Super child's own ladder ({@link CHILD_HANDOFF_DEFAULTS}): the same three numbers, each
+   * optional. Absent = the child defaults, never the human ladder above.
+   */
+  child?: { nudgeAt?: number; hardAt?: number; remindEvery?: number };
 }
 
 /** Resolved handoff ladder — every field present. */
@@ -161,6 +177,18 @@ export const CONTEXT_HANDOFF_DEFAULTS: ResolvedContextHandoff = {
   nudgeAt: CONTEXT_BAND_EDGES[0],
   hardAt: CONTEXT_BAND_EDGES[1],
   remindEvery: 100_000,
+};
+
+/**
+ * A Super child's ladder: firm from 250k, severe from 400k, again every 50k. Measured on this
+ * Mac (2026-11-22, 509 children): a hand-off at 250k cuts the tokens a child re-reads by ~20%
+ * against 300k at no dollar cost, and a child's work is one job, not a conversation the owner
+ * wants kept. Owner chats, terminal sessions and the Super's own pane keep the human ladder.
+ */
+export const CHILD_HANDOFF_DEFAULTS: Omit<ResolvedContextHandoff, 'enabled'> = {
+  nudgeAt: 250_000,
+  hardAt: 400_000,
+  remindEvery: 50_000,
 };
 
 /**
@@ -206,17 +234,34 @@ export function resolveContextHandoff(cfg: ContextHandoffConfig | null | undefin
   };
 }
 
+/**
+ * A Super child's ladder from `contextHandoff.child`, defaulted field by field to
+ * {@link CHILD_HANDOFF_DEFAULTS} (never to the human ladder), with the same `hardAt >= nudgeAt`
+ * clamp. `enabled` is the block's own switch, as {@link resolveContextHandoff} reads it.
+ */
+export function resolveChildHandoff(cfg: ContextHandoffConfig | null | undefined): ResolvedContextHandoff {
+  const num = (v: unknown, fallback: number): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+  const c = cfg?.child && typeof cfg.child === 'object' ? cfg.child : undefined;
+  const nudgeAt = num(c?.nudgeAt, CHILD_HANDOFF_DEFAULTS.nudgeAt);
+  return {
+    enabled: cfg?.enabled === true,
+    nudgeAt,
+    hardAt: Math.max(num(c?.hardAt, CHILD_HANDOFF_DEFAULTS.hardAt), nudgeAt),
+    remindEvery: num(c?.remindEvery, CHILD_HANDOFF_DEFAULTS.remindEvery),
+  };
+}
+
 /** Proactive learning layer switch (see `SetupConfig.learning`). */
 export interface LearningConfig {
   enabled: boolean;
 }
 
-/** The five sleep-cycle specialists whose model/effort are tunable per brain. */
+/** The four sleep-cycle specialists whose model/effort are tunable per brain. */
 export const SLEEP_SPECIALISTS = [
   'sleep-tasks',
   'sleep-state',
   'sleep-product',
-  'sleep-migration',
   'sleep-learn',
 ] as const;
 
@@ -227,7 +272,7 @@ export const SLEEP_SPECIALISTS = [
  * still carrying an override for one) can recognise it. An override for a
  * retired name in `.config.json` is dropped silently by the parser.
  */
-export const RETIRED_SLEEP_SPECIALISTS = ['sleep-federation'] as const;
+export const RETIRED_SLEEP_SPECIALISTS = ['sleep-federation', 'sleep-migration'] as const;
 export type SleepSpecialist = (typeof SLEEP_SPECIALISTS)[number];
 
 export function isSleepSpecialist(v: unknown): v is SleepSpecialist {
@@ -616,7 +661,22 @@ function sanitizeContextHandoff(raw: unknown): ContextHandoffConfig | undefined 
   if (typeof o.nudgeAt === 'number' && Number.isFinite(o.nudgeAt)) out.nudgeAt = o.nudgeAt;
   if (typeof o.hardAt === 'number' && Number.isFinite(o.hardAt)) out.hardAt = o.hardAt;
   if (typeof o.remindEvery === 'number' && Number.isFinite(o.remindEvery)) out.remindEvery = o.remindEvery;
+  if (o.child && typeof o.child === 'object' && !Array.isArray(o.child)) {
+    const c = o.child as Record<string, unknown>;
+    const child: NonNullable<ContextHandoffConfig['child']> = {};
+    for (const k of ['nudgeAt', 'hardAt', 'remindEvery'] as const) {
+      if (typeof c[k] === 'number' && Number.isFinite(c[k])) child[k] = c[k] as number;
+    }
+    if (Object.keys(child).length > 0) out.child = child;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeFirstRead(raw: unknown): FirstReadClaim | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.job !== 'string' || !o.job.trim() || typeof o.at !== 'string') return undefined;
+  return { job: o.job, at: o.at };
 }
 
 export function readSetupConfig(projectRoot: string): SetupConfig | null {
@@ -660,6 +720,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       sleep: sanitizeSleep(parsed.sleep),
       contextHandoff: sanitizeContextHandoff(parsed.contextHandoff),
       agentSync: (parsed as { agentSync?: unknown }).agentSync === true ? true : undefined,
+      firstRead: sanitizeFirstRead((parsed as { firstRead?: unknown }).firstRead),
     };
   } catch {
     return null;
@@ -724,6 +785,8 @@ export function updateSetupConfig(
     contextHandoff: patch.contextHandoff ?? existing.contextHandoff,
     // Never written false: once on, a rewrite keeps it on.
     agentSync: patch.agentSync ?? existing.agentSync,
+    // Written once: an existing claim is never replaced by a patch.
+    firstRead: existing.firstRead ?? patch.firstRead,
   };
   // Keys this CLI models come from `next` only: one it read as malformed is dropped, never
   // copied back raw (a rejected linkedRepos entry may carry a local path the shared file must not).

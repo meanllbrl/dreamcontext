@@ -100,7 +100,7 @@ describe('a child delegated without effort', () => {
   for (const [mode, want] of [['basic', 'medium'], ['plan', 'high'], ['develop', 'medium']] as const) {
     it(`${mode} opens on ${want}, never xhigh, and the record says so`, async () => {
       write();
-      const r = await verb('delegate', { prompt: 'Do the work.', brief: 'work', mode, ...(mode !== 'basic' ? {} : {}) });
+      const r = await verb('delegate', { model: 'sonnet', prompt: 'Do the work.', brief: 'work', mode, ...(mode !== 'basic' ? {} : {}) });
       expect(r.status).toBe(200);
       expect(asked().effort).toBe(want);
       expect(asked().effort).not.toBe('xhigh');
@@ -111,15 +111,16 @@ describe('a child delegated without effort', () => {
 
   it('a pooled job without effort starts on the default too', async () => {
     write();
-    const id = result(await verb('pool-add', { prompt: 'Later work.', brief: 'later', mode: 'plan' })).pooled as string;
+    const id = result(await verb('pool-add', { model: 'sonnet', prompt: 'Later work.', brief: 'later', mode: 'plan' })).pooled as string;
     expect((await verb('delegate', { from: id })).status).toBe(200);
     expect(asked().effort).toBe('high');
     expect((await readSuperState(root)).children[CHILD_SID].effort).toBe('high');
   });
 
-  it('an explicit xhigh is kept', async () => {
+  it('an explicit xhigh is kept when its --risk allows it (iyilesme-360 C10: else effort_refused)', async () => {
     write();
-    await verb('delegate', { prompt: 'Contract.', brief: 'contract', mode: 'develop', effort: 'xhigh' });
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Contract.', brief: 'contract', mode: 'develop', effort: 'xhigh' })).json.error).toBe('effort_refused');
+    await verb('delegate', { model: 'sonnet', prompt: 'Contract.', brief: 'contract', mode: 'develop', effort: 'xhigh', risk: 'contract' });
     expect(asked().effort).toBe('xhigh');
     expect((await readSuperState(root)).children[CHILD_SID].effort).toBe('xhigh');
   });

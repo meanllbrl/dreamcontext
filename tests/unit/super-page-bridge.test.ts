@@ -100,7 +100,7 @@ describe('the send and its ACK', () => {
   it('the field\'s ref is the server\'s turn ref for the exact text sent', () => {
     const text = '3 sunuma düşür\n\n[On page whiteboards board=launch-plan sel=9 box=120,-40,860,410 ids=rect-a,txt_b]';
     expect(clientRef(text)).toBe(serverRef(text));
-    expect(read('src/server/routes/agent-chat.ts')).toMatch(/noteSuperOwnerMsg\(chatRegistryId, text\.startsWith\('\/'\) \|\| serverWritten \? null : tgRef \?\? msgRef\(text\)\)/);
+    expect(read('src/server/routes/agent-chat.ts')).toMatch(/const own = text\.startsWith\('\/'\) \|\| serverWritten \? null : tgRef \?\? msgRef\(text\);\s*noteSuperOwnerMsg\(chatRegistryId, own,/);
   });
 });
 

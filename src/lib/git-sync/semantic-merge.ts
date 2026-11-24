@@ -33,6 +33,7 @@ import { withFileLockSync } from '../file-lock.js';
 import {
   LEARNED_RULES_VIEW_REL,
   RULES_JSON_REL,
+  memberStoreRef,
   mergeRulesStores,
   parseStore,
   projectStoreRef,
@@ -76,6 +77,7 @@ export type MergeClass =
   | 'other'
   /** `core/RULES.json` (learning loop C2): union of records by id, events by eid (mergeRulesJson). */
   | 'rules-json'
+  | 'member-rules-json'
   /** `knowledge/patterns/learned-rules.md`: a generated view, never merged: regenerated from the merged store. */
   | 'learned-rules-view'
   /**
@@ -102,6 +104,8 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
   if (norm === TASKS_MAP_REL) return 'tasks-map-json';
   if (norm === RULES_JSON_REL) return 'rules-json';
+  // A shared project member's rules (D1): merged as a rules store, by id and event.
+  if (/^agents\/[a-z0-9][a-z0-9-]*\.rules\.json$/.test(norm)) return 'member-rules-json';
   if (norm === LEARNED_RULES_VIEW_REL) return 'learned-rules-view';
   if (norm === 'state/.task-objections.json') return 'task-objections-json';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
@@ -740,6 +744,19 @@ function writeMergedRules(cwd: string, prefix: string, mergedJson: string | null
   });
 }
 
+/** A shared project member's rules file, merged by union and written under its own lock (its view stays local). */
+function writeMergedMemberRules(cwd: string, relPath: string, mergedJson: string, opts: ResolveConflictsOptions): string {
+  const norm = relPath.replace(/\\/g, '/');
+  const m = /(?:^|\/)agents\/([a-z0-9][a-z0-9-]*)\.rules\.json$/.exec(norm);
+  if (!m) throw new Error(`${relPath} is not a member rules file`);
+  const contextRoot = join(cwd, norm.slice(0, norm.length - `agents/${m[1]}.rules.json`.length));
+  const ref = memberStoreRef({ slug: m[1]!, scope: 'project' }, contextRoot, opts.home);
+  return withFileLockSync(ref.lock, () => {
+    writeStore(ref, parseStore(mergedJson), { fromMerge: true });
+    return relPath;
+  });
+}
+
 // ─── Orchestration over a real merge conflict set ───────────────────────────
 
 export interface MergeResult {
@@ -1015,6 +1032,20 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
           rulesWritten.add(prefix);
           resolved.push(relPath);
           if (cls === 'rules-json') notes.push(`${relPath}: learned rules merged by id and event; the view was regenerated.`);
+        } catch {
+          deferredToHuman.push({ path: relPath, class: cls });
+        }
+        continue;
+      }
+      case 'member-rules-json': {
+        let working = '';
+        try { working = readFileSync(join(cwd, relPath), 'utf-8'); } catch { working = ''; }
+        const merged = mergeRulesJson(base, ours, theirs, working).merged;
+        if (merged === null) { deferredToHuman.push({ path: relPath, class: cls }); continue; }
+        try {
+          addPath(cwd, writeMergedMemberRules(cwd, relPath, merged, opts));
+          resolved.push(relPath);
+          notes.push(`${relPath}: a member's rules merged by id and event.`);
         } catch {
           deferredToHuman.push({ path: relPath, class: cls });
         }

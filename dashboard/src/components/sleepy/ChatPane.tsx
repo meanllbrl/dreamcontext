@@ -67,7 +67,7 @@ import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
   AccountSwitchBanner, HandoffCard,
-  BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, HandedOverBanner, TakenOverBanner,
+  BranchStartBanner, EmptyState, type EmptyHero, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, HandedOverBanner, TakenOverBanner,
   SignInBanner, WorkingIndicator, RECONNECT_CHIP_DELAY_MS, reconnectChipDue,
 } from './chat/Banners';
 import { surveyDraftKey } from './chat/surveyDrafts';
@@ -689,7 +689,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, endSlot, feed, sendVia, quietResume = false,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, emptyHero, superMember, readOnly = false, aboveComposer, endSlot, feed, sendVia, quietResume = false,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -771,6 +771,9 @@ export function ChatPane({
   agentBound?: boolean;
   /** The composer's idle placeholder, when the host names who is listening. */
   idlePlaceholder?: string;
+  /** The empty state's own title, sub-line, chips and mark (the main Super stage, C13); absent:
+   *  today's empty state. */
+  emptyHero?: EmptyHero;
   /** A member's phone mirror (an ordinary chat mode, never bound to the member): whose Super it
    *  shows, so its unread marks are the member's, never main's. */
   superMember?: string;
@@ -3401,7 +3404,11 @@ export function ChatPane({
                 onOpenFile={handleOpenFile}
               />
             )}
-            {isEmpty && !bare && <EmptyState />}
+            {/* A new chat whose first message waits for the socket (the Chat page's landing hands
+                it over as a held row, hidden until it goes): "Starting", never "say something". */}
+            {isEmpty && !bare && (conv.queued.some((q) => q.resubmit)
+              ? <WorkingIndicator label={session.tool === 'codex' ? 'Starting Codex…' : session.tool === 'antigravity' ? 'Starting Antigravity…' : 'Starting Claude…'} />
+              : <EmptyState hero={emptyHero} onChip={readOnly ? undefined : (text) => { session.send(text); }} />)}
             {/* An agenda row with nothing linked to it (D5): said, with the way back. */}
             {thread?.empty && threadSid && <SuperThreadEmpty onBack={() => clearThreadFilter(threadSid, 'user')} />}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does

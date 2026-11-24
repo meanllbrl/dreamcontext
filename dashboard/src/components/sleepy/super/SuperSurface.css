@@ -1819,7 +1819,7 @@
   transition: background 120ms ease-out, color 120ms ease-out;
 }
 .super-sheet-tab:hover { color: var(--color-text); }
-.super-sheet-tab[aria-expanded='true'] {
+.super-sheet-tab[aria-selected='true'] {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-text);
 }
@@ -1895,6 +1895,22 @@
 .super-pq[data-short] .super-pq-go { padding: 0 var(--space-3); }
 .super-pq-go:hover { filter: brightness(1.08); }
 .super-pq-go:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
+.super-pq-x {
+  width: calc(var(--space-8) - var(--space-1));
+  height: calc(var(--space-8) - var(--space-1));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.super-pq-x:hover { background: color-mix(in srgb, var(--color-text) 10%, transparent); color: var(--color-text); }
+.super-pq-x:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .super-sheet-tabs {
   position: absolute;
   z-index: var(--sz-sheet);
@@ -1903,43 +1919,66 @@
   gap: var(--space-1);
   padding: var(--space-1);
   overflow-x: auto;
+  scrollbar-width: none;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  background: color-mix(in srgb, var(--color-text) 6%, var(--color-bg-secondary));
 }
+/* One row, like a browser's tabs (owner 2026-11-17, round 2): the picked tab is raised and
+   strong, the others quiet; the chat's tab is always first. */
 .super-sheet-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   flex: 0 1 auto;
   min-width: 0;
   max-width: calc(var(--space-28) + var(--space-16));
+  font-weight: 500;
 }
-.super-sheet-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.super-sheet-tab-chev { flex: none; font-size: var(--font-size-2xs); opacity: 0.7; }
-/* Folded (owner 2026-11-17): the cards wait as tabs over a full-height chat; each one reads as
-   something to press, not a heading. */
-.super-sheet-tabs[data-folded] { background: transparent; padding: 0; }
-.super-sheet-tabs[data-folded] .super-sheet-tab {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
+.super-sheet-tab[aria-selected='true'] {
+  background: var(--color-bg-secondary);
   color: var(--color-text);
+  font-weight: 700;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-text) 14%, transparent), inset 0 0 0 1px var(--color-border);
 }
-.super-sheet-tabs[data-folded] .super-sheet-tab:hover { border-color: var(--color-accent); }
-.super-sheet-fold {
+.super-sheet-tablist { display: contents; }
+.super-sheet-tab--chat { flex: none; }
+.super-sheet-tab-icon { flex: none; width: var(--space-4); height: var(--space-4); }
+.super-sheet-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-sheet-tab-dot {
   flex: none;
-  margin-left: auto;
-  width: calc(var(--space-7) + var(--space-1));
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+.super-sheet-next {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   height: 100%;
+  margin-left: auto;
+  padding: 0 var(--space-3);
   border: none;
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-md);
-  line-height: 1;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
 }
-.super-sheet-fold:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
-.super-sheet-fold:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
+.super-sheet-next:hover { color: var(--color-text); }
+.super-sheet-next:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
+.super-sheet-next-chip {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+}
 /* A filmstrip's big card, in its own fixed slot of the strip (owner 2026-10-29): its tile, raised
    and ringed in the accent, so the strip says which one is big without moving anything. */
 .super-strip-current {

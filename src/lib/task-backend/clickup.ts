@@ -50,7 +50,7 @@ import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js'
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
-import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
+import { SyncLedger, hashContent, membersStale, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import { liveParentOf, parentsFirst, pulledParent, withBaseParent } from './subtask-link.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
@@ -425,15 +425,25 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
    * returning empty (the assignee picker must keep working offline).
    */
   async listMembers(): Promise<RemoteMember[]> {
-    try {
-      const adapter = this.getAdapter();
-      const listId = this.requireListId();
-      this.membersRefreshed = false;
-      await this.refreshMembers(adapter, listId, true);
-    } catch { /* fall back to the cache below */ }
-    return Object.entries(this.ledger.readMembers())
+    // A cached roster answers at once and refreshes behind the answer (GitHub's listMembers).
+    const cached = () => Object.entries(this.ledger.readMembers())
       .map(([slug, m]) => ({ slug, id: m.id, name: m.name, email: m.email }))
       .sort((a, b) => a.slug.localeCompare(b.slug));
+    const refresh = async () => {
+      try {
+        const adapter = this.getAdapter();
+        const listId = this.requireListId();
+        this.membersRefreshed = false;
+        await this.refreshMembers(adapter, listId, true);
+      } catch { /* fall back to the cache */ }
+    };
+    const have = cached();
+    if (have.length === 0) {
+      await refresh();
+      return cached();
+    }
+    if (membersStale(this.ledger.readThrottle('lastMetaRefreshAt'), this.nowMs())) void refresh();
+    return have;
   }
 
   /** Person slug → remote member id: explicit config mapping first, then the cache. */

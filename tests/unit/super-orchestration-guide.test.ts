@@ -117,7 +117,7 @@ describe('super-orchestration guide: shape', () => {
     // the `parked` and `owner-result` events; `gone` no longer closes a card; measured 28,503).
     // +250 (2026-11-12, gece-duzeltme B7: lookup-only header, the Super files every task, the heavy lock's real
     // per-checkout and slot rule; measured 28,745).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(35_900); // +250 (measured 35,353; 2026-11-19 merge: uye-supere-yazar, super team tell / event=member-note). +2,250 (2026-11-18, soru-azaltma: the ask rules by kind open §2, no start card for asked work, a child's question is the Super's first; measured 35,109). Before: +100 (2026-11-15, telegram-cevaplayan: a shown=owner question waits on his Mac bar only, never Telegram; measured 32,590). +900 (2026-11-15 local cut: the merged branches' guide lines together; measured 32,436). +700 (2026-11-15, kosullu-otomasyon: a timed job's --condition script, its exit rule, wake switch, MCP limit and witness). +100 (2026-11-14, claudeai-mcp: the MCP map names the claude.ai connectors' short names). +200 (2026-11-14, sunum-sirasi: a present over his presentation answers `queued` and waits its turn). +400 (2026-11-14, 0.41.21 cut: devir-kimlik's `window` answer of a screen verb; measured 30,504). +600 (2026-11-12, super-push-red: a push, PR or deploy his own message named goes to the child with --outward, a brief over a line is a file; measured 30,196). +300 (2026-11-12, plan-soru-ozet: a plan child's question carries its plan, the escalation shows it as a report card; measured 29,542). +500 (2026-11-12, 0.41.17 cut: the merged overnight jobs and the owner's task-filing standard; measured 29,230). +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(42_100); // +500 (2026-11-23 yerel-23kas: kesim-geri-donus returns/Cut-fit/--base/install:cut guide lines, merged onto yerel-22kas-b; to be re-measured). +500 (2026-11-23 cut 1123, token-tasarruf: §3 one row per kind, the --keep line and the HANDOFF: reply). +2,000 (2026-11-22, iyilesme-360: haiku lookup, PR merge and staging rule, ready-proof, [usage] line; measured 38,158 alone). +2,100 (2026-11-22 yerel-22kas-b: uye-karnesi C8 + W3 C18 guide rows; to be re-measured). +150 (2026-11-22, pencere-kapali-uye: a member answers with the window closed; measured 36,408). +400 (2026-11-22 local cut yerel-21kas-b: the 21 Nov merge of super-sessiz-kalmaz and telegram-sade guide rows; measured 36,258). +500 (2026-11-20 local cut yerel-20kas: hafiza-konu-skill names the project skill in a brief, ajanda-mesaj-bagi adds `super note link`; measured 35,845). +250 (measured 35,353; 2026-11-19 merge: uye-supere-yazar, super team tell / event=member-note). +2,250 (2026-11-18, soru-azaltma: the ask rules by kind open §2, no start card for asked work, a child's question is the Super's first; measured 35,109). Before: +100 (2026-11-15, telegram-cevaplayan: a shown=owner question waits on his Mac bar only, never Telegram; measured 32,590). +900 (2026-11-15 local cut: the merged branches' guide lines together; measured 32,436). +700 (2026-11-15, kosullu-otomasyon: a timed job's --condition script, its exit rule, wake switch, MCP limit and witness). +100 (2026-11-14, claudeai-mcp: the MCP map names the claude.ai connectors' short names). +200 (2026-11-14, sunum-sirasi: a present over his presentation answers `queued` and waits its turn). +400 (2026-11-14, 0.41.21 cut: devir-kimlik's `window` answer of a screen verb; measured 30,504). +600 (2026-11-12, super-push-red: a push, PR or deploy his own message named goes to the child with --outward, a brief over a line is a file; measured 30,196). +300 (2026-11-12, plan-soru-ozet: a plan child's question carries its plan, the escalation shows it as a report card; measured 29,542). +500 (2026-11-12, 0.41.17 cut: the merged overnight jobs and the owner's task-filing standard; measured 29,230). +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
@@ -228,11 +228,12 @@ describe('super-orchestration guide: every command, flag, skill and agent exists
 
   it('resolves every --flag in the text to a real option', () => {
     const known = new Set<string>();
-    for (const g of ['super', 'builder', 'tasks', 'memory']) {
+    for (const g of ['super', 'builder', 'tasks', 'memory', 'agents']) {
       const c = child(program, g);
       if (c) allOptionFlags(c, known);
     }
-    const named = [...new Set(spans.flatMap((s) => [...s.matchAll(/(--[a-z][a-z-]*)/g)].map((m) => m[1])))];
+    // A `gh …` command's flags are gh's own (D13 names `gh pr merge <n> --squash`), never ours.
+    const named = [...new Set(spans.map((s) => s.replace(/\bgh\s[^"`]*/g, '')).flatMap((s) => [...s.matchAll(/(--[a-z][a-z-]*)/g)].map((m) => m[1])))];
     expect(named.length).toBeGreaterThan(8);
     const unexpected = named.filter((f) => !known.has(f) && !PENDING_FLAGS.includes(f));
     expect(unexpected).toEqual([]);
@@ -264,7 +265,8 @@ describe('super-orchestration guide: every command, flag, skill and agent exists
     }
     const slash = [...new Set(spans.filter((s) => /^\/[a-z-]+$/.test(s)).map((s) => s.slice(1)))];
     expect(slash.length).toBeGreaterThanOrEqual(6);
-    expect(slash.filter((n) => !skillNames.has(n))).toEqual([]);
+    // `reel-generator` is the guide's example of a PROJECT skill a brief names (hafiza-konu-skill), not one this package ships.
+    expect(slash.filter((n) => !skillNames.has(n) && n !== 'reel-generator')).toEqual([]);
     for (const agent of ['dreamcontext-explore', 'reviewer']) {
       expect(FLAT).toContain(agent);
       expect(skillNames.has(agent), agent).toBe(true);
@@ -321,7 +323,7 @@ describe('heat and the heavy lock (the heat task, AC5)', () => {
     // memory-sized (src/lib/builder-tools.ts machineHeavySlots, src/lib/heat.ts heavyLimitFor);
     // the old "per project, at most 2 projects" line described neither.
     expect(FLAT).toContain('Heavy steps run one at a time per checkout (each worktree has its own lock)');
-    expect(FLAT).toContain('2 while it is hot, 1 when it is very hot or memory is critical');
+    expect(FLAT).toContain('at most 2 at once machine-wide, short checks (tsc, a few test files) counted in, 1 while it is hot, memory is critical or the load passes the cores');
     expect(FLAT).not.toContain('at most 2 projects at once');
     expect(FLAT).toContain('Heat limits heavy STEPS, never children');
     expect(FLAT).toContain('a hook sends tsc, builds, tests and browser scripts through `dreamcontext builder heavy`');

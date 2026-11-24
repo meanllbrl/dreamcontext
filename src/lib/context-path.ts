@@ -24,7 +24,7 @@ function insideOrEqual(child: string, parent: string): boolean {
 }
 
 /** The project roots this machine's scheduler ticks (`~/.dreamcontext/automations.json`), real paths. */
-function registeredProjectRoots(): string[] {
+export function registeredProjectRoots(): string[] {
   try {
     const raw = JSON.parse(readFileSync(join(process.env.HOME || homedir(), '.dreamcontext', 'automations.json'), 'utf-8')) as { projects?: unknown };
     // `{ projects: { <projectRoot>: { approvals } } }` (automations/registry.ts); read here

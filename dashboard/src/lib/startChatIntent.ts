@@ -1,4 +1,4 @@
-import type { StartIntent } from './desktop';
+import { isStartIntent, type StartIntent } from './desktop';
 
 /**
  * The onboarding hand-off's last hop: a project window asked to START a chat with a fixed
@@ -37,7 +37,7 @@ export interface AcceptedStartIntent {
 
 /**
  * Filter one incoming start intent. Returns null unless:
- *  - `intent` is exactly `'initializer'` (the closed set; anything else is dropped);
+ *  - `intent` is in the closed set (`'initializer'`, `'super-landing'`; anything else is dropped);
  *  - `vault` names a project this window holds (`ownVaults`);
  *  - `nonce` is a non-empty string not seen before (it is then recorded in `seen`, so a
  *    re-delivered broadcast never starts a second chat).
@@ -51,7 +51,7 @@ export function acceptStartIntent(
 ): AcceptedStartIntent | null {
   if (!p || typeof p !== 'object') return null;
   const { vault, intent, nonce } = p as { vault?: unknown; intent?: unknown; nonce?: unknown };
-  if (intent !== 'initializer') return null;
+  if (!isStartIntent(intent)) return null;
   if (typeof vault !== 'string' || !vault || !ownVaults.includes(vault)) return null;
   if (typeof nonce !== 'string' || !nonce || seen.has(nonce)) return null;
   seen.add(nonce);

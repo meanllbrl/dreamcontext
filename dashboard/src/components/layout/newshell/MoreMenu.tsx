@@ -4,6 +4,8 @@ import type { Page } from '../Sidebar';
 
 interface MoreMenuProps {
   anchor: HTMLElement | null;
+  /** `below`: under its button (the title bar's More tab); default: beside the rail. */
+  placement?: 'below';
   pages: readonly Page[];
   current: Page | null;
   label: (page: Page) => string;
@@ -14,7 +16,7 @@ interface MoreMenuProps {
 
 /** The rail's More: the pages the rail has no row for. Opens beside its button (above it on the
  *  bottom bar) and is clamped inside the window. Esc or a click outside closes it. */
-export function MoreMenu({ anchor, pages, current, label, icon, onPick, onClose }: MoreMenuProps) {
+export function MoreMenu({ anchor, placement, pages, current, label, icon, onPick, onClose }: MoreMenuProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -31,12 +33,13 @@ export function MoreMenu({ anchor, pages, current, label, icon, onPick, onClose 
     const below = a.bottom + m.height + gap <= vh;
     let left = a.right + gap;
     let top = a.top;
-    if (a.bottom > vh - 80) { left = a.left + a.width / 2 - m.width / 2; top = a.top - m.height - gap; }
+    if (placement === 'below') { left = a.left; top = a.bottom + gap / 2; }
+    else if (a.bottom > vh - 80) { left = a.left + a.width / 2 - m.width / 2; top = a.top - m.height - gap; }
     else if (!below) top = vh - m.height - gap;
     left = Math.max(gap, Math.min(left, vw - m.width - gap));
     top = Math.max(gap, Math.min(top, vh - m.height - gap));
     setPos({ left, top });
-  }, [anchor]);
+  }, [anchor, placement]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };

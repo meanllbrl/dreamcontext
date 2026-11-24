@@ -14,6 +14,7 @@ import { DownloadError, downloadVerified } from '../../src/lib/onboarding/downlo
 import {
   CLI_INTERACTIVE, CLAUDE_INSTALLER_URL, defaultFixDeps, runFix, stripSecretsEnv,
   type FixDeps, type RunOptions, type RunSink,
+  gitMissingReason, installLogSince,
 } from '../../src/lib/onboarding/fixes.js';
 import type { ProbeContext, ShellResult } from '../../src/lib/onboarding/types.js';
 
@@ -68,6 +69,8 @@ function fakeDeps(answer: (c: Call) => ShellResult = () => ({ ok: true, stdout: 
     claudeLoggedIn: async () => true,
     cltInstalled: () => false,
     gitUsable: () => false,
+    cltInstallerRunning: async () => false,
+    readInstallLog: () => null,
     ptyInstallDir: async () => home,
     brewPath: () => null,
     ghPath: () => null,
@@ -215,6 +218,42 @@ describe('git-install', () => {
 
   it('is refused off macOS', async () => {
     expect((await runFix('git-install', ctxFor({ platform: 'linux' }), recordingSink().sink, signal(), {}, fakeDeps().deps)).reason).toBe('refused');
+  });
+
+  // Plan ilk-acilis C11: Apple's window ended without Git.
+  it('the window closed without Git: git-missing closed', async () => {
+    let polls = 0;
+    const { deps } = fakeDeps(undefined, { cltInstallerRunning: async () => ++polls < 3 });
+    const r = await runFix('git-install', ctxFor(), recordingSink().sink, signal(), {}, deps);
+    expect(r).toMatchObject({ ok: false, gitMissing: 'closed' });
+  });
+
+  it('the update server could not serve it: git-missing download-failed', async () => {
+    let polls = 0;
+    const { deps } = fakeDeps(undefined, {
+      cltInstallerRunning: async () => ++polls < 2,
+      readInstallLog: () => '2026-11-20 10:00:01+03 host Install Command Line Developer Tools: Can\'t install the software because it is not currently available from the Software Update server.',
+    });
+    expect(await runFix('git-install', ctxFor(), recordingSink().sink, signal(), {}, deps)).toMatchObject({ ok: false, gitMissing: 'download-failed' });
+  });
+});
+
+describe('git-missing reasons (pure)', () => {
+  it('classifies the log text; none or unreadable means closed', () => {
+    expect(gitMissingReason(null)).toBe('closed');
+    expect(gitMissingReason('')).toBe('closed');
+    expect(gitMissingReason('x is not available from the Software Update server')).toBe('download-failed');
+  });
+
+  it('installLogSince keeps lines at or after the start, with their unstamped continuations', () => {
+    const text = [
+      '2026-11-20 09:59:00+03 host old line',
+      '2026-11-20 10:00:05+03 host new line',
+      '  continued',
+      '2026-11-20 10:00:06+0300 host newer',
+    ].join('\n');
+    const since = Date.parse('2026-11-20T10:00:00+03:00');
+    expect(installLogSince(text, since)).toBe(['2026-11-20 10:00:05+03 host new line', '  continued', '2026-11-20 10:00:06+0300 host newer'].join('\n'));
   });
 });
 

@@ -28,10 +28,12 @@ import {
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
-  BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
+  BUDGET_LIMITS, FAST_BROWSER_TARGET, HEAVY_OVER_BUDGET_EXIT, becauseSpent, fastBrowserScope, intentScope, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
   HARNESS_FREE_RUNS, VERIFY_HARNESS_EXIT, VERIFY_OLD_BUILD_ON_PURPOSE, drivesDist, recordHarness, recordRed, recordStart, refusal, shellQuote, staleDistFor, shellSegments, suiteInCommand, suiteScriptUnread, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
-import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
+import { FAST_DONE_LINE, FAST_LANE_MAX_LINES, LIGHT_LANE_MAX_LINES } from '../../lib/run-lane.js';
+import { laneHere } from '../../lib/lane-intent.js';
+import { acquireBrowserSlot } from '../../lib/builder-tools.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 import { registerReviewLoopCommands } from './review-loop.js';
@@ -151,12 +153,18 @@ export function builderReviewPick(deps: BuilderDeps, file: string): number {
   }
 }
 
-/** `lane`: prints `light: <why>` or `full: <why>`, plus what follows from it. Always exits 0. */
+/** `lane`: prints `fast: <why>`, `light: <why>` or `full: <why>`, plus what follows from it. Always exits 0. */
 export function builderLane(deps: BuilderDeps, opts: { from?: string; to?: string }): void {
-  const pick = laneFromGit(deps.cwd(), opts.from, opts.to);
+  // A worktree with a recorded intent reads its own range (lane-intent.ts laneHere, contract C9).
+  const { pick } = laneHere(deps.cwd(), opts.from, opts.to);
   // Asked with the run's start tree, it is the step before the end review.
   if (opts.from) markPhase(deps.cwd(), 'end', undefined, Date.now());
   deps.print(`${pick.lane}: ${pick.reason}`);
+  if (pick.lane === 'fast') {
+    deps.print(`one short read: ONE reviewer, model sonnet, effort low, the diff only, one round (a second only after a Critical); tests: builder test --related and the type-checks; browser: ${pick.visible ? 'ONE screenshot of the changed screen on the local dev server or a preview (dreamcontext shots, or the ops card\'s shots_script), no script of your own' : 'none, nothing visible changed'}; no project QA member, no payment matrix`);
+    deps.print(`end your last reply with this line: ${FAST_DONE_LINE}`);
+    return;
+  }
   deps.print(pick.lane === 'light'
     ? `one reviewer (it reads the security too), no router; browser: ${pick.visible ? 'yes, something visible changed' : 'no, nothing visible changed'}; no verify script of its own`
     : 'review-router, then builder review-pick');
@@ -553,7 +561,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   const command = argv.join(' ');
   // The scripts of the folder the command runs in (its own cds followed), never the caller's.
   const scripts = runScripts(command, deps.cwd());
-  const step = heavyStep(command, scripts);
+  const step = heavyStep(command, scripts, deps.cwd());
   if (chainRefused(deps, command)) return 2;
   // The receipt comes first: a check that already passed on this code costs no queue and no budget.
   const planned = step && step.kind !== 'browser' ? planShellReceipt(deps.cwd(), command, scripts) : null;
@@ -578,11 +586,20 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
     if (refused !== null) return refused;
   }
   const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
-  const target = step?.target ?? '';
   const open = kind ? currentScope(deps.cwd()) : null;
+  // A worktree with a recorded intent (super delegate --fast|--full) is its own scope: the limit
+  // holds even when no `builder open` ran there (plan sirket-yavaslik D4c).
+  const laned = kind ? laneHere(deps.cwd()) : null;
+  const intentBase = laned?.intent?.base ?? null;
   // Repeats are counted per code tree (run-budget.ts, audit OR-8): changed code is new proof.
-  const codeTop = open ? gitToplevel(deps.cwd()) : null;
-  const scope: BudgetScope | null = open ? { ...open, tree: codeTop ? contentTree(recordToplevel(codeTop)) : null } : null;
+  const codeTop = open || intentBase ? gitToplevel(deps.cwd()) : null;
+  const tree = codeTop ? contentTree(recordToplevel(codeTop)) : null;
+  // A fast change's browser runs share ONE bucket, whatever they aim at and on whatever tree.
+  const fastBrowser = kind === 'browser' && laned?.pick.lane === 'fast' && intentBase !== null && codeTop !== null;
+  const scope: BudgetScope | null = fastBrowser ? fastBrowserScope(codeTop!, intentBase!)
+    : open ? { ...open, tree }
+      : intentBase && codeTop ? intentScope(codeTop, intentBase, tree) : null;
+  const target = fastBrowser ? FAST_BROWSER_TARGET : step?.target ?? '';
   const pick = queueOf(command, scripts, (files) => countRelatedTests(deps.cwd(), files));
   const label = safeLabel(command, scripts);
   const budget = budgetPath(deps.cwd());
@@ -594,7 +611,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   // the script's own preflight honors too: --because would pass here and stop there (HARNESS).
   if (kind === 'browser') {
     const distTop = gitToplevel(deps.cwd());
-    const stale = distTop && drivesDist(command, target, distTop) ? staleDistFor(distTop) : null;
+    const stale = distTop && drivesDist(command, step?.target ?? '', distTop) ? staleDistFor(distTop) : null;
     if (stale) {
       deps.printErr(`builder heavy: build first: this browser check runs the built app, and ${stale.why}. NOTHING ran, nothing was counted.`);
       deps.printErr(`  Build, then run it again: dreamcontext builder heavy -- ${stale.build}`);
@@ -604,7 +621,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   // Asked before the wait for the lock, so a refused run costs no queueing.
   const over = kind && scope && !newBuild
-    ? refusal(readBudget(budget), scope, kind, target, Date.now(), kind === 'browser' ? laneFromGit(deps.cwd()) : undefined)
+    ? refusal(readBudget(budget), scope, kind, target, Date.now(), kind === 'browser' ? laned?.pick : undefined)
     : null;
   if (over && opts.because === undefined) {
     deps.printErr(`builder heavy: REFUSED, ${over}. NOTHING ran: the same check on the same code gives the same answer.`);
@@ -630,6 +647,18 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
     recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran: gaveUp, ended: gaveUp, exit: null, waits });
     deps.printErr(`builder heavy: ${busy}`);
     return HEAVY_LOCK_BUSY_EXIT;
+  }
+  // A browser run also holds one of the machine's browser slots (plan sirket-yavaslik D7): the
+  // third waits in line, and a wait that runs out keeps its place like any heavy wait.
+  if (kind === 'browser') {
+    const freeBrowser = await acquireBrowserSlot({ slotDir: deps.heavySlotDir?.() ?? heavySlotDir(), waitMs: (maxWaitS ?? HEAVY_DEFAULT_WAIT_S) * 1000 });
+    if (!freeBrowser) {
+      held.release();
+      deps.printErr(`builder heavy: both of the machine's browser slots stayed busy for ${maxWaitS ?? HEAVY_DEFAULT_WAIT_S}s; NOTHING ran. Run the same command again.`);
+      return HEAVY_LOCK_BUSY_EXIT;
+    }
+    const heavyRelease = held.release;
+    held.release = () => { freeBrowser(); heavyRelease(); };
   }
   // Queued behind the same check from another session: its receipt may be there now.
   if (receiptPlan && !opts.fresh && printReceipt(deps, receiptPlan, tail)) { held.release(); return 0; }
@@ -779,7 +808,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .option('--wait <id>', `Block on a detached check (at most ${HEAVY_WAIT_SLICE_S / 60} min a call; call again) and exit with its exit (${HEAVY_DIED_EXIT} = it died with no result)`)
     .option('--max-run <minutes>', `Kill the check and its whole process group after this many minutes of running (default ${HEAVY_MAX_RUN_MIN})`)
     .addOption(new Option('--run-id <id>').hideHelp())
-    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, ${HEAVY_BUILD_FIRST_EXIT} = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's ${VERIFY_HARNESS_EXIT} = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files`)
+    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's steps (every repo together, the fast line counted in: at most 2 at once, fewer when its cores or memory are short, 1 at serious or critical heat, critical memory pressure or a load past the cores), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, ${HEAVY_BUILD_FIRST_EXIT} = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's ${VERIFY_HARNESS_EXIT} = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files`)
     .action(async (command: string[], opts: HeavyOptions) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });

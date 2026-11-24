@@ -349,6 +349,42 @@ export function unloadedConnectors(
   return [...out].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * The briefing line that tells a lean child which servers it may still ask for (owner 2026-11-22:
+ * a Super forgot `--mcp`, its child never learned a server sat set up for the project and worked
+ * around it). Without this line the child cannot know a name to put on its `mcp` card, so the
+ * grant at turn end ({@link mcpGrantFor}) never fired. Names only, sorted: a project's servers,
+ * plus, for a Claude child, the account's connectors not known to be missing on its account
+ * (`connectorOnAccount` !== 'no'). '' when there is nothing more to ask for.
+ */
+export function childMcpOfferLine(o: {
+  have: readonly string[];
+  local: ReadonlyMap<string, unknown>;
+  connectors: ReadonlyMap<string, ChildConnector>;
+  /** A Codex or Antigravity child: connectors are Claude's, never offered. */
+  bridge: boolean;
+  accountId: string;
+  read: ReadonlySet<string>;
+}): string {
+  // At the cap a card grants nothing (`mcpGrantFor`): promising more would park the child on it.
+  if (o.have.length >= MAX_LEAN_MCP) return '';
+  const have = new Set(o.have);
+  const can = [...o.local.keys()].filter((n) => !have.has(n));
+  if (!o.bridge) {
+    for (const [alias, c] of o.connectors) {
+      if (!have.has(alias) && connectorOnAccount(c, o.accountId, o.read) !== 'no') can.push(alias);
+    }
+  }
+  if (!can.length) return '';
+  can.sort((a, b) => a.localeCompare(b));
+  const loaded = o.have.length ? `This chat has these MCP servers: ${[...o.have].join(', ')}.` : 'This chat started with none of the project\'s MCP servers.';
+  return `## MCP servers you may ask for
+
+${loaded} Set up for this project but not loaded in this chat, so this chat cannot use them until it asks: ${can.join(', ')}.
+Your task needs one of them (a message, an email, analytics, a document, a meeting): send ONE \`mcp\` card naming it and end your turn. dreamcontext restarts this chat with it at the turn's end and your next turn says \`MCP connected\`; only a server that still needs the owner's sign-in waits on him. Never work around a missing server (a script, a browser, a guess) while it is in this list.
+`;
+}
+
 /** The names among `names` the user does not have (empty = all known). */
 export function unknownMcpNames(names: readonly string[], known: ReadonlyMap<string, unknown>): string[] {
   return names.filter((n) => !known.has(n));

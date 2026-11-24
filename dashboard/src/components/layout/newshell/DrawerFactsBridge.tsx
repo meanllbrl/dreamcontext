@@ -65,7 +65,7 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
     if (firstPulse.current) { firstPulse.current = false; return; }
     poller.current?.poke();
   }, [pulse]);
-  const [surface, setSurface] = useState<DrawerSurfaceState>({ superOn: false, superSelected: false });
+  const [surface, setSurface] = useState<DrawerSurfaceState>({ superSelected: false });
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<DrawerSurfaceState>(DRAWER_SURFACE_EVENT, (s) => { if (s) setSurface(s); });
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
@@ -76,7 +76,8 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
   const windowsKey = JSON.stringify([surface.activeWindowId, surface.windows, surface.shown, surface.member, surface.superMarks, surface.chats, surface.activeChatId, surface.memberWaits ?? null]);
   useEffect(() => {
     onFacts?.(vault, {
-      superOn: surface.superOn, superSelected: surface.superSelected, chatOpen, team,
+      ...(surface.superOn !== undefined ? { superOn: surface.superOn } : {}),
+      superSelected: surface.superSelected, chatOpen, team,
       ...(members ? { members, identities } : {}),
       ...(surface.windows ? { windows: surface.windows, activeWindowId: surface.activeWindowId } : {}),
       ...(surface.shown ? { shown: surface.shown } : {}),

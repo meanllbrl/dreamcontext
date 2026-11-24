@@ -329,3 +329,53 @@ describe('agent sharing (its own .gitignore block)', () => {
     expect(ignored('_dream_context/agents/secret.md')).toBe(true);
   });
 });
+
+// ─── Member rules files (AC8): private stays out, shared merges by union ─────
+
+import * as agentStore from '../../src/lib/agents/store.js';
+
+describe('project member rules file (agents/<slug>.rules.json)', () => {
+  let proj: string;
+  let ctx: string;
+  beforeEach(() => {
+    proj = mkdtempSync(join(tmpdir(), 'dc-member-rules-'));
+    ctx = join(proj, '_dream_context');
+    mkdirSync(join(ctx, 'agents'), { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: proj });
+  });
+  afterEach(() => rmSync(proj, { recursive: true, force: true }));
+  const ignored = (rel: string) => {
+    try { execFileSync('git', ['check-ignore', '-q', rel], { cwd: proj }); return true; } catch { return false; }
+  };
+
+  it('a new vault ignores a private member rules file; sharing tracks it; unsharing ignores it again', () => {
+    agentStore.ensureAgentsGitignore(ctx);
+    writeFileSync(join(ctx, 'agents', 'scout.rules.json'), '{}');
+    writeFileSync(join(ctx, 'agents', 'secret.rules.json'), '{}');
+    expect(ignored('_dream_context/agents/scout.rules.json')).toBe(true);
+    expect(ignored('_dream_context/agents/secret.rules.json')).toBe(true);
+    agentSharing.shareAgent(ctx, 'scout');
+    expect(ignored('_dream_context/agents/scout.rules.json')).toBe(false);
+    expect(ignored('_dream_context/agents/secret.rules.json')).toBe(true);
+    // the generated view stays ignored even when shared
+    writeFileSync(join(ctx, 'agents', 'scout.rules.md'), 'x');
+    expect(ignored('_dream_context/agents/scout.rules.md')).toBe(true);
+    agentSharing.unshareAgent(ctx, 'scout');
+    expect(ignored('_dream_context/agents/scout.rules.json')).toBe(true);
+  });
+
+  it('an older vault (agents shared before rules existed) gets the rules block from shareAgentRules, idempotently', () => {
+    writeFileSync(join(ctx, '.gitignore'), `${agentTypes.AGENTS_GITIGNORE_ENTRIES.join('\n')}\n!agents/scout.md\n`);
+    writeFileSync(join(proj, '.gitignore'), `${agentTypes.AGENTS_GITIGNORE_ENTRIES_ROOT.join('\n')}\n!_dream_context/agents/scout.md\n`);
+    writeFileSync(join(ctx, 'agents', 'scout.rules.json'), '{}');
+    writeFileSync(join(ctx, 'agents', 'other.rules.json'), '{}');
+    agentStore.ensureAgentsGitignore(ctx);
+    expect(ignored('_dream_context/agents/scout.rules.json')).toBe(true);
+    agentSharing.shareAgentRules(ctx, 'scout');
+    const once = readFileSync(join(ctx, '.gitignore'), 'utf-8');
+    expect(agentSharing.shareAgentRules(ctx, 'scout')).toEqual([]);
+    expect(readFileSync(join(ctx, '.gitignore'), 'utf-8')).toBe(once);
+    expect(ignored('_dream_context/agents/scout.rules.json')).toBe(false);
+    expect(ignored('_dream_context/agents/other.rules.json')).toBe(true);
+  });
+});

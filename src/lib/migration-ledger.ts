@@ -23,6 +23,11 @@ export interface LedgerEntry {
   timestamp: string; // ISO 8601
   filesTouched: string[];
   summary: string;
+  /**
+   * The agentTask id this entry reports work for (a step's `<step>#work`
+   * sighting, or the 0.41.24 settle's re-check). See `dueAgentTasks`.
+   */
+  agentWorkFor?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────

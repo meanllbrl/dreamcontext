@@ -57,7 +57,7 @@ describe('the route policy is exhaustive', () => {
     expect(filtered).toEqual([
       // The card records and a secret card's value (Telegram W4, plan H9, I1): the handler checks
       // the RECORD's project with isMacExposed, never the request's.
-      'GET /api/agent/cards', 'GET /api/brain/team/updates', 'GET /api/connections', 'GET /api/federation/inbox', 'GET /api/peer/logo',
+      'GET /api/agent/cards', 'GET /api/agents/:slug/scorecard', 'GET /api/brain/team/updates', 'GET /api/connections', 'GET /api/federation/inbox', 'GET /api/peer/logo',
       'GET /api/peer/peers', 'GET /api/vaults', 'POST /api/agent/prompt', 'POST /api/agent/secret',
     ]);
     for (const k of ['POST /api/brain/team/fetch', 'GET /api/launcher/status', 'GET /api/launcher/federation-graph', 'GET /api/launcher/logo']) {

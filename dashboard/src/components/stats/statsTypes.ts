@@ -32,6 +32,21 @@ export interface ToolWindow { id: string; kind: string; label: string; usedPerce
 export interface ToolAccount { id: string; label: string; plan: string; fetchedAt: number | null; windows: ToolWindow[]; signedIn: boolean }
 export interface ToolLimits { id: 'claude' | 'codex'; name: string; accounts: ToolAccount[] }
 
+/** Mirrors `src/lib/usage-super-effect.ts` `SuperEffect` (the server's shape). */
+export type SuperVerdict = 'reduces' | 'increases' | 'same' | 'unknown' | 'noSuper';
+export interface SuperStratum {
+  mode: string | null; model: string; superSessions: number; plainSessions: number;
+  superRatio: number | null; plainRatio: number | null; superMedian: number | null; plainMedian: number | null;
+  diffPct: number | null; window: 'range' | 'before'; windowFrom: number; windowTo: number;
+}
+export interface SuperEffect {
+  verdict: SuperVerdict; diffPct: number | null; measure: 'tokensPerOutput'; strata: SuperStratum[];
+  overhead: { tokens: number; attributed: boolean }; totals: { super: number; plain: number };
+  cacheShare: { super: number | null; plain: number | null }; costDiff: number | null;
+  top: { mode: string | null; model: string } | null;
+  missing: { strata: number; unlinkedSuccessors: number; plainShort: number; superShort: number; short: 'plain' | 'super' | 'ownOnly' | null };
+}
+
 export interface StatsWire {
   scanning: { done: number; total: number } | null;
   range: StatsRange;
@@ -57,6 +72,8 @@ export interface StatsWire {
     ecoFrom: number | null;
     ecoPartial: boolean;
     trend: { sleep: number[]; memory: number[]; saved: number[] };
+    /** Absent from a server older than this card. */
+    superEffect?: SuperEffect;
   };
   limits: ToolLimits[];
   notCounted: Array<{ id: string; name: string }>;

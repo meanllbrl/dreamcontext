@@ -33,7 +33,7 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 function setup(target: string, speak: (t: string) => Promise<SpeakSummaryResult>, contextRoot: string | null = null) {
   const log: Sent[] = [];
   const spoken: string[] = [];
-  const hub = new TelegramHub({ home, speakSummary: async (t) => { spoken.push(t); return speak(t); } });
+  const hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, speakSummary: async (t) => { spoken.push(t); return speak(t); } });
   const ab = {
     key: `0123456789abcdef/${target}`, scope: '0123456789abcdef', target,
     binding: { v: 1, token: 't', botId: 1, botUsername: 'b', chatId: 777, userId: 777, boundAt: '' },
@@ -63,13 +63,26 @@ describe('the dream-voice block', () => {
     expect(r.text).toBe('**İkinci**\nİkinci özet.');
   });
 
-  it('the caption redacts the whole title first, then cuts and escapes it', () => {
+  it('the caption is the whole spoken text in an expandable quote, redacted first and escaped', () => {
     const key = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefgh';
-    const title = `${'a'.repeat(50)} ${key} <b>`;
-    const html = voiceCaptionHtml(splitVoiceBlocks(`\`\`\`dream-voice ${title}\nmetin\n\`\`\``).voices[0]!.title);
+    const html = voiceCaptionHtml({ title: 't', text: `Üye hafızası ${key} <b> & şğü` });
     expect(html).not.toContain('ABCDEFGHIJ');
-    expect(voiceCaptionHtml('a <b> & c')).toBe('🔊 a &lt;b&gt; &amp; c');
-    expect(voiceCaptionHtml('')).toBe('🔊 Sesli özet');
+    expect(html.startsWith('<blockquote expandable>🔊 ')).toBe(true);
+    expect(html.endsWith('</blockquote>')).toBe(true);
+    expect(voiceCaptionHtml({ text: 'a <b> & c' })).toBe('<blockquote expandable>🔊 a &lt;b&gt; &amp; c</blockquote>');
+    expect(voiceCaptionHtml({ title: '', text: '' })).toBe('<blockquote expandable>🔊 Sesli özet</blockquote>');
+  });
+
+  it('a long text is cut at a word with an ellipsis, never mid-word, and fits the caption limit', () => {
+    const text = 'Üye hafızası planı henüz bitmedi. Planın dördüncü sürümü yazılıyor. '.repeat(40);
+    const html = voiceCaptionHtml({ text });
+    const visible = html.replace('<blockquote expandable>🔊 ', '').replace('</blockquote>', '');
+    expect(visible.length + 3).toBeLessThanOrEqual(1024);
+    expect(visible.endsWith('…')).toBe(true);
+    const last = visible.slice(0, -1).split(/\s+/).pop()!;
+    expect(['Üye', 'hafızası', 'planı', 'henüz', 'bitmedi.', 'Planın', 'dördüncü', 'sürümü', 'yazılıyor.']).toContain(last);
+    // A short text is whole.
+    expect(voiceCaptionHtml({ text: 'Kısa metin.' })).toContain('Kısa metin.</blockquote>');
   });
 });
 
@@ -89,7 +102,7 @@ describe('Super answers (hub.onAssistantText)', () => {
     expect(texts).not.toContain('Dört boyda');
     const voice = log.find((l) => l.method === 'sendVoice')!;
     expect(voice.chatId).toBe(777);
-    expect(voice.extra).toMatchObject({ caption: '🔊 Ajanda planının özeti', duration: 53, replyTo: 42 });
+    expect(voice.extra).toMatchObject({ caption: '<blockquote expandable>🔊 Dört boyda da iş yapılır. Kart seni bekliyor.</blockquote>', duration: 53, replyTo: 42 });
     expect(log.some((l) => l.method === 'sendChatAction' && l.text === 'record_voice')).toBe(true);
   });
 
@@ -212,7 +225,7 @@ describe('the briefings', () => {
 });
 
 describe('one door', () => {
-  it('sendVoice is called only by the voice reply', () => {
+  it('sendVoice is called only by the voice reply and the hub group result', () => {
     const hits: string[] = [];
     const walk = (dir: string): void => {
       for (const n of readdirSync(dir)) {
@@ -222,6 +235,6 @@ describe('one door', () => {
       }
     };
     walk(join(__dirname, '../../src'));
-    expect(hits.sort()).toEqual(['src/lib/telegram/transport.ts', 'src/server/telegram/voice-reply.ts']);
+    expect(hits.sort()).toEqual(['src/lib/telegram/transport.ts', 'src/server/telegram/hub.ts', 'src/server/telegram/voice-reply.ts']);
   });
 });

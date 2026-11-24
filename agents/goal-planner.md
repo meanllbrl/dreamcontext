@@ -73,6 +73,8 @@ Built in: there is no skill to load for it. A change that breaks one of these is
   expand-then-contract (no column dropped in the same deploy as the code that stops using it).
 - **The test plan** names a level per criterion (unit, integration, emulator, end-to-end).
   Firebase work is tested against the Emulator Suite, never production.
+- **Existing users:** what does an install made before this change have, and does the plan
+  migrate it or say why not?
 
 You are the **Goal Planner**. Your output is a plan, not code.
 

@@ -108,14 +108,17 @@ function pageWithPictures(): { dir: string; outside: string; ctx: CardContext; h
 }
 
 describe("a page's own pictures travel inside its PDF, by the card's rules", () => {
-  it('beside, nested and SVG pictures and the stylesheet are written in; ../, a symlink, a hidden name and a missing file stay as written', async () => {
+  it('beside, nested, SVG and sibling-folder (../) pictures and the stylesheet are written in; a symlink, a hidden name and a missing file become named markers', async () => {
     const { dir, outside, ctx, html } = pageWithPictures();
     try {
       const out = pageWithOwnAssets(ctx, html, 'docs/v1/page.html');
       const png = `data:image/png;base64,${PNG_1PX.toString('base64')}`;
       expect(out).toContain(`<img src="${png}">\n<img src="${png}">\n<img src="data:image/svg+xml;charset=utf-8,`);
       expect(out).toContain('<style data-dc-src="docs/v1/page.css">.x{color:red}</style>');
-      for (const kept of ['<img src="../above.png">', '<img src="link.png">', '<img src="gone.png">', '<img src=".env.png">']) expect(out).toContain(kept);
+      expect(out).not.toContain('<img src="../above.png">');
+      expect(out.match(new RegExp(png.replace(/[+/]/g, '\\$&'), 'g'))!.length).toBeGreaterThanOrEqual(3);
+      for (const name of ['link.png', 'gone.png', '.env.png']) expect(out).toContain(`data-dc-broken="${name}"`);
+      expect(out).not.toContain(Buffer.from('secret').toString());
       // The renderer gets the written-in page.
       const renderPdf = vi.fn(async () => PDF);
       await cardOut({ ...ctx, renderPdf }, card('web', 'docs/v1/page.html', 'Sayfa'));

@@ -1,13 +1,15 @@
-import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
+import { useMemo, useState, useCallback, useEffect, startTransition, type CSSProperties } from 'react';
 import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useTask, useTaskList, useUpdateTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
+import { LoadingSkeleton } from '../common/LoadingSkeleton';
 import { useVault } from '../../context/VaultContext';
 import { publishPageDetail } from '../../lib/pageContext';
 import { fill, openChildrenMessage } from '../../lib/taskObjection';
 import { TaskDeleteDialog } from './TaskDeleteDialog';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
+import { usePublishOpenItem } from '../../lib/openItem';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import {
@@ -30,6 +32,8 @@ import './Board.css';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
 const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
+/** Cards per column in the board's first frame: more than a tall window shows before scrolling. */
+const FIRST_CARDS = 16;
 
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
@@ -70,6 +74,19 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [colCollapsed, setColCollapsed] = useState<Record<string, boolean>>({});
   // Which parents have their subtask list open — kept for this board session only.
   const [subtasksOpen, setSubtasksOpen] = useState<Record<string, boolean>>({});
+  // The board's first frame draws the cards a column shows before it scrolls; the rest follow in
+  // the next, interruptible render. Building ~600 cards (~9,700 elements) in one go was the block a
+  // switch to Tasks waited on. Counts, columns and every card are the same once it lands, a frame
+  // later; it happens once per mount, so a refetch or a filter change draws the full board at once.
+  const [allCards, setAllCards] = useState(false);
+  const hasTasks = tasks.length > 0;
+  useEffect(() => {
+    if (allCards || !hasTasks) return;
+    let timer = 0;
+    // After the first frame is on screen, then as a transition, so a click or a key still wins.
+    const raf = requestAnimationFrame(() => { timer = window.setTimeout(() => startTransition(() => setAllCards(true)), 0); });
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer); };
+  }, [allCards, hasTasks]);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
@@ -256,12 +273,22 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   }, [pendingSave, s, flash]);
 
   const selectedTask = selectedSlug ? tasks.find((t) => t.slug === selectedSlug) || null : null;
+  // The open task, for the window's places (navigation B, C4): the focus target opens it again.
+  // Only a task the list has (an unknown slug opens nothing, so it is never published).
+  usePublishOpenItem(bus, 'tasks', selectedTask ? selectedTask.slug : null, selectedTask?.name ?? null);
 
   // The new shell's page frame already draws the card (D11): no second border, and the board
   // fills the frame instead of sizing from the viewport.
   const newShell = useIsNewShell();
+  // One frame for the board and for its outline while it loads: the board lands where the
+  // outline was.
+  const boardFrame: CSSProperties = { height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)', ...(newShell ? NEW_SHELL_BOARD : {}) };
   if (!s.ready || isLoading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
+    return (
+      <div style={boardFrame}>
+        <LoadingSkeleton shape="board" label={t('common.loading')} />
+      </div>
+    );
   }
 
   const activeName = s.activeView?.name ?? 'view';
@@ -270,7 +297,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const isEmpty = filtered.length === 0;
 
   return (
-    <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)', ...(newShell ? NEW_SHELL_BOARD : {}) }}>
+    <div style={boardFrame}>
       <BoardViewTabs
         title={newShell ? t('nav.tasks') : undefined}
         views={s.views}
@@ -334,6 +361,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
                 key={colKey}
                 col={data}
                 cardProps={s.cardProps}
+                sm={sm}
+                cardLimit={allCards ? undefined : FIRST_CARDS}
                 dragId={dragId}
                 draggable={draggable}
                 isDropTarget={!!dragId && dragOverKey === data.key}
@@ -544,7 +573,9 @@ function FullTaskDetail({ slug, allTasks, onOpenTask, onClose, onDeleted }: {
   onClose: () => void;
   onDeleted: (next: string | null, deleted: string[]) => void;
 }) {
-  const { data: full } = useTask(slug);
-  if (!full) return null;
+  const { data: full, isPending, isError } = useTask(slug);
+  // Pending: a zero-size marker, so a project prepared out of sight is not shown before its task
+  // is in (tek-kenar C1 delta 2). Cleared on data or on error.
+  if (!full) return isPending && !isError ? <span data-loading="" hidden /> : null;
   return <TaskDetailPanel task={full} allTasks={allTasks} onOpenTask={onOpenTask} onClose={onClose} onDeleted={onDeleted} />;
 }

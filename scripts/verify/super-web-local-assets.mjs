@@ -214,7 +214,7 @@ function mockup(sitePort) {
 <h2>Before</h2>${fig('once/0-sheet.png', '0. Four taps to share')}
 <h2>After</h2>${fig('sonra/1-sheet.png', '1. One tap opens the sheet')}${fig('sonra/2-contacts.png', '2. Recent contacts')}
 <p><img id="web" src="http://127.0.0.1:${sitePort}/leak.png" alt="on the web"><img id="outside" src="../../../../outside.png" alt="outside the project">
-<img id="sibling" src="../brain-shot.png" alt="in the project, outside the page folder"><img id="huge" src="sonra/huge.png" alt="over the size cap"></p>
+<img id="sibling" src="../brain-shot.png" alt="in the project, outside the page folder"><img id="huge" src="sonra/huge.png" alt="over the size cap"><img id="gone" src="sonra/gone.png" alt="missing"></p>
 <div id="gallery"></div>
 <script>var tile = "<img id='built' src='sonra/1-sheet.png' alt='built'>"; document.getElementById('gallery').innerHTML = tile; document.body.dataset.scriptRan = 'yes';</script>
 </body></html>`;
@@ -243,6 +243,12 @@ function setupScratch(sitePort) {
   writeFileSync(join(synth, 'sonra', 'huge.png'), Buffer.concat([readFileSync(png), Buffer.alloc(9 * 1024 * 1024)]));
   writeFileSync(join(synth, 'stil.css'), 'h1#title { color: rgb(201, 42, 42); letter-spacing: 3px; }\nimg { max-width: 100%; border-radius: 8px; }\n');
   writeFileSync(join(synth, 'akis.html'), mockup(sitePort));
+  // The owner's case: a page whose only content is pictures in a sibling folder.
+  const rep = join(PROJ, '_dream_context', 'tmp', 'super', 'ilk-acilis-ekran3');
+  const oneri = join(PROJ, '_dream_context', 'tmp', 'user-journey', '01-ilk-acilis', 'oneri');
+  mkdirSync(rep, { recursive: true }); mkdirSync(oneri, { recursive: true });
+  for (const n of ['a', 'b', 'c']) copyFileSync(png, join(oneri, `v2-03-${n}.png`));
+  writeFileSync(join(rep, 'rapor.html'), ['a', 'b', 'c'].map((n) => `<img id="r${n}" src="../user-journey/01-ilk-acilis/oneri/v2-03-${n}.png">`).join('\n') + '\n<img id="rmissing" src="../user-journey/01-ilk-acilis/oneri/v2-03-yok.png">\n');
   if (PAGE_DIR) cpSync(PAGE_DIR, join(PROJ, OWNER), { recursive: true });
 }
 
@@ -283,7 +289,7 @@ try {
   const page = await context.newPage();
   lastPage = page;
   const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error' && !/Content Security Policy|leak\.png|ERR_BLOCKED/.test(m.text())) errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/Content Security Policy|leak\.png|ERR_BLOCKED|status of 40[34]/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
 
   console.log('\n── the agent opens the project mockup as a web card');
@@ -291,7 +297,10 @@ try {
   if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   ok('a chat opens', await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0));
   await sleep(1500);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  // The drawer's Super Agent row hands over since the tab's button left the chat bar.
+  const handover = page.locator('[data-testid="super-handover-btn"]:visible').first();
+  if (await handover.count()) await handover.click().catch(() => {});
+  else await page.getByText('Super Agent', { exact: true }).first().click();
   ok('the surface shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
   ok('the super agent opened the page', await until(page, async () => !!idOf(`${SYNTH}/akis.html`), 60000));
   await settle(page);
@@ -302,7 +311,7 @@ try {
   console.log('\n── its pictures and stylesheet show; nothing else is let in');
   const pics = await pictures(frame);
   console.log(`  · ${JSON.stringify(pics)}`);
-  const local = pics.filter((p) => !['web', 'outside', 'sibling', 'huge', 'built'].includes(p.id));
+  const local = pics.filter((p) => !['web', 'outside', 'sibling', 'huge', 'built', 'gone'].includes(p.id));
   ok('three project pictures are in the page', local.length === 3, JSON.stringify(pics));
   ok('…every one decodes (naturalWidth > 0), carried in as data: URLs', local.every((p) => p.w > 0 && p.src.startsWith('data:image/png')), JSON.stringify(local));
   const h1 = await frame.evaluate(() => { const s = getComputedStyle(document.getElementById('title')); return { color: s.color, ls: s.letterSpacing }; });
@@ -311,9 +320,11 @@ try {
   ok("the frame's CSP is unchanged: default-src 'none', img-src data: only", csp.includes("default-src 'none'") && /img-src data:$|img-src data:;/.test(csp) && !/https?:|'self'|blob:/.test(csp), csp);
   ok('the picture on the web stays blocked (naturalWidth 0)', pics.find((p) => p.id === 'web')?.w === 0, JSON.stringify(pics));
   ok('…and its server was never asked for it', site.hits.length === 0, JSON.stringify(site.hits));
-  ok('the picture outside the project stays unloaded', pics.find((p) => p.id === 'outside')?.w === 0, JSON.stringify(pics));
-  ok('a project picture outside the page\'s own folder stays unloaded', pics.find((p) => p.id === 'sibling')?.w === 0, JSON.stringify(pics));
-  ok('a picture over the 8 MB cap stays unloaded', pics.find((p) => p.id === 'huge')?.w === 0, JSON.stringify(pics));
+  const marked = await frame.evaluate(() => [...document.images].filter((i) => i.hasAttribute('data-dc-broken')).map((i) => i.id + ':' + i.getAttribute('data-dc-broken')));
+  ok('a picture climbing out of the project shows the "Picture not shown" marker with its file name', marked.includes('outside:outside.png'), JSON.stringify(marked));
+  ok('a project picture in a SIBLING folder (../) now loads', (pics.find((p) => p.id === 'sibling')?.w ?? 0) > 0 && !marked.some((m) => m.startsWith('sibling')), JSON.stringify({ pics, marked }));
+  ok('a picture over the 8 MB cap shows the marker, not a blank', marked.includes('huge:huge.png'), JSON.stringify(marked));
+  ok('a missing picture shows the marker', marked.includes('gone:gone.png'), JSON.stringify(marked));
   const ran = await frame.evaluate(() => ({ ran: document.body.dataset.scriptRan, built: document.getElementById('built')?.getAttribute('src') }));
   ok('a script building <img> from a JS string still parses and runs (its markup untouched)', ran.ran === 'yes' && ran.built === 'sonra/1-sheet.png', JSON.stringify(ran));
   await card(page, id).screenshot({ path: join(OUT, '1-card.png') });
@@ -325,7 +336,24 @@ try {
   ok('the frame is still there (not torn down)', (await card(page, id).locator('iframe.doc-reader-html-frame').count()) === 1);
   ok('…with no "tried to open another page" notice', (await card(page, id).locator('[role="alert"]').count()) === 0);
   const after = await pictures(await frameOf(page, id));
-  ok('…and still the same page, its pictures shown', after.filter((p) => p.w > 0).length === 3, JSON.stringify(after));
+  ok('…and still the same page, its pictures shown', after.filter((p) => p.w > 0).length === pics.filter((p) => p.w > 0).length, JSON.stringify(after));
+  // The click opens the picture viewer over the stage; close it before driving the composer.
+  await page.keyboard.press('Escape');
+  await until(page, async () => (await page.locator('.image-viewer').count()) === 0, 5000);
+
+  console.log('\n── the owner\'s report: pictures only, in a sibling folder');
+  const rs = await agent(page, 'super open web _dream_context/tmp/super/ilk-acilis-ekran3/rapor.html');
+  ok('`super open web` on rapor.html succeeded', rs && rs.status === 0, JSON.stringify(rs));
+  const rid = idOf('_dream_context/tmp/super/ilk-acilis-ekran3/rapor.html');
+  ok('rapor.html is drawn in its frame', await until(page, async () => (await card(page, rid).locator('iframe.doc-reader-html-frame').count()) > 0, 20000));
+  const rf = await frameOf(page, rid);
+  const rp = await pictures(rf);
+  const rmarked = await rf.evaluate(() => [...document.images].filter((i) => i.hasAttribute('data-dc-broken')).map((i) => i.id + ':' + i.getAttribute('data-dc-broken')));
+  console.log(`  · ${JSON.stringify(rp)} ${JSON.stringify(rmarked)}`);
+  ok('the three sibling-folder pictures show, as data: URLs', ['ra', 'rb', 'rc'].every((i) => { const x = rp.find((p) => p.id === i); return x && x.w > 0 && x.src.startsWith('data:image/png'); }), JSON.stringify(rp));
+  ok('the missing one shows the marker with its file name', rmarked.length === 1 && rmarked[0] === 'rmissing:v2-03-yok.png', JSON.stringify(rmarked));
+  await card(page, rid).screenshot({ path: join(OUT, '3-rapor-card.png') });
+  await shot(page, '3-rapor-stage');
 
   if (PAGE_DIR) {
     console.log(`\n── the owner's draft (${PAGE_DIR})`);

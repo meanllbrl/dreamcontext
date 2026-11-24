@@ -69,10 +69,22 @@ const LANE_STEP = `Then read the lane off the diff:
 
   dreamcontext builder lane --from "$START" --to "$NOW"
 
-It prints \`light: <why>\` or \`full: <why>\`; log the line, you never override it. Light: ONE
+It prints \`fast: <why>\`, \`light: <why>\` or \`full: <why>\`; log the line, you never override it. FAST
+(only in a worktree the Super opened with \`--fast\`, and only when the diff is look or copy with no money in it):
+ONE \`reviewer\`, model sonnet, effort low, the diff only, one round (a second only after a Critical, then
+light takes over); \`builder test --related\` and the type-checks; ONE screenshot of the changed screen on the
+LOCAL dev server or a preview (staging shows the old build) with \`dreamcontext shots <url>\`, or
+\`shots <url> --script <path>\` when the ops card names a shots_script; a flow neither can do gets ONE
+\`scripts/shots.mjs\` in the repo, committed and recorded with \`dreamcontext ops set shots_script
+scripts/shots.mjs\`, never a script in /tmp; no project QA member, no payment matrix. Your last reply ends
+with the line \`builder lane\` prints. Light: ONE
 \`reviewer\`, who reads the security too, no router and no \`review-pick\`, a browser only when it says something visible
 changed or a criterion is about what the owner sees (\`--because\` names that criterion), and no
-verify script of your own. Full: the pick below.`;
+verify script of your own. Full: the pick below.
+
+CI: never \`gh run watch\`, \`gh pr checks --watch\` or a polling loop (refused). Wait with
+\`dreamcontext ci wait <run-id>\` (or \`--branch <b>\`: every run of HEAD): it stops before the shell tool's
+ceiling with exit 4, and you run the same command again; 1 = red, its failed log is data.`;
 
 const END_FINAL_CHECK = `- The final check, ONCE, after the last PASS: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
   ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
@@ -267,8 +279,8 @@ EACH BASH CALL IS A FRESH SHELL: only the working directory carries over, never 
 Start every block below with its own \`S=<task-slug>; ROOT="$(git rev-parse --show-toplevel
 2>/dev/null || pwd)"\`, run each block as ONE call, and carry a value to a later block (the
 run's START tree) by pasting the literal value printed earlier, or by reading it back from the
-task log. Give every \`dreamcontext builder\` call the Bash tool's \`timeout: 600000\`: a check
-blocks for up to 9 minutes. Never start anything with the Bash tool's run_in_background.
+task log. Give every \`dreamcontext builder\` and \`dreamcontext ci wait\` call the Bash tool's
+\`timeout: 600000\`: a check blocks for up to 9 minutes. Never start anything with the Bash tool's run_in_background.
 
 ${NO_TASK_PATH}
 
@@ -374,7 +386,8 @@ or the failure and nothing else, and check the fix with \`builder test "$S" --wa
 <files the fix changed>\`, naming a central file's tests with \`--also\` instead of the file.
 Only what the fix touched runs: no build, no browser and no Validation command here, those wait
 for the one final check. ${END_REVIEW_ROUND} After a red final check, the fix's reviewer also
-reads the ticks and their evidence, then re-run only what was red. Nothing closes on a fix no reviewer has read:
+reads the ticks and their evidence (the same loop: its next packet opens the round after the PASS,
+never a new --loop), then re-run only what was red. Nothing closes on a fix no reviewer has read:
 
   dreamcontext builder mark review-start || true   # and review-end with its verdict
 

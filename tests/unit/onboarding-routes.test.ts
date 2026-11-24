@@ -25,7 +25,12 @@ vi.mock('../../src/lib/onboarding/pending-git.js', async (orig) => ({
   listPendingGitInits: () => listPendingGitInits(),
 }));
 
-const { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } = await import('../../src/server/routes/onboarding.js');
+const { handleOnboardingAgents, handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } = await import('../../src/server/routes/onboarding.js');
+const { OWNER_KEY_HEADER, setOwnerKey } = await import('../../src/server/owner-key.js');
+const { agentsPickPath, pickedAgents } = await import('../../src/lib/agent-pick.js');
+const { mkdtempSync, rmSync, existsSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
 const { handleAgentInstallStatus } = await import('../../src/server/routes/agent-terminal.js');
 const { resetInstallRunsForTests } = await import('../../src/server/install-runs.js');
 const { resetReadinessForTests } = await import('../../src/lib/onboarding/readiness.js');
@@ -175,5 +180,51 @@ describe('pending git init trigger order', () => {
     listPendingGitInits.mockReturnValue(['/projects/demo']);
     await call(handleOnboardingReadiness, req('GET', '/api/onboarding/readiness'));
     expect(runPendingGitInits).not.toHaveBeenCalled();
+  });
+});
+
+// Plan ilk-acilis C4, S1: the first screen's agent pick.
+describe('POST /api/onboarding/agents', () => {
+  const KEY = 'pick-owner-key-0123456789abcdefghijklmnop';
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'dc-pick-home-'));
+    vi.stubEnv('HOME', home);
+    setOwnerKey(KEY);
+  });
+  afterEach(() => { setOwnerKey(null); rmSync(home, { recursive: true, force: true }); });
+
+  function pickReq(body: unknown, headers: Record<string, string> = { [OWNER_KEY_HEADER]: KEY }): IncomingMessage {
+    const q = req('POST', '/api/onboarding/agents', body);
+    Object.assign(q.headers, headers);
+    return q;
+  }
+
+  it('writes the pick through setPickedAgents and answers the stored list', async () => {
+    const r = await call(handleOnboardingAgents, pickReq({ picked: ['claude'] }));
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ ok: true, picked: ['claude'] });
+    expect(pickedAgents(home)).toEqual(['claude']);
+    expect((await call(handleOnboardingAgents, pickReq({ picked: ['codex'], extra: 'ignored' }))).body).toEqual({ ok: true, picked: ['codex'] });
+  });
+
+  it('refuses an empty or unknown pick', async () => {
+    for (const body of [{}, { picked: [] }, { picked: ['gpt'] }, { picked: 'claude' }]) {
+      expect((await call(handleOnboardingAgents, pickReq(body))).status, JSON.stringify(body)).toBe(400);
+    }
+    expect(existsSync(agentsPickPath(home))).toBe(false);
+  });
+
+  it('refuses no owner key, a cross-site Origin and another loopback port', async () => {
+    const bad = [
+      {},
+      { [OWNER_KEY_HEADER]: 'wrong' },
+      { [OWNER_KEY_HEADER]: KEY, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+      { [OWNER_KEY_HEADER]: KEY, origin: 'http://127.0.0.1:5173' },
+    ];
+    for (const h of bad) {
+      expect((await call(handleOnboardingAgents, pickReq({ picked: ['claude'] }, h))).status, JSON.stringify(h)).toBe(403);
+    }
+    expect(existsSync(agentsPickPath(home))).toBe(false);
   });
 });

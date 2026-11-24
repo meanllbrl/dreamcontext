@@ -25,12 +25,35 @@ function reasonSentence(message: string): string {
  * session-ended (12). No "idle" status word anywhere (redesign rule 6).
  */
 
-export function EmptyState() {
+/** What a host puts in a new chat's empty state instead of today's (the main Super stage, C13). */
+export interface EmptyHero {
+  title: string;
+  /** Replaces the sub-line; absent keeps today's. */
+  sub?: ReactNode;
+  /** Short messages, each sent as typed when clicked; drawn only while the chat is empty. */
+  chips?: readonly string[];
+  /** Replaces the ">_" mark. */
+  mark?: ReactNode;
+  /** Quiet secondary ways in, under the chips (the Chat page's landing: terminal, past chats). */
+  more?: ReactNode;
+}
+
+export function EmptyState({ hero, onChip }: { hero?: EmptyHero; onChip?: (text: string) => void } = {}) {
+  const { t } = useI18n();
+  const chips = hero?.chips && onChip ? hero.chips : [];
   return (
-    <div className="chat-banner-empty">
-      <BotMark />
-      <h3 className="chat-banner-empty-title">Say something to start</h3>
-      <p className="chat-banner-empty-sub">Ask a question, hand off a task, or just say hi.</p>
+    <div className={`chat-banner-empty${hero ? ' chat-banner-empty--hero' : ''}`}>
+      {hero?.mark ?? <BotMark />}
+      <h3 className="chat-banner-empty-title" title={hero ? hero.title : undefined}>{hero?.title ?? t('chat.empty.title')}</h3>
+      <div className="chat-banner-empty-sub">{hero?.sub ?? t('chat.empty.sub')}</div>
+      {chips.length > 0 && (
+        <div className="chat-banner-chips" data-testid="chat-empty-chips">
+          {chips.map((c) => (
+            <button key={c} type="button" className="chat-banner-chip" title={c} onClick={() => onChip?.(c)}>{c}</button>
+          ))}
+        </div>
+      )}
+      {hero?.more && <div className="chat-banner-more">{hero.more}</div>}
     </div>
   );
 }

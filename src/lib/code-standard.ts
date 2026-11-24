@@ -63,7 +63,9 @@ export const PLAN_STANDARD = `## What a plan owes the code standard
 - **Data changes:** a migration is a new file (an old one is never edited), reversible, and
   expand-then-contract (no column dropped in the same deploy as the code that stops using it).
 - **The test plan** names a level per criterion (unit, integration, emulator, end-to-end).
-  Firebase work is tested against the Emulator Suite, never production.`;
+  Firebase work is tested against the Emulator Suite, never production.
+- **Existing users:** what does an install made before this change have, and does the plan
+  migrate it or say why not?`;
 
 /** Domain rules for the agents that build or review code of every kind. Implementer and reviewer. */
 export const DOMAIN_RULES = `## When the change is one of these

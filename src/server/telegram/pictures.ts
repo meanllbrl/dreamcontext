@@ -15,6 +15,7 @@ import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/w
 import type { UploadFile } from '../../lib/telegram/transport.js';
 import { isLayoutRender } from '../../lib/whiteboards/render-mark.js';
 import type { ActiveBinding } from './hub.js';
+import { mp4VideoParams } from '../../lib/telegram/mp4-info.js';
 
 export type MediaKind = 'photo' | 'video' | 'document';
 export interface MediaItem {
@@ -226,6 +227,7 @@ async function uploadPatiently<T>(ab: ActiveBinding, method: string, params: Rec
 export async function sendMedia(ab: ActiveBinding, item: MediaItem, captionHtml?: string, keyboard?: unknown[][]): Promise<{ message_id: number } | null> {
   const params: Record<string, unknown> = { chat_id: ab.binding.chatId, parse_mode: 'HTML' };
   if (captionHtml) params.caption = captionHtml;
+  if (item.kind === 'video') Object.assign(params, mp4VideoParams(item.file.data));
   if (keyboard?.length) params.reply_markup = { inline_keyboard: keyboard };
   const r = await uploadPatiently<{ message_id?: number }>(ab, METHOD[item.kind], params, { [item.kind]: item.file });
   return r && typeof r === 'object' && Number.isSafeInteger(r.message_id) ? { message_id: r.message_id! } : r ? { message_id: 0 } : null;
@@ -239,7 +241,7 @@ export async function sendAlbum(ab: ActiveBinding, items: MediaItem[], captionOf
   const media = list.map((it, i) => {
     files[`f${i}`] = it.file;
     const cap = captionOf?.(it);
-    return { type: it.kind, media: `attach://f${i}`, ...(cap ? { caption: cap, parse_mode: 'HTML' } : {}) };
+    return { type: it.kind, media: `attach://f${i}`, ...(it.kind === 'video' ? mp4VideoParams(it.file.data) : {}), ...(cap ? { caption: cap, parse_mode: 'HTML' } : {}) };
   });
   const r = await uploadPatiently(ab, 'sendMediaGroup', { chat_id: ab.binding.chatId, media }, files);
   return !!r;

@@ -105,6 +105,8 @@ const NO = new Set([
 /** Words that only carry the yes or no ("Conor'a izin veriyorum", "evet, buna izin ver"). */
 const FILLER = new Set([
   'izin', 'izni', 'iznini', 'buna', 'bunu', 'ona', 'suna', 'sunu', 'ben', 'de', 'da', 'lutfen', 'it', 'this', 'please', 'i', 'that',
+  // D14 (iyilesme-360): how he says it ("onay verdim saysın", "hadi evet"); "hadi" alone is no yes.
+  'say', 'saysin', 'sayin', 'sayilsin', 'artik', 'hadi',
 ]);
 /** A Turkish case ending after a name's apostrophe ("Conor'a", "Atlas'ın"). */
 const SUFFIX = new Set(['a', 'e', 'ya', 'ye', 'na', 'ne', 'in', 'un', 'nin', 'nun', 'i', 'u', 'yi', 'yu', 'ni', 'nu']);
@@ -325,7 +327,7 @@ export async function allowByOwnerWords(
     if (!target || !call) return fail('stale_request', 'that permission is no longer asked');
     if (!args.deny) {
       const why = writtenConsentRefusal(call);
-      if (why) return fail('outward', `never on his written word: ${why}. Tell him so in one line; ${TAP}`);
+      if (why) return fail('outward', `never on his written word: ${why}. Tell him in one plain line, in his language, that a step that leaves this machine needs his tap, not a typed yes; ${TAP}`);
     }
     const answer: OwnerAnswer = target.kind === 'owner'
       ? { kind: 'refusal', action: args.deny ? 'not_needed' : 'allow', size: 'once' }

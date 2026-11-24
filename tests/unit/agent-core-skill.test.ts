@@ -27,7 +27,8 @@ import { RECALL_GUIDANCE, TASK_CREATE_GUIDANCE } from '../../src/lib/agent-guida
 
 const ROOT = join(__dirname, '..', '..');
 const SKILL_PATH = join(ROOT, 'skill-agent-core', 'SKILL.md');
-const MAX_BYTES = 6_144;
+// 6,144 -> 6,500 (2026-11-22, local cut yerel-21kas-b): global-uye-ogrenme's member-rule rows (measured 6,471 on its own branch).
+const MAX_BYTES = 6_500;
 
 const raw = (): string => readFileSync(SKILL_PATH, 'utf-8');
 

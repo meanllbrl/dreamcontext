@@ -348,3 +348,111 @@ describe('handleLauncherCatalog', () => {
 
 // ─── capture prompt (injection-safe, has the no-follow-ups injection) ──────────
 
+
+// ─── C14a: the "had files" fact is taken before dreamcontext writes, the marker at registration ──
+
+describe('scaffoldProject — the first-run marker (C14a, D12)', () => {
+  it('takes "had files" before the runner\'s first call: a folder that had a README stays pending', async () => {
+    const { readFirstRunMarker } = await import('../../src/lib/first-read.js');
+    const proj = mkTmp('dc-proj');
+    const home = mkTmp('dc-home');
+    dirs.push(proj, home);
+    writeFileSync(join(proj, 'README'), 'hi');
+    let markerAtFirstCall: unknown = 'unset';
+    const calls: string[][] = [];
+    const runner: CliRunner = async (args, cwd) => {
+      if (calls.length === 0) markerAtFirstCall = readFirstRunMarker(home);
+      calls.push(args);
+      if (args[0] === 'init') makeContext(cwd);
+      if (args[0] === 'setup') {
+        mkdirSync(join(cwd, '.claude'), { recursive: true });
+        writeFileSync(join(cwd, '.claude', 'settings.json'), '{}');
+        writeFileSync(join(cwd, 'CLAUDE.md'), '# x');
+      }
+    };
+    await scaffoldProject({ mode: 'existing', name: 'had', projectPath: proj }, runner, home);
+    expect(markerAtFirstCall).toBeNull();
+    expect(readFirstRunMarker(home)?.pending).toBe(proj);
+  });
+
+  it('an empty folder gets pending null even though the runner writes files into it', async () => {
+    const { readFirstRunMarker } = await import('../../src/lib/first-read.js');
+    const proj = mkTmp('dc-proj');
+    const home = mkTmp('dc-home');
+    dirs.push(proj, home);
+    const runner: CliRunner = async (args, cwd) => {
+      writeFileSync(join(cwd, `written-by-${args[0]}.txt`), 'x');
+      if (args[0] === 'init') makeContext(cwd);
+    };
+    await scaffoldProject({ mode: 'existing', name: 'empty', projectPath: proj }, runner, home);
+    const m = readFirstRunMarker(home);
+    expect(m).not.toBeNull();
+    expect(m!.pending).toBeNull();
+  });
+
+  it('a new project under the parent is never "had files"; only the first registration writes the marker', async () => {
+    const { readFirstRunMarker, firstRunMarkerPath } = await import('../../src/lib/first-read.js');
+    const parent = mkTmp();
+    const home = mkTmp('dc-home');
+    const other = mkTmp('dc-proj');
+    dirs.push(parent, home, other);
+    writeFileSync(join(other, 'README'), 'hi');
+    const { runner } = recordingRunner();
+    await scaffoldProject({ mode: 'new', name: 'first', parentDir: parent }, runner, home);
+    expect(readFirstRunMarker(home)?.pending).toBeNull();
+    const before = readFileSync(firstRunMarkerPath(home), 'utf-8');
+    await scaffoldProject({ mode: 'existing', name: 'second', projectPath: other }, runner, home);
+    expect(readFileSync(firstRunMarkerPath(home), 'utf-8')).toBe(before);
+  });
+
+  it('a later first registration on a machine that has projects writes no marker', async () => {
+    const { readFirstRunMarker } = await import('../../src/lib/first-read.js');
+    const { addVault } = await import('../../src/lib/vaults.js');
+    const home = mkTmp('dc-home');
+    const existing = mkTmp('dc-proj');
+    const proj = mkTmp('dc-proj');
+    dirs.push(home, existing, proj);
+    makeContext(existing);
+    addVault('existing', existing, home);
+    writeFileSync(join(proj, 'README'), 'hi');
+    const { runner } = recordingRunner();
+    await scaffoldProject({ mode: 'existing', name: 'later', projectPath: proj }, runner, home);
+    expect(readFirstRunMarker(home)).toBeNull();
+  });
+});
+
+describe('handleLauncherRegister — writes the marker at the first registration (C14a)', () => {
+  it('records pending = the real root for a folder with files, before addVault', async () => {
+    const { handleLauncherRegister } = await import('../../src/server/routes/launcher.js');
+    const { readFirstRunMarker } = await import('../../src/lib/first-read.js');
+    const { OWNER_KEY_HEADER, setOwnerKey } = await import('../../src/server/owner-key.js');
+    const { Readable } = await import('node:stream');
+    const home = mkTmp('dc-home');
+    const proj = mkTmp('dc-proj');
+    dirs.push(home, proj);
+    makeContext(proj);
+    writeFileSync(join(proj, 'notes.md'), 'x');
+    const KEY = 'test-owner-key-0123456789abcdefghijklmnop';
+    const prevHome = process.env.HOME;
+    process.env.HOME = home;
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+    setOwnerKey(KEY);
+    try {
+      const req = Object.assign(Readable.from([Buffer.from(JSON.stringify({ name: 'reg', path: proj }))]), {
+        method: 'POST',
+        url: '/api/launcher/register',
+        headers: { 'content-type': 'application/json', host: '127.0.0.1', [OWNER_KEY_HEADER]: KEY },
+        socket: { remoteAddress: '127.0.0.1' },
+      }) as any;
+      let status = 0;
+      const res: any = { writeHead(c: number) { status = c; }, setHeader() {}, end() {} };
+      await handleLauncherRegister(req, res, {}, null);
+      expect(status).toBe(200);
+      expect(readFirstRunMarker(home)?.pending).toBe(proj);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+      delete process.env.DREAMCONTEXT_DESKTOP;
+      setOwnerKey(null);
+    }
+  });
+});

@@ -12,6 +12,8 @@ import { settingsPrompt } from './settingsPrompt';
 import { confirmAction } from '../../lib/desktop';
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { AppDataLine, AppDataTileLine, type AppDataView } from './AppDataNotice';
+import { LiveShareButton } from '../shares/ShareSheet';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 
 /** One app as `GET /api/apps` returns it (src/server/routes/apps.ts `publicStatus`). */
 export interface AppRow {
@@ -253,6 +255,11 @@ export function AppPage({ app, vault, canLaunch, initialSheet = null, onClose, o
             {app.hasBackend && state !== 'stopped' && <button type="button" className="app-card__stop" disabled={busy !== null} onClick={() => void run('stop')}>{t('apps.stop')}</button>}
             {/* Share sits beside Open (K7): an own app not shared yet. A shared one says so below. */}
             {!following && !app.publish && <button type="button" className="app-card__stop" disabled={handing} onClick={() => void handToClaude('private', false, true)}>{t('share.card.share')}</button>}
+            {/* Live link (tunel-paylasim): a temporary door to the app running on this Mac, not a copy. */}
+            {!isMacPhoneSurface() && (
+              <LiveShareButton kind="app" vault={vault} slug={app.slug} name={app.name} agent={app.agent ?? null} stopped={!!app.stoppedByOwner}
+                settingsLine={s?.can.find((c) => c.kind === 'settings')?.text ?? null} />
+            )}
             {s?.category && <span className="app-chip">{s.category}</span>}
           </>
         ) : <span className="app-card__mac-only">{t('apps.macOnly')}</span>}

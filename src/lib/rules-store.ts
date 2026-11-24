@@ -1,9 +1,13 @@
 /**
  * The learned-rules stores (learning loop C2).
  *
- * Two stores, one shape: the personal one under `~/.dreamcontext/me/rules.json` (dir 0700, file
- * 0600, never synced, with `me.json {emails}`), and the project one at `_dream_context/core/RULES.json`
- * (git-tracked, created by the first `learn`). A rule is a record with a history of events; every
+ * Three stores, one shape: the personal one under `~/.dreamcontext/me/rules.json` (dir 0700, file
+ * 0600, never synced, with `me.json {emails}`), the project one at `_dream_context/core/RULES.json`
+ * (git-tracked, created by the first `learn`), and one per AI Team member (plan global-uye-ogrenme
+ * D1): a global member's at `~/.dreamcontext/agents/<slug>/rules.json` (machine-local, 0700/0600), a
+ * project member's at `_dream_context/agents/<slug>.rules.json` (git-ignored unless the member is
+ * shared). A member's store is written through ONE gate ({@link memberWriteGate}): an agent only adds
+ * or narrows there, and a rule rides only on his proven words. A rule is a record with a history of events; every
  * field an agent, the card or a view reads is DERIVED from the events on every read
  * ({@link deriveRule}). `undo`, `supersede` and `drop` are sticky: only a later `keep` (or a new
  * replace) changes them, and a `same` after an `undo` adds the saying and leaves the rule undone.
@@ -21,11 +25,15 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { withFileLockSync } from './file-lock.js';
+import { amendmentRisks, REMOVAL_RISKS } from './agents/amendments.js';
+import { globalAgentHome, listGlobalAgentSlugs } from './agents/scope.js';
+import { isSafeAutomationSlug } from './agents/slot.js';
+import { quoteCoversChange } from './owner-quote.js';
 import { readPeople } from './people-store.js';
 import { resolveActivePerson } from './people-resolve.js';
 import { keyPath, realPath } from './real-path.js';
@@ -39,7 +47,7 @@ export const RULES_STORE_VERSION = 1;
 export const HOT_DAYS = 7;
 export const TEXT_LIMITS = { headline: 60, text: 240, phrase: 120, quote: 200 } as const;
 
-export type RuleScope = 'me' | 'project';
+export type RuleScope = 'me' | 'project' | 'member';
 export type RuleBy = 'owner' | 'sleep' | 'agent' | 'migration';
 export type RuleOp = 'create' | 'edit' | 'same' | 'replace' | 'supersede' | 'undo' | 'keep' | 'drop' | 'restore';
 export type AtTag = 'always' | 'report' | 'ask' | 'plan' | 'build' | 'act';
@@ -91,6 +99,8 @@ export interface RuleEvent {
 export interface RuleRecord {
   id: string;
   scope: RuleScope;
+  /** The member a `member` record belongs to (its slug); absent on the other scopes. */
+  member?: string;
   created: { at: string; by: RuleBy; person: string };
   events: RuleEvent[];
 }
@@ -180,9 +190,18 @@ export interface StoreRef {
   lock: string;
   /** Where a hand-edited view is copied. */
   editedDir: string;
-  /** The vault's `_dream_context` for a project store (null for the personal one). */
+  /** The vault's `_dream_context` for a project store or a project member's (null otherwise). */
   contextRoot: string | null;
   home: string;
+  /** A member store's member: its slug and where it lives. */
+  member?: { slug: string; scope: 'global' | 'project' };
+}
+
+/** A member's store: a write through `withStore` must carry the gate's facts (C1). */
+export type MemberStoreRef = StoreRef & { scope: 'member'; member: { slug: string; scope: 'global' | 'project' } };
+
+export function isMemberRef(ref: StoreRef): ref is MemberStoreRef {
+  return ref.scope === 'member' && !!ref.member;
 }
 
 export function meDir(home: string = homedir()): string {
@@ -217,18 +236,75 @@ export function projectStoreRef(contextRoot: string, home: string = homedir()): 
   };
 }
 
+/** A project member's store file, relative to the context root. */
+export function memberRulesRel(slug: string): string {
+  return `agents/${slug}.rules.json`;
+}
+
+/**
+ * A member's store (D1). A global member: `~/.dreamcontext/agents/<slug>/rules.json` and its view
+ * `rules.md`, machine-local and private. A project member: `<contextRoot>/agents/<slug>.rules.json`
+ * and `<slug>.rules.md` (the view is ignored by `agents/*.md`, the store unless the member is shared).
+ * Throws on a slug that is not path-safe (SG4).
+ */
+export function memberStoreRef(member: { slug: string; scope: 'global' | 'project' }, contextRoot: string | null, home: string = homedir()): MemberStoreRef {
+  if (!isSafeAutomationSlug(member.slug)) throw new RulesStoreError(`"${member.slug}" is not a member slug`, 'unsafe');
+  if (member.scope === 'global') {
+    const dir = globalAgentHome(member.slug, home);
+    return {
+      scope: 'member', member: { slug: member.slug, scope: 'global' },
+      file: join(dir, 'rules.json'),
+      view: join(dir, 'rules.md'),
+      lock: join(home, '.dreamcontext', 'locks', `rules-member-${member.slug}.lock`),
+      editedDir: join(dir, 'edited'),
+      contextRoot: null,
+      home,
+    };
+  }
+  if (!contextRoot) throw new RulesStoreError(`${member.slug} is a project member: run inside its project`, 'refused');
+  let real = contextRoot;
+  try { real = keyPath(contextRoot); } catch { /* not there yet */ }
+  const tag = createHash('sha256').update(real).digest('hex').slice(0, 16);
+  return {
+    scope: 'member', member: { slug: member.slug, scope: 'project' },
+    file: join(contextRoot, memberRulesRel(member.slug)),
+    view: join(contextRoot, 'agents', `${member.slug}.rules.md`),
+    lock: join(home, '.dreamcontext', 'locks', `rules-${tag}-${member.slug}.lock`),
+    editedDir: join(contextRoot, 'tmp', 'learn'),
+    contextRoot,
+    home,
+  };
+}
+
+/** Machine-local and private: his personal store and a global member's. */
+function isPrivateRef(ref: StoreRef): boolean {
+  return ref.scope === 'me' || (ref.scope === 'member' && ref.member?.scope === 'global');
+}
+
 function isSymlink(p: string): boolean {
   try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
 }
 
 /** Refuse a store path that is a symlink or whose real path leaves its root. */
 function assertSafe(ref: StoreRef): void {
-  const root = ref.contextRoot ?? meDir(ref.home);
+  const globalMember = ref.scope === 'member' && ref.member?.scope === 'global';
+  if (ref.member && !isSafeAutomationSlug(ref.member.slug)) throw new RulesStoreError(`"${ref.member.slug}" is not a member slug`, 'unsafe');
+  const root = globalMember ? dirname(ref.file) : ref.contextRoot ?? meDir(ref.home);
   const checks = ref.contextRoot
     ? [dirname(ref.file), ref.file, dirname(ref.view), ref.view, ref.editedDir]
-    : [root, ref.file, ref.view, ref.editedDir];
+    : globalMember
+      ? [dirname(root), root, ref.file, ref.view, ref.editedDir]
+      : [root, ref.file, ref.view, ref.editedDir];
   for (const p of checks) {
     if (isSymlink(p)) throw new RulesStoreError(`${p} is a symlink: refused`, 'unsafe');
+  }
+  if (globalMember && existsSync(root)) {
+    // A global member's folder must really be ~/.dreamcontext/agents/<slug> (no link up the chain).
+    const agentsRoot = join(ref.home, '.dreamcontext', 'agents');
+    const real = realPath(root);
+    let realAgents = agentsRoot;
+    try { realAgents = realPath(agentsRoot); } catch { /* checked by the symlink test above */ }
+    if (real !== join(realAgents, basename(root))) throw new RulesStoreError(`${root} leaves ~/.dreamcontext/agents: refused`, 'unsafe');
   }
   if (ref.contextRoot && existsSync(ref.contextRoot)) {
     const realRoot = realPath(ref.contextRoot);
@@ -272,7 +348,8 @@ export function emptyStore(): RulesStoreFile {
 function isRecord(v: unknown): v is RuleRecord {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
-  return typeof r.id === 'string' && (r.scope === 'me' || r.scope === 'project')
+  const scoped = r.scope === 'me' || r.scope === 'project' || (r.scope === 'member' && typeof r.member === 'string' && isSafeAutomationSlug(r.member));
+  return typeof r.id === 'string' && scoped
     && !!r.created && typeof r.created === 'object' && Array.isArray(r.events);
 }
 
@@ -328,7 +405,7 @@ function atomicWrite(file: string, text: string, mode: number | undefined): void
  */
 export function writeStore(ref: StoreRef, store: RulesStoreFile, opts: { now?: Date; fromMerge?: boolean } = {}): string | null {
   assertSafe(ref);
-  const personal = ref.scope === 'me';
+  const personal = isPrivateRef(ref);
   mkdirSync(dirname(ref.file), { recursive: true, ...(personal ? { mode: 0o700 } : {}) });
   if (personal) { try { chmodSync(dirname(ref.file), 0o700); } catch { /* best effort */ } }
   mkdirSync(dirname(ref.view), { recursive: true });
@@ -359,14 +436,132 @@ export function writeStore(ref: StoreRef, store: RulesStoreFile, opts: { now?: D
   return notice;
 }
 
-/** Read-modify-write under the store's lock. `fn` returns whether it changed the store. */
-export function withStore<T>(ref: StoreRef, fn: (store: RulesStoreFile) => { result: T; changed: boolean }, opts: { now?: Date } = {}): { result: T; notice: string | null } {
+// ─── The member store's gate (D2, SG1, SG3) ─────────────────────────────────
+
+/** Who writes into a member store, as the gate reads it. */
+export interface GateActor {
+  /** `ownerProcess` (session-member.ts): he himself at his own shell. */
+  owner: boolean;
+}
+
+/** What the gate needs for every write into a member store: who, and his proven words. */
+export interface MemberGate {
+  actor: GateActor;
+  quote: {
+    /** His words this write cites, joined ('' when none). */
+    text: string;
+    /** Every quote resolved to a turn of THIS conversation (G1, relays included). */
+    here: boolean;
+  };
+  /** For a `--replaces`: the replaced rule's text, read from its own store before this write. */
+  replacedText?: string;
+}
+
+export interface WithStoreOpts { now?: Date }
+
+/** What a gated write decided, one line each: why an event the call added was written `proposed`. */
+export interface GateNote { id: string; reason: string }
+
+/** The text that RIDES once a rule is in force: what the gate reads (never only the new saying). */
+export function rideText(v: Pick<RuleView, 'headline' | 'text' | 'says' | 'when'>): string {
+  return [v.headline, v.text, ...v.says, v.when].filter(Boolean).join('\n');
+}
+
+
+/**
+ * THE gate of a member store (D2): what an event an agent added may be. Never runs for his own
+ * shell (`actor.owner`). `active` only when (a) the text that will ride reads like no payload
+ * (`amendmentRisks`, the same screen an instruction change meets), (b) every quote was typed in
+ * this conversation, and (c) into a GLOBAL member's store, his words are about this text
+ * (`quoteCoversChange`). Otherwise `proposed`, with why: it waits for his `learned` card.
+ */
+export function memberWriteGate(
+  before: string,
+  after: RuleView,
+  ref: MemberStoreRef,
+  gate: MemberGate,
+): { status: 'active' | 'proposed'; reason: string | null } {
+  if (gate.actor.owner) return { status: 'active', reason: null };
+  const text = rideText(after);
+  const risks = amendmentRisks(before, text).filter((r) => !REMOVAL_RISKS.test(r));
+  if (risks.length > 0) return { status: 'proposed', reason: `its text reads like an instruction from outside (${risks.join('; ')}): it waits for his card` };
+  if (!gate.quote.here) return { status: 'proposed', reason: 'his words were not typed in this conversation: it waits for his card' };
+  if (ref.member.scope === 'global' && !quoteCoversChange(gate.quote.text, before, text)) {
+    return { status: 'proposed', reason: 'his quoted words are not about this rule\'s text (a rule every project carries): it waits for his card' };
+  }
+  return { status: 'active', reason: null };
+}
+
+/** Events an agent may add to a member store without his own shell: adds and narrowings. */
+const AGENT_MEMBER_OPS: ReadonlySet<RuleOp> = new Set(['create', 'replace', 'same', 'keep', 'undo', 'drop', 'supersede', 'restore']);
+
+/**
+ * Run the gate over the events `fn` added to a member store, before the file is written: an
+ * `active` event the gate does not pass is written `proposed` (never changed later in place); a
+ * `keep` whose rule text the screen flags, or an `edit` (or move) by anyone but him, is refused.
+ */
+function gateAddedEvents(ref: MemberStoreRef, before: Map<string, Set<string>>, store: RulesStoreFile, gate: MemberGate, now: Date | undefined): GateNote[] {
+  const notes: GateNote[] = [];
+  for (const rec of store.rules) {
+    const had = before.get(rec.id);
+    const added = eventsOf(rec).filter((e) => !had?.has(e.eid));
+    if (added.length === 0) continue;
+    if (rec.scope !== 'member' || rec.member !== ref.member.slug) {
+      if (!gate.actor.owner) throw new RulesStoreError(`a record of another store cannot be written into ${ref.member.slug}'s rules`, 'refused');
+    }
+    if (gate.actor.owner) continue;
+    for (const e of added) {
+      if (!AGENT_MEMBER_OPS.has(e.op)) {
+        throw new RulesStoreError(`an agent cannot ${e.op} a member's rule: write a new rule on his words with --replaces <id>, or give him the change as a run card`, 'refused');
+      }
+      if (e.op === 'restore' || e.op === 'undo' || e.op === 'drop' || e.op === 'supersede') continue;
+      const upTo = eventsOf(rec);
+      const view = deriveRule({ ...rec, events: upTo.slice(0, upTo.indexOf(e) + 1) }, now);
+      const old = e.op === 'replace' ? gate.replacedText ?? '' : '';
+      if (e.op === 'keep') {
+        const risks = amendmentRisks('', rideText(view)).filter((r) => !REMOVAL_RISKS.test(r));
+        if (risks.length > 0) throw new RulesStoreError(`${rec.id} reads like an instruction from outside (${risks.join('; ')}): only his card keeps it`, 'refused');
+        continue;
+      }
+      if (e.status === 'active') {
+        const verdict = memberWriteGate(old, view, ref, gate);
+        if (verdict.status === 'proposed') {
+          e.status = 'proposed';
+          notes.push({ id: rec.id, reason: verdict.reason ?? 'it waits for his card' });
+        }
+      }
+      // A replacement that waits for his card (held here, or his words not typed here) never takes
+      // the old rule out of force: the supersede this write added is dropped, and his keep of the
+      // new one writes it then (statusChange).
+      if (e.op === 'replace' && e.ref && e.status === 'proposed') {
+        const replaced = findRecord(store, e.ref);
+        const hadOld = replaced ? before.get(replaced.id) : undefined;
+        if (replaced) replaced.events = eventsOf(replaced).filter((x) => hadOld?.has(x.eid) || !(x.op === 'supersede' && x.ref === rec.id));
+      }
+    }
+  }
+  return notes;
+}
+
+/**
+ * Read-modify-write under the store's lock. `fn` returns whether it changed the store. On a member
+ * store the gate's facts are required (C1): every event the call adds passes {@link memberWriteGate}
+ * before the file is written.
+ */
+export function withStore<T>(ref: MemberStoreRef, fn: (store: RulesStoreFile) => { result: T; changed: boolean }, opts: WithStoreOpts & { gate: MemberGate }): { result: T; notice: string | null; gated: GateNote[] };
+export function withStore<T>(ref: StoreRef, fn: (store: RulesStoreFile) => { result: T; changed: boolean }, opts?: WithStoreOpts & { gate?: MemberGate }): { result: T; notice: string | null; gated: GateNote[] };
+export function withStore<T>(ref: StoreRef, fn: (store: RulesStoreFile) => { result: T; changed: boolean }, opts: WithStoreOpts & { gate?: MemberGate } = {}): { result: T; notice: string | null; gated: GateNote[] } {
+  if (ref.scope === 'member' && (!isMemberRef(ref) || !opts.gate)) {
+    throw new RulesStoreError('a member store is written only through its gate', 'refused');
+  }
   mkdirSync(dirname(ref.lock), { recursive: true, mode: 0o700 });
   return withFileLockSync(ref.lock, () => {
     const store = readStore(ref);
+    const before = new Map(store.rules.map((r) => [r.id, new Set(eventsOf(r).map((e) => e.eid))]));
     const { result, changed } = fn(store);
+    const gated = changed && isMemberRef(ref) ? gateAddedEvents(ref, before, store, opts.gate!, opts.now) : [];
     const notice = changed ? writeStore(ref, store, opts) : null;
-    return { result, notice };
+    return { result, notice, gated };
   });
 }
 
@@ -382,6 +577,8 @@ export interface RuleSaying extends RuleQuote {
 export interface RuleView {
   id: string;
   scope: RuleScope;
+  /** A member rule's member. */
+  member?: string;
   status: RuleStatus;
   /** Why an active or proposed rule is invalid (G3 at render). */
   invalid_reason?: string;
@@ -405,6 +602,8 @@ export interface RuleView {
   supersedes: RuleSupersedes[];
   /** Who wrote the latest status change. */
   status_by: RuleBy;
+  /** When the record last changed (its newest event): "new since this session started" reads it. */
+  changed_at: string;
 }
 
 function isEvent(e: unknown): e is RuleEvent {
@@ -430,6 +629,7 @@ export function deriveRule(rec: RuleRecord, now: Date = new Date()): RuleView {
   const v: RuleView = {
     id: rec.id,
     scope: rec.scope,
+    ...(rec.member ? { member: rec.member } : {}),
     status: first?.status === 'active' ? 'active' : 'proposed',
     headline: '',
     text: '',
@@ -450,6 +650,7 @@ export function deriveRule(rec: RuleRecord, now: Date = new Date()): RuleView {
     moved_to: null,
     supersedes: [],
     status_by: first?.by ?? rec.created.by,
+    changed_at: events.at(-1)?.at ?? rec.created.at,
   };
   const apply = (e: RuleEvent): void => {
     if (e.headline !== undefined) v.headline = e.headline;
@@ -637,22 +838,29 @@ export function applyStatusOp(store: RulesStoreFile, id: string, op: StatusOp, a
       if (v.status === 'undone') return { ok: false, reason: `${id} is already undone` };
       if (v.status === 'superseded') return { ok: false, reason: `${id} was replaced by ${v.superseded_by}: undo that one instead` };
       rec.events.push({ ...stamp(actor), op: 'undo' });
-      let restored: RuleView | undefined;
-      const old = v.replaces ? findRecord(store, v.replaces) : undefined;
-      if (old) {
-        const ov = deriveRule(old, actor.now);
-        const sup = eventsOf(old).filter((e) => e.op === 'supersede' && e.ref === id).at(-1);
-        if (ov.status === 'superseded' && ov.superseded_by === id && sup) {
-          const before = statusBefore(old, sup, actor.now);
-          old.events.push({ ...stamp(actor), op: 'restore', ref: id, prior_status: before.status, ...(before.dropped ? { prior_dropped: true } : {}) });
-          restored = deriveRule(old, actor.now);
-        }
-      }
-      return { ok: true, rule: deriveRule(rec, actor.now), restored };
+      // The rule it replaced comes back through releaseReplaced, in whichever store it lives.
+      return done();
     }
     default:
       return { ok: false, reason: `unknown status op ${String(op)}` };
   }
+}
+
+/**
+ * Give the replaced rule back (D11): after a record that replaces another ends its life (undo,
+ * drop), in the store where the old rule lives, under its own lock, only while that rule is still
+ * superseded BY this record with a matching supersede event (a forged `replaces` pointer restores
+ * nothing), and only to the status it had before. Mutates `store`; the restored view, or undefined.
+ */
+export function restoreReplaced(store: RulesStoreFile, oldId: string, byId: string, actor: Actor): RuleView | undefined {
+  const old = findRecord(store, oldId);
+  if (!old) return undefined;
+  const ov = deriveRule(old, actor.now);
+  const sup = eventsOf(old).filter((e) => e.op === 'supersede' && e.ref === byId).at(-1);
+  if (ov.status !== 'superseded' || ov.superseded_by !== byId || !sup) return undefined;
+  const before = statusBefore(old, sup, actor.now);
+  old.events.push({ ...stamp(actor), op: 'restore', ref: byId, prior_status: before.status, ...(before.dropped ? { prior_dropped: true } : {}) });
+  return deriveRule(old, actor.now);
 }
 
 /** The status a record had just before `event` (its supersede): what a restore puts back. */
@@ -665,27 +873,112 @@ function statusBefore(rec: RuleRecord, event: RuleEvent, now?: Date): { status: 
   return { status: 'proposed', dropped: false };
 }
 
-function statusChange(ref: StoreRef, id: string, op: StatusOp, actor: Actor): StatusChange {
-  const { result, notice } = withStore<Step>(ref, (store) => {
+/**
+ * Every store a rule id can live in, as one caller sees them (C1): `me` (where shown), this
+ * project, and every member store on this Mac (global members, this vault's project members). The
+ * CLI and the `learned` card route build it the same way ({@link visibleStores}).
+ */
+export interface RuleLocator {
+  refs: () => StoreRef[];
+}
+
+/** The store and record holding `id`, first match in the locator's order; a moved-away copy is skipped. */
+export function locateIn(locator: RuleLocator, id: string, now?: Date): { ref: StoreRef; rec: RuleRecord; view: RuleView } | null {
+  for (const ref of locator.refs()) {
+    let store: RulesStoreFile;
+    // One store that cannot be read (unsafe, or a hand-broken file) never hides the others' rules.
+    try { store = readStore(ref); } catch (e) { if (e instanceof RulesStoreError && (e.code === 'unsafe' || e.code === 'unreadable')) continue; throw e; }
+    const rec = findRecord(store, id);
+    if (!rec) continue;
+    const view = deriveRule(rec, now);
+    if (view.moved_to) continue;
+    return { ref, rec, view };
+  }
+  return null;
+}
+
+/** Status changes that may write a member store carry its gate facts (an undo or drop is a narrowing). */
+export interface StatusOpts {
+  locate: RuleLocator;
+  gate?: MemberGate;
+}
+
+const NARROWING_GATE: MemberGate = { actor: { owner: false }, quote: { text: '', here: false } };
+
+function storeWrite<T>(ref: StoreRef, fn: (store: RulesStoreFile) => { result: T; changed: boolean }, now: Date | undefined, gate: MemberGate | undefined): { result: T; notice: string | null } {
+  return isMemberRef(ref)
+    ? withStore<T>(ref, fn, { now, gate: gate ?? NARROWING_GATE })
+    : withStore<T>(ref, fn, { now });
+}
+
+/**
+ * After a status change that ended a replacing record's life: find the rule it replaced in any
+ * visible store and give it back ({@link restoreReplaced}), in a second write after the first landed
+ * (never nested). Exempt from `own_member_only`: it only returns a status that was gated, and only
+ * for the rule its own record replaced.
+ */
+export function releaseReplaced(locate: RuleLocator, rule: RuleView, actor: Actor): { restored?: RuleView; failed?: string } {
+  if (!rule.replaces) return {};
+  try {
+    const found = locateIn(locate, rule.replaces, actor.now);
+    if (!found) return {};
+    const { result } = storeWrite<RuleView | undefined>(found.ref, (store) => {
+      const r = restoreReplaced(store, rule.replaces!, rule.id, actor);
+      return { result: r, changed: !!r };
+    }, actor.now, NARROWING_GATE);
+    return result ? { restored: result } : {};
+  } catch (e) {
+    return { failed: `${rule.replaces} could not be given back (${(e as Error).message}): it is still replaced` };
+  }
+}
+
+/** His keep of a replacement the gate held: the rule it replaces leaves force now (it stayed in
+ *  force while the new one waited). Null when there is nothing to do; a failure is said, never thrown. */
+function supersedeReplaced(locate: RuleLocator, rule: RuleView, actor: Actor): string | null {
+  if (!rule.replaces || rule.status !== 'active') return null;
+  try {
+    const found = locateIn(locate, rule.replaces, actor.now);
+    if (!found) return `${rule.replaces} could not be found from here: it is still active beside it.`;
+    if (found.view.status !== 'active') return null;
+    const { result } = storeWrite<Step>(found.ref, (store) => {
+      const step = applyStatusOp(store, rule.replaces!, 'supersede', actor, { ref: rule.id, scope: found.ref.scope });
+      return { result: step, changed: step.ok };
+    }, actor.now, NARROWING_GATE);
+    return result.ok ? `It now replaces ${rule.replaces}.` : `${rule.replaces} is still active beside it: ${result.reason}.`;
+  } catch (e) {
+    return `${rule.replaces} is still active beside it: ${(e as Error).message}.`;
+  }
+}
+
+function statusChange(ref: StoreRef, id: string, op: StatusOp, actor: Actor, opts: StatusOpts): StatusChange {
+  const { result, notice } = storeWrite<Step>(ref, (store) => {
     const step = applyStatusOp(store, id, op, actor, { scope: ref.scope });
     return { result: step, changed: step.ok };
-  }, { now: actor.now });
-  return result.ok ? { ...result, notice } : result;
+  }, actor.now, opts.gate);
+  if (!result.ok) return result;
+  if (op === 'keep') {
+    const took = supersedeReplaced(opts.locate, result.rule, actor);
+    return { ...result, notice: [notice, took].filter(Boolean).join(' ') || null };
+  }
+  if (op !== 'undo' && op !== 'drop') return { ...result, notice };
+  const back = releaseReplaced(opts.locate, result.rule, actor);
+  const note = [notice, back.failed ?? null].filter(Boolean).join(' ') || null;
+  return { ...result, ...(back.restored ? { restored: back.restored } : {}), notice: note };
 }
 
-/** Proposed (or undone, or superseded) to active. The card's route (W2) calls this. */
-export function keepRule(ref: StoreRef, id: string, actor: Actor): StatusChange {
-  return statusChange(ref, id, 'keep', actor);
+/** Proposed (or undone, or superseded) to active. Who may ask is the caller's check. */
+export function keepRule(ref: StoreRef, id: string, actor: Actor, opts: StatusOpts): StatusChange {
+  return statusChange(ref, id, 'keep', actor, opts);
 }
 
-/** Undo; the rule it replaced gets back the status it had before (see {@link applyStatusOp}). */
-export function undoRule(ref: StoreRef, id: string, actor: Actor): StatusChange {
-  return statusChange(ref, id, 'undo', actor);
+/** Undo; the rule it replaced, in any store, gets back the status it had before ({@link releaseReplaced}). */
+export function undoRule(ref: StoreRef, id: string, actor: Actor, opts: StatusOpts): StatusChange {
+  return statusChange(ref, id, 'undo', actor, opts);
 }
 
-/** Drop a rule that waits for his word. An active rule is undone, not dropped. */
-export function dropRule(ref: StoreRef, id: string, actor: Actor): StatusChange {
-  return statusChange(ref, id, 'drop', actor);
+/** Drop a rule that waits for his word; the rule it replaced comes back too. An active rule is undone, not dropped. */
+export function dropRule(ref: StoreRef, id: string, actor: Actor, opts: StatusOpts): StatusChange {
+  return statusChange(ref, id, 'drop', actor, opts);
 }
 
 export interface RuleEdit {
@@ -701,17 +994,21 @@ const editFields = (edit: RuleEdit): RuleEdit =>
   Object.fromEntries(Object.entries(edit).filter(([, val]) => val !== undefined)) as RuleEdit;
 
 /** Edit a rule by id (never a twin). Status is untouched. */
-export function editRule(ref: StoreRef, id: string, edit: RuleEdit, actor: Actor): StatusChange {
+/** An agent never edits nor moves a member's rule (owner, 21 Nov "Daralt"): one line saying what to do. */
+export const MEMBER_EDIT_REFUSAL = 'an agent does not edit or move a member\'s rule: write a new rule on his words with `--replaces <id>` (it replaces the old one, in any store), or give him the change as a `run` card';
+
+export function editRule(ref: StoreRef, id: string, edit: RuleEdit, actor: Actor & { owner?: boolean }): StatusChange {
   const bad = validateRuleText(edit);
   if (bad) return { ok: false, reason: bad };
-  const { result, notice } = withStore<Step>(ref, (store) => {
+  if (ref.scope === 'member' && !actor.owner) return { ok: false, reason: MEMBER_EDIT_REFUSAL };
+  const { result, notice } = storeWrite<Step>(ref, (store) => {
     const rec = findRecord(store, id);
     if (!rec) return { result: { ok: false, reason: `no rule ${id} in the ${ref.scope} store` }, changed: false };
     const fields = editFields(edit);
     if (Object.keys(fields).length === 0) return { result: { ok: false, reason: 'nothing to edit' }, changed: false };
     rec.events.push({ ...stamp(actor), op: 'edit', ...fields });
     return { result: { ok: true, rule: deriveRule(rec, actor.now) }, changed: true };
-  }, { now: actor.now });
+  }, actor.now, { actor: { owner: !!actor.owner }, quote: { text: '', here: false } });
   return result.ok ? { ...result, notice } : result;
 }
 
@@ -720,28 +1017,32 @@ export function editRule(ref: StoreRef, id: string, edit: RuleEdit, actor: Actor
  * history plus an edit); only then is the source record marked moved, so a failed target write
  * leaves the rule where it was. The source keeps the record (a merge never brings a twin back).
  */
-export function moveRule(from: StoreRef, to: StoreRef, id: string, edit: RuleEdit, actor: Actor): StatusChange {
+export function moveRule(from: StoreRef, to: StoreRef, id: string, edit: RuleEdit, actor: Actor & { owner?: boolean }): StatusChange {
   if (from.scope === to.scope) return { ok: false, reason: `${id} is already in the ${to.scope} store` };
+  if ((from.scope === 'member' || to.scope === 'member') && !actor.owner) return { ok: false, reason: MEMBER_EDIT_REFUSAL };
   const bad = validateRuleText(edit);
   if (bad) return { ok: false, reason: bad };
   const source = findRecord(readStore(from), id);
   if (!source || deriveRule(source, actor.now).moved_to) return { ok: false, reason: `no movable rule ${id} in the ${from.scope} store` };
   const taken: RuleRecord = JSON.parse(JSON.stringify(source));
-  const { result, notice } = withStore<RuleView>(to, (store) => {
+  const ownerGate: MemberGate = { actor: { owner: !!actor.owner }, quote: { text: '', here: false } };
+  const { result, notice } = storeWrite<RuleView>(to, (store) => {
     const existing = findRecord(store, id);
-    const rec: RuleRecord = existing ?? { ...taken, scope: to.scope };
+    const { member: _drop, ...rest } = taken;
+    void _drop;
+    const rec: RuleRecord = existing ?? { ...rest, scope: to.scope, ...(to.member ? { member: to.member.slug } : {}) };
     if (existing) {
       for (const e of eventsOf(taken)) if (!eventsOf(existing).some((x) => x.eid === e.eid)) existing.events.push(e);
     } else store.rules.push(rec);
     rec.events.push({ ...stamp(actor), op: 'edit', ...editFields(edit) });
     return { result: deriveRule(rec, actor.now), changed: true };
-  }, { now: actor.now });
-  withStore<null>(from, (store) => {
+  }, actor.now, ownerGate);
+  storeWrite<null>(from, (store) => {
     const rec = findRecord(store, id);
     if (!rec || deriveRule(rec, actor.now).moved_to) return { result: null, changed: false };
     rec.events.push({ ...stamp(actor), op: 'edit', moved_to: to.scope });
     return { result: null, changed: true };
-  }, { now: actor.now });
+  }, actor.now, ownerGate);
   return { ok: true, rule: result, notice };
 }
 
@@ -767,20 +1068,21 @@ function ruleLine(v: RuleView, contextRoot: string | null): string[] {
 }
 
 /** The readable view of a store: active, then waiting for his word, then replaced and undone. */
-export function renderRulesView(store: RulesStoreFile, ref: Pick<StoreRef, 'scope' | 'contextRoot'>, opts: { now?: Date } = {}): string {
+export function renderRulesView(store: RulesStoreFile, ref: Pick<StoreRef, 'scope' | 'contextRoot'> & { member?: StoreRef['member'] }, opts: { now?: Date } = {}): string {
   const views = deriveAll(store, opts.now);
   const personal = ref.scope === 'me';
-  const title = personal ? 'His preferences' : 'Learned rules';
+  const member = ref.scope === 'member' ? (ref as Partial<StoreRef>).member?.slug ?? 'member' : null;
+  const title = personal ? 'His preferences' : member ? `${member}'s rules` : 'Learned rules';
   const out: string[] = [
     '---',
     `name: ${title}`,
-    `description: ${personal ? 'How to work with him, on every project on this Mac' : 'Rules this project learned from the owner\'s words'}. Generated by dreamcontext learn; change a rule with dreamcontext learn edit.`,
+    `description: ${personal ? 'How to work with him, on every project on this Mac' : member ? `How ${member} works, in every project it works in, from the owner's words` : 'Rules this project learned from the owner\'s words'}. Generated by dreamcontext learn; change a rule with dreamcontext learn edit.`,
     'generated: true',
     '---',
     '',
     `# ${title}`,
     '',
-    `Generated from \`${personal ? '~/.dreamcontext/me/rules.json' : RULES_JSON_REL}\` by \`dreamcontext learn\`. A hand edit here is not applied: use \`dreamcontext learn edit <id>\`.`,
+    `Generated from \`${personal ? '~/.dreamcontext/me/rules.json' : member ? `the ${member} rules store` : RULES_JSON_REL}\` by \`dreamcontext learn\`. A hand edit here is not applied: use \`dreamcontext learn edit <id>\`.`,
     '',
   ];
   const section = (heading: string, list: RuleView[], render: (v: RuleView) => string[]): void => {
@@ -793,7 +1095,7 @@ export function renderRulesView(store: RulesStoreFile, ref: Pick<StoreRef, 'scop
   section('Waiting for his word', views.filter((v) => v.status === 'proposed'), (v) => ruleLine(v, ref.contextRoot));
   section('Replaced and undone', views.filter((v) => v.status === 'superseded' || v.status === 'undone'), (v) => {
     const why = v.status === 'superseded' ? `replaced by \`${v.superseded_by}\``
-      : v.moved_to ? `moved to the ${v.moved_to === 'me' ? 'personal' : 'project'} store`
+      : v.moved_to ? `moved to the ${v.moved_to === 'me' ? 'personal' : v.moved_to === 'member' ? 'member' : 'project'} store`
         : v.dropped ? `dropped by ${v.status_by}` : `undone by ${v.status_by}`;
     return [`- ~~${v.headline}~~ (\`${v.id}\`): ${why}`];
   });
@@ -836,27 +1138,36 @@ export function mergeRulesStores(sides: readonly string[]): RulesStoreFile | nul
 
 // ─── Personal store identity ────────────────────────────────────────────────
 
-export interface MeFile { emails: string[] }
+/**
+ * Who the personal store belongs to. `local_owner`: written on a Mac with no email to name him
+ * (D10): the store is his, shown in a vault with no roster; elsewhere one line says how to add it.
+ */
+export interface MeFile { emails: string[]; local_owner?: boolean }
 
 export function readMeFile(home: string = homedir()): MeFile | null {
   const file = join(meDir(home), 'me.json');
   if (isSymlink(meDir(home)) || isSymlink(file)) return null;
   try {
-    const raw = JSON.parse(readFileSync(file, 'utf-8')) as { emails?: unknown };
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as { emails?: unknown; local_owner?: unknown };
     const emails = Array.isArray(raw.emails) ? raw.emails.filter((e): e is string => typeof e === 'string' && e.includes('@')).map((e) => e.trim().toLowerCase()) : [];
-    return emails.length > 0 ? { emails } : null;
+    if (emails.length > 0) return { emails };
+    return raw.local_owner === true ? { emails: [], local_owner: true } : null;
   } catch { return null; }
 }
 
-/** `me.json` from git `user.email` when there is none. Null when neither exists (scope me is refused). */
-export function ensureMeFile(home: string, gitEmail: string | null): MeFile | null {
+/**
+ * `me.json` when there is none: from the project's git `user.email`, else the global one, else a
+ * `local_owner` file with no email (D10: the personal store never refuses). Null only when the
+ * folder is a link (G2).
+ */
+export function ensureMeFile(home: string, gitEmail: string | null, globalEmail: string | null = null): MeFile | null {
   const have = readMeFile(home);
-  if (have) return have;
-  if (!gitEmail || !gitEmail.includes('@')) return null;
+  if (have && (have.emails.length > 0 || !(gitEmail?.includes('@') || globalEmail?.includes('@')))) return have;
   const dir = meDir(home);
   if (isSymlink(dir)) return null;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const me = { emails: [gitEmail.trim().toLowerCase()] };
+  const email = [gitEmail, globalEmail].find((e) => !!e && e.includes('@'));
+  const me: MeFile = email ? { emails: [email.trim().toLowerCase()] } : { emails: [], local_owner: true };
   atomicWrite(join(dir, 'me.json'), `${JSON.stringify(me, null, 2)}\n`, 0o600);
   return me;
 }
@@ -875,7 +1186,47 @@ export function personalRulesVisible(contextRoot: string, home: string = homedir
   const person = active.slug ? people[active.slug] : undefined;
   const emails = (person?.emails ?? []).map((e) => e.trim().toLowerCase());
   if (emails.some((e) => me.emails.includes(e))) return { visible: true, line: null };
+  // No email on either side (no git email on this Mac): the vault's active person here is this
+  // Mac's local owner, and nothing names anyone else, so his preferences ride (D10).
+  if (me.local_owner && me.emails.length === 0 && emails.length === 0) return { visible: true, line: null };
+  if (me.local_owner) return { visible: false, line: 'His preferences are not shown here: ~/.dreamcontext/me/me.json names no email yet (add his once: {"emails": ["<his email>"]}).' };
   return { visible: false, line: 'His preferences are not shown here: this vault\'s active person shares no email with ~/.dreamcontext/me/me.json.' };
+}
+
+// ─── Every store an id can live in (C1) ─────────────────────────────────────
+
+/** Every member store on this Mac a caller in `contextRoot` can reach: global members, this vault's project members. */
+export function memberStoreRefs(contextRoot: string | null, home: string = homedir()): MemberStoreRef[] {
+  const out: MemberStoreRef[] = [];
+  for (const slug of listGlobalAgentSlugs(home)) {
+    try { out.push(memberStoreRef({ slug, scope: 'global' }, contextRoot, home)); } catch { /* unsafe slug */ }
+  }
+  if (contextRoot) {
+    let names: string[] = [];
+    try { names = readdirSync(join(contextRoot, 'agents')); } catch { names = []; }
+    for (const n of names.sort()) {
+      const m = /^([a-z0-9][a-z0-9-]*)\.rules\.json$/.exec(n);
+      if (!m || !isSafeAutomationSlug(m[1]!)) continue;
+      try { out.push(memberStoreRef({ slug: m[1]!, scope: 'project' }, contextRoot, home)); } catch { /* unsafe */ }
+    }
+  }
+  return out;
+}
+
+/**
+ * The one locator the CLI, the `learned` card route and Telegram build (C1): this project, his
+ * personal store (where `personal`), then every member store.
+ */
+export function visibleStores(contextRoot: string | null, home: string = homedir(), opts: { personal?: boolean } = {}): RuleLocator {
+  return {
+    refs: () => {
+      const refs: StoreRef[] = [];
+      if (contextRoot) refs.push(projectStoreRef(contextRoot, home));
+      if (opts.personal !== false) refs.push(personalStoreRef(home));
+      refs.push(...memberStoreRefs(contextRoot, home));
+      return refs;
+    },
+  };
 }
 
 // ─── Stats ──────────────────────────────────────────────────────────────────

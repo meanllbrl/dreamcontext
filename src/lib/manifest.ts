@@ -102,7 +102,7 @@ function stampedVersion(): string {
  * `Contents/Resources/dist/index.js` with no package.json at any candidate path,
  * so every probe below misses. Stamping '0.0.0' there was not merely cosmetic —
  * '0.0.0' sorts below every migration version, so `pendingMigrations` and
- * `unfinishedAgentTasks` silently returned nothing and NO migration could fire
+ * `dueAgentTasks` silently returned nothing and NO migration could fire
  * through the bundled CLI (the first-run-before-npm-install fallback path in
  * `resolve_cli`), and every manifest it wrote was stamped 0.0.0.
  *

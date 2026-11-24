@@ -159,7 +159,7 @@ describe('background work keeps a child working (field: 6 done events in 18 minu
   });
 });
 
-describe('background work that never ends (a dev server, a persistent Monitor)', { timeout: 60_000 }, () => {
+describe('background work that never ends (a dev server, a follow)', { timeout: 60_000 }, () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], now: Date.now() });
     dir = mkdtempSync(join(tmpdir(), 'super-event-voice-'));
@@ -305,7 +305,7 @@ describe('delegate marks a job awaited only in the owner\'s own turn', () => {
     const out = { status: 0 } as ServerResponse & { status: number };
     (out as unknown as { writeHead: (s: number) => void }).writeHead = (s: number) => { out.status = s; };
     (out as unknown as { end: () => void }).end = () => undefined;
-    await handleSuperVerb(req({ prompt: 'Check why the student count is low.', brief: 'student count' }), out, { verb: 'delegate' });
+    await handleSuperVerb(req({ model: 'sonnet', prompt: 'Check why the student count is low.', brief: 'student count' }), out, { verb: 'delegate' });
     return out.status;
   }
 

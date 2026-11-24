@@ -54,16 +54,16 @@ Lives under tests/unit
 ## Changelog
 <!-- LIFO: newest entry at top. Auto-prepended by `dreamcontext tasks log`. Each entry is a session-shaped breadcrumb — what shipped, what was decided, where you stopped. -->
 
-
-
-
-
 ### 2026-06-11 - Status → todo (by owner)
+
 ### 2026-06-11 - Status → in_review (by owner)
 - Ready for review
+
 ### 2026-06-11 - Session Update
 - Session progress note
+
 ### 2026-06-11 - Update
 - Inserted changelog line
+
 ### 2026-06-11 - Created
 - Task created.

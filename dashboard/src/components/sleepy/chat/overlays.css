@@ -300,6 +300,67 @@
 }
 .chat-banner-empty-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-xl, 22px); color: var(--color-text); }
 .chat-banner-empty-sub { margin: 0; color: var(--color-text-tertiary); font-size: var(--font-size-sm, 13px); }
+/* The main Super stage's empty state (plan ilk-acilis C13): the title wraps to two lines, then
+   ellipsis; the chips are the stage's pill (`.super-event-line-toggle`) at body text size. */
+.chat-banner-empty--hero .chat-banner-empty-title {
+  max-width: min(560px, 100%);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.chat-banner-empty--hero .chat-banner-empty-mark { margin-bottom: 18px; }
+.chat-banner-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2, 8px);
+  margin-top: 20px;
+  max-width: 560px;
+}
+.chat-banner-chip {
+  max-width: 260px;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.chat-banner-chip:hover { border-color: var(--color-border-hover); }
+.chat-banner-chip:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.chat-banner-chip:disabled { opacity: 0.6; cursor: default; }
+/* The Chat page's landing: the old screen's other ways in, one quiet row under the chips. */
+.chat-banner-more { display: flex; flex-direction: column; align-items: center; gap: var(--space-3, 12px); margin-top: var(--space-6, 24px); }
+.chat-banner-more-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1, 4px); }
+.chat-banner-more-btn {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+}
+.chat-banner-more-btn:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+.chat-banner-more-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+/* The first-read offer in the hero's sub-line (C17): the line, the Start reading pill, and one
+   short reason line under them when a start was refused. */
+.chat-banner-first-read {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 8px);
+}
+.chat-banner-first-read-why { flex-basis: 100%; color: var(--color-text-secondary); }
 
 /* ── Working indicator — the turn is alive with nothing to show for it yet ─────────────
    Left-aligned where the answer will appear, so it reads as the message that's coming

@@ -4,6 +4,10 @@ import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js'
 import {
   AGENTS_GITIGNORE_ENTRIES,
   AGENTS_GITIGNORE_ENTRIES_ROOT,
+  AGENT_RULES_GITIGNORE_ENTRIES,
+  AGENT_RULES_GITIGNORE_ENTRIES_ROOT,
+  sharedAgentRulesNegations,
+  sharedAgentRulesNegationsRoot,
   sharedAgentNegations,
   sharedAgentNegationsRoot,
 } from '../agents/types.js';
@@ -370,12 +374,17 @@ const AGENT_BRAIN_NEGATION_PREFIX = '!agents/';
 const AGENT_ROOT_NEGATION_PREFIX = '!_dream_context/agents/';
 const AGENT_BRAIN_NEGATION_RE = /^!agents\/([a-z0-9][a-z0-9-]*)\.md$/;
 const AGENT_ROOT_NEGATION_RE = /^!_dream_context\/agents\/([a-z0-9][a-z0-9-]*)\.md$/;
+const RULES_SUFFIX = '.rules.json';
+const AGENT_RULES_BASE_COMMENT = 'dreamcontext agents — member rules, private by default (shared ones are negated below)';
+const AGENT_RULES_SHARE_COMMENT = 'dreamcontext agents — shared members\' rules';
 
 /** Every agents negation in `text` that git would silently drop: one with the
  *  agents wildcard at or after it. */
-export function agentShareOrderingProblems(text: string, baseEntries: readonly string[], prefix: string): string[] {
+export function agentShareOrderingProblems(text: string, baseEntries: readonly string[], prefix: string, suffix = '.md'): string[] {
+  // `.md` negations answer to `agents/*.md`, `.rules.json` ones to the member-rules block.
+  const ofBlock = (line: string): boolean => (suffix === '.md' ? line.endsWith('.md') : line.endsWith(suffix));
   return meaningfulLines(text)
-    .filter((line) => line.startsWith(prefix))
+    .filter((line) => line.startsWith(prefix) && ofBlock(line))
     .filter((line) => !negationIsEffective(text, line, baseEntries))
     .map((line) => `"${line}" is positioned before its base wildcard and will be silently ignored by git.`);
 }
@@ -385,6 +394,8 @@ export function assertAgentShareOrdering(contextRoot: string): ShareOrderingChec
   const problems = [
     ...agentShareOrderingProblems(readGitignoreText(contextRoot), AGENTS_GITIGNORE_ENTRIES, AGENT_BRAIN_NEGATION_PREFIX),
     ...agentShareOrderingProblems(readGitignoreText(dirname(contextRoot)), AGENTS_GITIGNORE_ENTRIES_ROOT, AGENT_ROOT_NEGATION_PREFIX),
+    ...agentShareOrderingProblems(readGitignoreText(contextRoot), AGENT_RULES_GITIGNORE_ENTRIES, AGENT_BRAIN_NEGATION_PREFIX, RULES_SUFFIX),
+    ...agentShareOrderingProblems(readGitignoreText(dirname(contextRoot)), AGENT_RULES_GITIGNORE_ENTRIES_ROOT, AGENT_ROOT_NEGATION_PREFIX, RULES_SUFFIX),
   ];
   return { ok: problems.length === 0, problems };
 }
@@ -415,7 +426,33 @@ export function shareAgent(contextRoot: string, slug: string): ShareResult {
   }
   added.push(...ensureGitignoreEntries(contextRoot, sharedAgentNegations(slug), { comment: AGENT_SHARE_COMMENT }));
   added.push(...ensureGitignoreEntries(projectRoot, sharedAgentNegationsRoot(slug), { comment: AGENT_SHARE_COMMENT }));
+  added.push(...shareAgentRules(contextRoot, slug));
   return { slug, shared: true, added, removed, repairedOrdering };
+}
+
+/**
+ * A shared member's rules travel with it (D1): the member-rules base block exists, and the
+ * member's negation sits after it in both governing files. Idempotent (`update` runs it for every
+ * member already shared). Returns the lines written.
+ */
+export function shareAgentRules(contextRoot: string, slug: string): string[] {
+  assertNonEmptySlug(slug);
+  const projectRoot = dirname(contextRoot);
+  const added: string[] = [];
+  const roots: [string, readonly string[], string[]][] = [
+    [contextRoot, AGENT_RULES_GITIGNORE_ENTRIES, sharedAgentRulesNegations(slug)],
+    [projectRoot, AGENT_RULES_GITIGNORE_ENTRIES_ROOT, sharedAgentRulesNegationsRoot(slug)],
+  ];
+  for (const [root, base, negation] of roots) {
+    added.push(...ensureGitignoreEntries(root, [...base], { comment: AGENT_RULES_BASE_COMMENT }));
+    const text = readGitignoreText(root);
+    if (meaningfulLines(text).includes(negation[0]!) && !negationIsEffective(text, negation[0]!, base)) {
+      // Misordered (base after it): move the negation below the base.
+      removeGitignoreEntries(root, negation);
+    }
+    added.push(...ensureGitignoreEntries(root, negation, { comment: AGENT_RULES_SHARE_COMMENT }));
+  }
+  return added;
 }
 
 /** Un-publish ONE agent file. Like `unshareAutomation`, never rewrites history.
@@ -426,6 +463,8 @@ export function unshareAgent(contextRoot: string, slug: string): ShareResult {
   const removed = [
     ...removeGitignoreEntries(contextRoot, sharedAgentNegations(slug)),
     ...removeGitignoreEntries(dirname(contextRoot), sharedAgentNegationsRoot(slug)),
+    ...removeGitignoreEntries(contextRoot, sharedAgentRulesNegations(slug)),
+    ...removeGitignoreEntries(dirname(contextRoot), sharedAgentRulesNegationsRoot(slug)),
   ];
   return { slug, shared: false, added: [], removed, repairedOrdering: false };
 }

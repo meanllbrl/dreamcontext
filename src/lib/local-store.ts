@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { acquireFileLock } from './file-lock.js';
 import { keyPath } from './real-path.js';
 
@@ -88,9 +88,24 @@ export function updateLocalJson<T extends object>(
   mutate: (current: T) => T | null,
   home?: string,
 ): T | null {
-  const path = filePath(projectRoot, name, home);
-  const dir = localDir(projectRoot, home);
+  return updateJsonAt(filePath(projectRoot, name, home), fallback, mutate);
+}
+
+/** Read one record file at a path the CALLER has checked (machine-local, under `~/.dreamcontext/`). Never throws. */
+export function readJsonAt<T extends object>(path: string, fallback: T): T {
+  return readParsed(path, fallback);
+}
+
+/**
+ * {@link updateLocalJson} for a record at a path the CALLER has checked (a global member's own
+ * folder): the same PID lock, atomic write and 0600 file. Its folder is created 0700 and must not be
+ * a symlink.
+ */
+export function updateJsonAt<T extends object>(path: string, fallback: T, mutate: (current: T) => T | null): T | null {
+  const dir = dirname(path);
   ensureDir(dir);
+  if (lstatSync(dir).isSymbolicLink()) throw new Error(`The record folder ${dir} is a symlink.`);
+  const name = basename(path);
   const lock = `${path}.lock`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   while (!acquireFileLock(lock, Date.now(), LOCK_STALE_MS, { verifyPidLiveness: true })) {
@@ -281,9 +296,25 @@ export function latestStageSession(projectRoot: string, agent: string, home?: st
   return stage.length ? stage[stage.length - 1].id : null;
 }
 
+/**
+ * A project member's past work dies with it (uye-gecmis-is C7, work-trace.ts): its folder goes, a
+ * `drop` line first so a warm index forgets it. A member made again with this name starts empty.
+ * Never throws; a link is never followed.
+ */
+export function dropAgentWork(projectRoot: string, agent: string, home?: string): void {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent)) return;
+  const work = join(localDir(projectRoot, home), 'work', agent);
+  try {
+    if (!lstatSync(work).isDirectory()) return;
+    try { appendFileSync(join(work, 'gen.log'), '{"op":"drop"}\n', { mode: 0o600 }); } catch { /* the folder still goes */ }
+    rmSync(work, { recursive: true, force: true });
+  } catch { /* nothing kept for it */ }
+}
+
 /** The death of an agent's machine-local entries: deleted or renamed. Never throws. */
 export function forgetAgentLocal(projectRoot: string, agent: string, home?: string): void {
   moveAmendments(projectRoot, agent, null, home);
+  dropAgentWork(projectRoot, agent, home);
   try {
     if (listAgentSessions(projectRoot, agent, home).length > 0) {
       mutateSessions(projectRoot, agent, home, () => []);

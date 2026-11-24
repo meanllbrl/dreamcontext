@@ -143,6 +143,11 @@ export interface EnsureOptions {
   fetchImpl?: typeof fetch;
   /** The verify/test seam: a 127.0.0.1 http base instead of GitHub. */
   baseOverride?: string;
+  /** This caller stops waiting (a share closed while starting). The download goes on while another
+   *  caller still waits for it. */
+  signal?: AbortSignal;
+  /** The download's own deadline, set by the caller that starts it (a share: 120 s). None = none. */
+  deadlineMs?: number;
 }
 
 /**
@@ -153,6 +158,54 @@ export interface EnsureOptions {
 export async function ensureCloudflared(o: EnsureOptions = {}): Promise<string> {
   const home = o.home ?? homedir();
   const pins = o.pins ?? loadCloudflaredPins();
+  const key = cloudflaredPath(pins.version, home);
+  let flight = inflight.get(key);
+  if (!flight) {
+    const ac = new AbortController();
+    const timer = o.deadlineMs ? setTimeout(() => ac.abort(), o.deadlineMs) : null;
+    timer?.unref?.();
+    const p = ensureCloudflaredOnce({ ...o, home, pins }, ac.signal).finally(() => {
+      if (timer) clearTimeout(timer);
+      if (inflight.get(key) === created) inflight.delete(key);
+    });
+    const created: Flight = { p, waiters: 0, ac };
+    flight = created;
+    inflight.set(key, flight);
+  }
+  return joinFlight(flight, o.signal);
+}
+
+interface Flight { p: Promise<string>; waiters: number; ac: AbortController }
+/** One download per binary path at a time (a share and a Mac-mode start asking at once download
+ *  once). Dropped when it settles, so a failed download is retried by the next caller. */
+const inflight = new Map<string, Flight>();
+
+/** A caller's abort detaches only that caller; the download itself is aborted only when no
+ *  waiter is left (or by its own deadline). */
+function joinFlight(f: Flight, signal: AbortSignal | undefined): Promise<string> {
+  f.waiters++;
+  return new Promise<string>((resolveJoin, reject) => {
+    let left = false;
+    const leave = (): void => {
+      if (left) return;
+      left = true;
+      f.waiters--;
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      leave();
+      if (f.waiters <= 0) f.ac.abort();
+      reject(new DownloadError('failed', 'Canceled.'));
+    };
+    if (signal?.aborted) { onAbort(); return; }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    f.p.then((v) => { leave(); resolveJoin(v); }, (e) => { leave(); reject(e); });
+  });
+}
+
+async function ensureCloudflaredOnce(o: EnsureOptions & { home: string; pins: CloudflaredPins }, signal: AbortSignal): Promise<string> {
+  const home = o.home;
+  const pins = o.pins;
   const pin = pins.files[platformKey(o.arch)];
   if (!pin) throw new Error(`no cloudflared pin for ${platformKey(o.arch)}`);
   const dir = binDir(home);
@@ -171,7 +224,7 @@ export async function ensureCloudflared(o: EnsureOptions = {}): Promise<string> 
     const archive = join(tmp, pin.asset);
     const base = o.baseOverride ?? pins.base;
     await downloadVerified(new URL(pin.asset, base).toString(), {
-      sha256: pin.sha256, maxBytes: pin.size + 1024 * 1024, dest: archive, fetchImpl: o.fetchImpl,
+      sha256: pin.sha256, maxBytes: pin.size + 1024 * 1024, dest: archive, fetchImpl: o.fetchImpl, signal,
       allowLoopback: !!o.baseOverride && /^http:\/\/127\.0\.0\.1[:/]/.test(o.baseOverride),
     });
     const bytes = readCloudflaredFromTgz(readFileSync(archive));
@@ -294,14 +347,46 @@ export interface StartTunnelOptions {
  * Rejects (and kills the child) on timeout or early exit. Never logs a line of its output.
  */
 export function startTunnel(o: StartTunnelOptions): Promise<RunningTunnel> {
+  const fixed = o.fixed ?? null;
+  if (!fixed) return startQuickTunnel({ bin: o.bin, dir: o.macDir, port: o.phonePort, home: o.home, spawnImpl: o.spawnImpl, timeoutMs: o.timeoutMs });
   const home = o.home ?? join(o.macDir, 'cf-home');
   mkdirSync(home, { recursive: true, mode: 0o700 });
-  const timeoutMs = o.timeoutMs ?? 30_000;
-  const fixed = o.fixed ?? null;
-  const args = fixed
-    ? ['tunnel', '--no-autoupdate', '--config', writeFixedConfig(o.macDir, fixed, o.phonePort), 'run', fixed.tunnelId]
-    : ['tunnel', '--no-autoupdate', '--config', writeQuickConfig(o.macDir), '--url', `http://127.0.0.1:${o.phonePort}`];
+  const args = ['tunnel', '--no-autoupdate', '--config', writeFixedConfig(o.macDir, fixed, o.phonePort), 'run', fixed.tunnelId];
   const child = (o.spawnImpl ?? defaultSpawn)(o.bin, args, { env: cloudflaredEnv(home), cwd: o.macDir });
+  return awaitTunnelUrl(child, fixed, o.timeoutMs ?? 30_000);
+}
+
+export interface QuickTunnelOptions {
+  bin: string;
+  /** Its own dir (0700): the config and `cf-home` live here, nothing else. */
+  dir: string;
+  /** The ONE local port it points at (127.0.0.1). */
+  port: number;
+  home?: string;
+  spawnImpl?: SpawnImpl;
+  timeoutMs?: number;
+  /** Aborting kills the child and rejects (a share closed while its tunnel starts). */
+  signal?: AbortSignal;
+  /** Called right after the spawn, before any URL: the caller starts its watchdog here. */
+  onSpawn?: (child: ChildProcess) => void;
+}
+
+/**
+ * A quick tunnel (`--url http://127.0.0.1:<port>`) in its own dir: resolves with the first
+ * trycloudflare URL it prints. Mac mode's quick branch and every live-link share use this.
+ */
+export function startQuickTunnel(o: QuickTunnelOptions): Promise<RunningTunnel> {
+  if (!Number.isInteger(o.port) || o.port <= 0 || o.port > 65535) return Promise.reject(new Error('invalid port'));
+  const home = o.home ?? join(o.dir, 'cf-home');
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const args = ['tunnel', '--no-autoupdate', '--config', writeQuickConfig(o.dir), '--url', `http://127.0.0.1:${o.port}`];
+  if (o.signal?.aborted) return Promise.reject(new Error('aborted'));
+  const child = (o.spawnImpl ?? defaultSpawn)(o.bin, args, { env: cloudflaredEnv(home), cwd: o.dir });
+  try { o.onSpawn?.(child); } catch { /* the caller's own bookkeeping */ }
+  return awaitTunnelUrl(child, null, o.timeoutMs ?? 30_000, o.signal);
+}
+
+function awaitTunnelUrl(child: ChildProcess, fixed: FixedTunnelRecord | null, timeoutMs: number, signal?: AbortSignal): Promise<RunningTunnel> {
   return new Promise<RunningTunnel>((resolveRun, reject) => {
     let settled = false;
     let buf = '';
@@ -309,6 +394,7 @@ export function startTunnel(o: StartTunnelOptions): Promise<RunningTunnel> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       if (err) {
         try { child.kill('SIGTERM'); } catch { /* gone */ }
         reject(err);
@@ -331,6 +417,8 @@ export function startTunnel(o: StartTunnelOptions): Promise<RunningTunnel> {
     child.once('error', (e) => done(e));
     child.once('exit', (code) => done(new Error(`cloudflared exited early (${code})`)));
     const timer = setTimeout(() => done(new Error('cloudflared did not report a URL in time')), timeoutMs);
+    const onAbort = (): void => done(new Error('aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -464,20 +552,31 @@ export const QUICK_PROBE_BUDGET_MS = 85_000;
  * waits {@link QUICK_DNS_GRACE_MS} so it never caches the name's absence). Proves the tunnel reaches THIS listener; the value is
  * public and never authenticates anything.
  */
-export async function probeReachable(url: string, nonce: string, o: { header: string; budgetMs?: number; get?: typeof getWithFreshDns; stepMs?: number; firstAskAfterMs?: number }): Promise<boolean> {
+export async function probeReachable(url: string, nonce: string, o: { header: string; budgetMs?: number; get?: typeof getWithFreshDns; stepMs?: number; firstAskAfterMs?: number; path?: string; signal?: AbortSignal }): Promise<boolean> {
   const get = o.get ?? getWithFreshDns;
   const until = Date.now() + (o.budgetMs ?? 30_000);
+  const path = o.path ?? '/api/health';
   // Asking before the record is published caches the NXDOMAIN for the zone's negative TTL, even
   // at Cloudflare's authoritative edge (see resolveFreshName): wait first, ask once it exists.
-  if (o.firstAskAfterMs) await new Promise((r) => setTimeout(r, o.firstAskAfterMs));
-  while (Date.now() < until) {
+  if (o.firstAskAfterMs) await abortableSleep(o.firstAskAfterMs, o.signal);
+  while (Date.now() < until && !o.signal?.aborted) {
     try {
-      const r = await get(`${url.replace(/\/+$/, '')}/api/health`, o.header);
-      if (r.value === nonce) return true;
+      const r = await get(`${url.replace(/\/+$/, '')}${path}`, o.header);
+      if (r.value === nonce) return !o.signal?.aborted;
     } catch { /* not resolvable yet */ }
-    await new Promise((r) => setTimeout(r, o.stepMs ?? 1000));
+    await abortableSleep(o.stepMs ?? 1000, o.signal);
   }
   return false;
+}
+
+/** setTimeout as a promise that ends early (resolves) when `signal` aborts. */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((r) => {
+    if (signal?.aborted) { r(); return; }
+    const t = setTimeout(done, ms);
+    function done(): void { clearTimeout(t); signal?.removeEventListener('abort', done); r(); }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 // ─── Watchdog ───────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ const SPAWN_PATHS: Record<string, { kind: Kind; why: string }> = {
   "claudeId|sameTool ? modelForSession(chat) : ''": { kind: 'carry', why: 'agent switch: a NEW conversation; the old one\'s pick record is copied, none = saved (r3 + r4)' },
   'claudeId|pickedModel': { kind: 'pick', why: 'the model picker\'s cross-tool pick' },
   'developId|modelForSession(cs)': { kind: 'carry', why: 'Develop hand-off: a new conversation; the plan\'s pick record is copied (r4)' },
+  'pickedClaudeId(pick.chosenModel)|pick.chosenModel': { kind: 'pick', why: 'the Chat landing composer: a model the owner chose before the chat existed (left on default = no model named, no pick)' },
   'pickedClaudeId(model)|model': { kind: 'pick', why: 'a board Delegate composer model changed on purpose' },
   'pickedClaudeId(o.model)|o.model': { kind: 'pick', why: '`dreamcontext window new --model`' },
   'session|model': { kind: 'saved', why: 'member Super: the server forces saved' },

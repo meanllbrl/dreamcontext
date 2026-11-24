@@ -159,7 +159,7 @@ describe('delegate at a full record (the 2026-10-23 field case)', () => {
       children: Object.fromEntries(ended.map((sid) => [sid, child(sid, { endedAt: 1 })])),
       containers: [...ended.map((sid) => chat(sid, 'others')), ...pinnedFill(6)],
     });
-    const r = await verb('delegate', { prompt: 'do the thing', brief: 'thing' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'do the thing', brief: 'thing' });
     expect(r.status).toBe(200);
     expect(result(r)).toMatchObject({ sessionId: CHILD, card: 'opened', container: containerIdFor('chat', CHILD) });
     const s = await readSuperState(root);
@@ -171,7 +171,7 @@ describe('delegate at a full record (the 2026-10-23 field case)', () => {
 
   it('says card: not_opened, loudly, when every card must stay; the child is still recorded', async () => {
     write({ containers: pinnedFill(0) });
-    const r = await verb('delegate', { prompt: 'do the thing', brief: 'thing' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'do the thing', brief: 'thing' });
     expect(r.status).toBe(200);
     const out = result(r);
     expect(out).toMatchObject({ sessionId: CHILD, card: 'not_opened', container: null });

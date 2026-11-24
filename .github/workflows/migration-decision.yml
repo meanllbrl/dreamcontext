@@ -1,0 +1,38 @@
+name: migration-decision
+
+# Early feedback (plan oto-migration D6): every feature PR says how installs made before it follow,
+# with a Migration: line in its body. Not a merge block: the hard stop is the release
+# (check-migration-decision --release in the cut, desktop-release.yml and prepublishOnly).
+# Its own workflow, so a body edit re-runs only this check and never cancels the test suite.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-decision-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  decision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Migration decision in the PR body
+        # The body is typed by a person: it reaches the script through env only, never pasted
+        # into this run line.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: node scripts/check-migration-decision.mjs --pr

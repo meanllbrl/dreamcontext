@@ -7,6 +7,7 @@ import { PhoneChip } from '../../handsfree/phone/PhoneChip';
 import { VaultLogo } from '../VaultLogo';
 import { ProjectPicker, type PickerRow } from './ProjectPicker';
 import { ZoomMenu } from './ZoomMenu';
+import { useBarSqueeze } from './useBarSqueeze';
 
 interface TitleBarProps {
   activeVault: string;
@@ -34,6 +35,8 @@ interface TitleBarProps {
    *  back/forward on the left, the sleep tracker and update badge on the right. */
   setLeftSlot: (el: HTMLElement | null) => void;
   setRightSlot: (el: HTMLElement | null) => void;
+  /** The local new shell's page tabs (tek-kenar C7): the active project portals them here. */
+  setTabsSlot?: (el: HTMLElement | null) => void;
   /** A device shell: no Hands-free button (Mac mode is the Mac's) and no New project. On the
    *  tunnel the Mac's chip sits here instead, `remote` on a computer. */
   device?: { tunnel: boolean; remote: boolean };
@@ -48,13 +51,21 @@ interface TitleBarProps {
  */
 export function TitleBar({
   activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, onDrawerHover, waiting = 0, touch = false,
-  zoom, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, device,
+  zoom, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, setTabsSlot, device,
 }: TitleBarProps) {
   const { t } = useI18n();
   const pickerRef = useRef<HTMLButtonElement>(null);
   const active = rows.find((r) => r.name === activeVault);
+  // The local new shell (tek-kenar D1, C7): back/forward, then the project label (no caret) that
+  // opens the ⌘P picker, then the page tabs; the logo lives in the sidebar. A device shell keeps
+  // dev's bar.
+  const local = !device;
+  // The menu tabs come first at every width: the sleep tracker and the secondary icons give way.
+  const barRef = useRef<HTMLDivElement>(null);
+  useBarSqueeze(barRef, local, [zoom, activeVault, touch]);
   return (
     <div
+      ref={barRef}
       className="ns-titlebar"
       data-testid="ns-titlebar"
       onMouseDown={startTitleBarDrag}
@@ -70,6 +81,8 @@ export function TitleBar({
           aria-label={waiting > 0 ? `${t('shell.drawer.toggle')}, ${t('handsfree.chat.waitingBadge').replace('{n}', String(waiting))}` : t('shell.drawer.toggle')}
           title={t('shell.drawer.toggle')}
           data-testid="ns-drawer-toggle"
+          // Showing or hiding the sidebar never ends a move landing (lib/revealGate isMovePress).
+          data-sidebar-toggle="true"
           onClick={onToggleDrawer}
           onMouseEnter={() => onDrawerHover?.(true)}
           onMouseLeave={() => onDrawerHover?.(false)}
@@ -80,11 +93,14 @@ export function TitleBar({
             <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
           </svg>
         </button>
+        {local && <div className="chrome-slot ns-tb-slot" ref={setLeftSlot} />}
         <button
           ref={pickerRef}
           type="button"
           className="ns-tb-picker"
           data-no-drag
+          data-move={local ? 'true' : undefined}
+          data-local={local ? 'true' : undefined}
           aria-haspopup="listbox"
           aria-expanded={pickerOpen}
           title={t('shell.picker.open')}
@@ -93,15 +109,19 @@ export function TitleBar({
         >
           <VaultLogo name={activeVault} hasLogo={!!active?.logo} stamp={active?.logoStamp ?? null} size={16} />
           <span className="ns-tb-picker-name">{activeVault}</span>
-          <svg className="ns-tb-caret" width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 3 4 5.5 6.5 3" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
+          {!local && <svg className="ns-tb-caret" width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 3 4 5.5 6.5 3" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>}
         </button>
-        <div className="chrome-slot ns-tb-slot" ref={setLeftSlot} />
+        {!local && <div className="chrome-slot ns-tb-slot" ref={setLeftSlot} />}
+        {local && <span className="ns-tb-divider" aria-hidden="true" />}
+        {local && <div className="chrome-slot ns-tb-tabs" ref={setTabsSlot} />}
       </div>
 
-      <div className="ns-tb-brand" aria-hidden="true">
-        <BrandMark size={22} />
-        <span className="ns-tb-word">dream<span>context</span></span>
-      </div>
+      {!local && (
+        <div className="ns-tb-brand" aria-hidden="true">
+          <BrandMark size={22} />
+          <span className="ns-tb-word">dream<span>context</span></span>
+        </div>
+      )}
 
       {notice && <div className="ns-tb-notice" role="status" data-testid="ns-notice">{notice}</div>}
 
