@@ -396,6 +396,15 @@ export function promptAbout(prompt: string): string | null {
   return out.length ? out.join('\n') : null;
 }
 
+/** The openings of the card receipts the app writes on its own (usage-readers.ts
+ *  `SERVER_CONTINUATION_OPENINGS`, mirrored to keep the prompt hook's imports light; a drift test pins them). */
+export const CARD_RECEIPT_OPENINGS = ['MCP connected: ', 'MCP skipped: ', '[secret submitted'] as const;
+/** A card's receipt: the app's fixed text after he answered a card (no search; his rules still ride). */
+export function isCardReceipt(prompt: string): boolean {
+  const head = prompt.trimStart();
+  return CARD_RECEIPT_OPENINGS.some((p) => head.startsWith(p));
+}
+
 /** A recall, pattern or offer needs at least this much of the owner's text to search on. */
 export const RECALL_QUERY_MIN_CHARS = 8;
 
@@ -430,6 +439,9 @@ const ABS_PATH_RE = /(^|[\s(`'"[])~?\/(?:[^\s/`'")\]]+\/)*[^\s`'")\]]*/g;
  * {@link recallQuery}.
  */
 export function promptOwnerText(prompt: string): string | null {
+  // A card's receipt (an mcp card's `MCP connected: …`, a secret card's `[secret submitted …]`) is
+  // the app's fixed text: searching on it ran a judged recall p50 ~12 s on the server's wording.
+  if (isCardReceipt(prompt)) return null;
   const words = ownerWords(prompt);
   if (words === null) return null;
   const text = words.replace(MACHINE_BLOCK_RE, ' ').replace(SERVER_LINE_RE, '').replace(PAGE_HEADER_RE, ' ').replace(TELEGRAM_QUOTED_RE, '$1').trim();
