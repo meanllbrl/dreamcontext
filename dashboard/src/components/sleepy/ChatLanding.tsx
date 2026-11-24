@@ -9,6 +9,8 @@ import { createTranscriptSession } from './transcriptSession';
 /** What the owner chose in the landing's composer before the chat existed. */
 export interface ChatLandingPick {
   model: string;
+  /** The model the owner actually chose here ('' = left on the default: no pick event, Eco Plus may lower it). */
+  chosenModel: string;
   effort: string;
   mode: ChatMode;
   accountId: string;
@@ -40,7 +42,7 @@ function ChatLandingInner({
   const [effort, setEffort] = useState('');
   const [mode, setMode] = useState<ChatMode>(DEFAULT_CHAT_MODE);
   const [accountId, setAccountId] = useState('');
-  const pick: ChatLandingPick = { model: model || modelConfig.defaultModel, effort: effort || modelConfig.defaultEffort, mode, accountId };
+  const pick: ChatLandingPick = { model: model || modelConfig.defaultModel, chosenModel: model, effort: effort || modelConfig.defaultEffort, mode, accountId };
   const pickRef = useRef(pick);
   pickRef.current = pick;
   const startRef = useRef(onStart);

@@ -2073,7 +2073,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         ? spawn(bypass, codexId, false, 'chat', '', onAntigravity ? '' : defaults.codexDefaultModel, true, '', false, onAntigravity ? '' : defaults.codexDefaultEffort, false, pick?.mode ?? DEFAULT_CHAT_MODE)
         : pick && kind === 'chat'
           // The Chat page's landing (ChatLanding): what the owner picked before the chat existed.
-          ? spawn(bypass, undefined, false, 'chat', '', pick.model, true, '', false, pick.effort, false, pick.mode, pick.accountId)
+          ? spawn(bypass, pickedClaudeId(pick.chosenModel), false, 'chat', '', pick.chosenModel, true, '', false, pick.effort, false, pick.mode, pick.accountId)
           : spawn(bypass, undefined, false, kind);
     // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {

@@ -267,7 +267,6 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   const OWN_MESSAGES_ONLY_2026_11_15 = 480; // telegram-cevaplayan: a `shown=owner` question waits on his Mac bar only, never on Telegram; `queue ask` when he is away (measured 26,703, +475)
   const OWNER_WRITTEN_YES_2026_11_15 = 40; // sahip-yazili-izin: only his own yes or no passes a permission (`super queue allow`) (measured 26,734, +31)
   const CUT_0_41_22_2026_11_18 = 60; // the 0.41.22 cut: uye-rutin-agent on top of the eight fix PRs (eski-sunum-soru, yerel-push), measured 26,889
-  const ONE_OFF_2026_11_22 = 110; // tek-seferlik-zamanlama: "tonight at 9" is `--once` / `--on`, n runs `--times n`, never a daily job (measured 30,066 on dev 24 Nov)
   const SILENT_PROGRESS_2026_11_21 = 320; // super-sessiz-kalmaz: a time only from a real measurement, the deploy watch, `background` (measured 30,258)
   const MEMBER_RELAY_2026_11_21 = 320; // global-uye-ogrenme D7/D8: a member correction is relayed, never amended into a global member (measured 30,265 with a guide, +304)
   const ROUTINE_NOT_MEMBER_2026_11_18 = 20; // uye-rutin-agent: more work is the member's routine (--agent), not a new member (measured 26,863, +12)
