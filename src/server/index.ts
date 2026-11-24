@@ -1,5 +1,5 @@
 import { handleAgentTools } from './routes/agent-tools.js';
-import { ensureAppCliOnShellPath } from '../lib/app-cli-path.js';
+import { ensureAppCliOnShellPath, writeAppCliRecord } from '../lib/app-cli-path.js';
 import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
 import {
   handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
@@ -1575,6 +1575,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   prepareDashboardEnv(process.env, process.pid);
   // On the app's own Node (a Mac with no npm): `dreamcontext` on the Terminal's PATH with no click.
   const appCli = ensureAppCliOnShellPath();
+  // The record the last npm release (the bridge) reads to hand `dreamcontext` over to this app.
+  writeAppCliRecord();
   if (appCli?.refused || (appCli && !appCli.wrote.length && !appCli.alreadyConfigured.length)) {
     console.warn(`[setup] dreamcontext could not be put on the Terminal's PATH; add by hand: ${appCli.line || appCli.dir}`);
   }
