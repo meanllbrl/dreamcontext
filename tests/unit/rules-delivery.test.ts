@@ -127,6 +127,7 @@ describe('rules-delivery: by position (P1, sub-agent, dispatch)', () => {
     seed([rule('me', 'Numbers first', { at: 'report' })]);
     expect(promptSurface('<task-notification>done</task-notification>')).toBe('finished');
     expect(promptSurface('[super event] child finished')).toBe('finished');
+    expect(promptSurface('MCP connected: kestrel-db\nkestrel-db was already set up for this project.')).toBe('finished');
     expect(promptSurface('[dreamcontext] The app was restarted while you were working, so go on.')).toBe('finished');
     expect(promptSurface('bunu düzelt')).toBe('owner');
     expect(deliverForTurn(ctx, { surface: 'machine' }, { home, now: NOW }).chars).toBe(0);

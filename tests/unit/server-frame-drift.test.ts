@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isServerContinuationText, SERVER_CONTINUATION_OPENINGS } from '../../src/lib/usage-readers.js';
 import { classifyUserEntry, hookQueryOf } from '../../src/lib/agents/work-trace.js';
+import { CARD_RECEIPT_OPENINGS, recallQuery, recallTurn } from '../../src/lib/agents/team-roster.js';
 import { AUTH_CONTINUE_TEXT, LIMIT_CONTINUE_TEXT } from '../../src/server/routes/agent-chat.js';
 import { RESET_CONTINUE_TEXT } from '../../src/lib/resume-at-reset.js';
 import { CODEX_LIMIT_CONTINUE_TEXT, toolSwitchFor } from '../../src/lib/tool-switch.js';
@@ -64,6 +65,14 @@ describe('server texts continue (D3 rule 3)', () => {
   }
   it('every mirrored opening stands for a text above', () => {
     for (const o of SERVER_CONTINUATION_OPENINGS) expect(SERVER_TEXTS.some(([, t]) => t.trimStart().startsWith(o)), o).toBe(true);
+  });
+  it('a card receipt runs no recall, and every mirrored receipt opening is a server text', () => {
+    for (const o of CARD_RECEIPT_OPENINGS) expect((SERVER_CONTINUATION_OPENINGS as readonly string[]).includes(o), o).toBe(true);
+    for (const t of ['MCP connected: posthog\nposthog was already set up for this project, so dreamcontext restarted this chat with it: the tools are loaded now. Carry on with the task.', 'MCP skipped: kestrel-db\nThe owner chose to continue without: kestrel-db.', '[secret submitted · Lumen API key]']) {
+      expect(recallQuery(t)).toBeNull();
+      expect(recallTurn(t)).toBeNull();
+    }
+    expect(recallQuery('connect the MCP for kestrel and fix the price row')).not.toBeNull();
   });
   it('a person\'s words are never a server text', () => {
     for (const t of ['fix the kestrel price row', '/tmp/shot.png why red?', '[Reply to message ref=ab12] yes', '[About agenda line 3] move it']) {
