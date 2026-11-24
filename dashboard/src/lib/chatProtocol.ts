@@ -155,6 +155,18 @@ export interface ContextHandoffState {
   nudgeAt: number;
   hardAt: number;
   remindEvery: number;
+  /** A person flipped THIS pane's switch. False: the pane follows this Mac's Eco mode live. */
+  chosen?: boolean;
+}
+
+/**
+ * What a pane's ECO lamp shows: the pane's own switch when a person chose it, otherwise this
+ * Mac's Eco mode as Settings holds it NOW, so turning Eco on in Settings lights every open chat
+ * in every project at once, the same way the hooks read it (src/lib/context-watch.ts).
+ */
+export function shownContextHandoff(state: ContextHandoffState | undefined, machineEco: boolean): ContextHandoffState | undefined {
+  if (!state || state.chosen) return state;
+  return state.enabled === machineEco ? state : { ...state, enabled: machineEco };
 }
 
 export type ChatEvent =
@@ -1165,6 +1177,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
         nudgeAt: typeof st.nudgeAt === 'number' && st.nudgeAt > 0 ? st.nudgeAt : 300_000,
         hardAt: typeof st.hardAt === 'number' && st.hardAt > 0 ? st.hardAt : 650_000,
         remindEvery: typeof st.remindEvery === 'number' && st.remindEvery > 0 ? st.remindEvery : 100_000,
+        chosen: st.chosen === true,
       },
     };
   }

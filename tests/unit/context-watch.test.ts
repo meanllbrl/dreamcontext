@@ -38,6 +38,8 @@ import {
   resolveTabSeed,
   ecoModeDefault,
   applyPaneHandoffToggle,
+  paneHandoffState,
+  setEcoModeDefault,
   writeHandoffRecord,
   readHandoffRecord,
   stampHandoffRecord,
@@ -73,15 +75,29 @@ const LADDER = { enabled: true, nudgeAt: 200_000, hardAt: 600_000, remindEvery: 
 
 let projectRoot: string;
 let contextRoot: string;
+// Eco mode is this Mac's `~/.dreamcontext/agent-ui.json` and the resolver reads it live through
+// homedir(): every test runs on a scratch HOME, so the developer's own setting never decides one.
+let machineHome: string;
+let prevHomeEnv: string | undefined;
+/** Set this (scratch) Mac's Eco mode the way Settings does. */
+function setMachineEco(on: boolean): void {
+  mkdirSync(join(machineHome, '.dreamcontext'), { recursive: true });
+  writeFileSync(join(machineHome, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ readAloud: true, ecoMode: on }), 'utf-8');
+}
 
 beforeEach(() => {
   projectRoot = mkdtempSync(join(tmpdir(), 'dc-ctx-watch-'));
   contextRoot = join(projectRoot, '_dream_context');
   mkdirSync(join(contextRoot, 'state'), { recursive: true });
+  machineHome = mkdtempSync(join(tmpdir(), 'dc-ctx-mac-'));
+  prevHomeEnv = process.env.HOME;
+  process.env.HOME = machineHome;
 });
 
 afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true });
+  if (prevHomeEnv === undefined) delete process.env.HOME; else process.env.HOME = prevHomeEnv;
+  rmSync(machineHome, { recursive: true, force: true });
 });
 
 /** Write a JSONL transcript from record objects. */
@@ -442,23 +458,51 @@ describe('the tab file and the resolution ladder', () => {
     expect(readTabHandoff(contextRoot, TAB)?.updatedAt).toBeTruthy();
   });
 
-  it('resolves tab file > .config.json > off', () => {
-    // no tab file, no config ⇒ off
-    expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(false);
+  it('resolves a chosen pane > this Mac; the vault gives only the ladder', () => {
+    // nothing chosen anywhere ⇒ this Mac's Eco mode, ON by default
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(true);
+    expect(resolveHandoffFor(contextRoot, projectRoot, null).enabled).toBe(true);
 
+    // a vault that says off decides nothing about the switch (terminal/CLI path too)
     writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({
       platforms: [], packs: [], multiProduct: false, setupVersion: '1',
-      contextHandoff: { enabled: true, nudgeAt: 250_000 },
+      contextHandoff: { enabled: false, nudgeAt: 250_000 },
     }), 'utf-8');
-    // config on, no tab file ⇒ on (this is the terminal/CLI path too)
     expect(resolveHandoffFor(contextRoot, projectRoot, null).enabled).toBe(true);
     expect(resolveHandoffFor(contextRoot, projectRoot, null).nudgeAt).toBe(250_000);
 
-    // a pane toggled OFF overrides a vault that says on
-    writeTabHandoff(contextRoot, TAB, { enabled: false });
+    // a pane a person switched OFF keeps it against a Mac that is on
+    applyPaneHandoffToggle(contextRoot, projectRoot, TAB, false);
     expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(false);
     // ...and the sibling pane is untouched
     expect(resolveHandoffFor(contextRoot, projectRoot, TAB2).enabled).toBe(true);
+  });
+
+  it('a SEEDED pane follows this Mac live: turning Eco on reaches open chats in every project', () => {
+    // The 2026-11-22 bug: a pane's tab file froze the Mac setting of the moment it was born, so
+    // switching Eco in Settings never reached an open or restored chat in any project.
+    const other = mkdtempSync(join(tmpdir(), 'dc-ctx-other-'));
+    try {
+      const otherCtx = join(other, '_dream_context');
+      mkdirSync(join(otherCtx, 'state'), { recursive: true });
+      setMachineEco(false);
+      writeTabHandoff(contextRoot, TAB, resolveTabSeed(ecoModeDefault(), undefined));
+      writeTabHandoff(otherCtx, TAB2, resolveTabSeed(ecoModeDefault(), undefined));
+      expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(false);
+      expect(resolveHandoffFor(otherCtx, other, TAB2).enabled).toBe(false);
+
+      setMachineEco(true);
+      expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(true);
+      expect(resolveHandoffFor(otherCtx, other, TAB2).enabled).toBe(true);
+      expect(resolveHandoffFor(otherCtx, other, null).enabled).toBe(true);
+      expect(paneHandoffState(otherCtx, other, TAB2)).toMatchObject({ enabled: true, chosen: false });
+
+      // A tab file from before `chosen` existed is a seed too.
+      writeFileSync(join(contextWatchDir(otherCtx), `tab-${TAB2}.json`), JSON.stringify({ enabled: false, nudgeAt: 300_000, updatedAt: '2026-11-01T00:00:00.000Z' }), 'utf-8');
+      expect(resolveHandoffFor(otherCtx, other, TAB2).enabled).toBe(true);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it('takes the LADDER from the vault even when the pane file holds a stale one', () => {
@@ -483,14 +527,14 @@ describe('the tab file and the resolution ladder', () => {
     expect(r.hardAt).toBe(650_000);
   });
 
-  it('still lets a pane switch itself OFF against a vault that is on', () => {
-    writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({
-      platforms: [], packs: [], multiProduct: false, setupVersion: '1',
-      contextHandoff: { enabled: true },
-    }), 'utf-8');
-    writeTabHandoff(contextRoot, TAB, { enabled: false });
-    expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(false);
+  it('still lets a pane switch itself OFF against a Mac that is on, and ON against one that is off', () => {
+    applyPaneHandoffToggle(contextRoot, projectRoot, TAB, false);
+    expect(paneHandoffState(contextRoot, projectRoot, TAB)).toMatchObject({ enabled: false, chosen: true });
     expect(resolveHandoffFor(contextRoot, projectRoot, TAB2).enabled).toBe(true);
+    setMachineEco(false);
+    applyPaneHandoffToggle(contextRoot, projectRoot, TAB2, true);
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB2).enabled).toBe(true);
+    expect(resolveHandoffFor(contextRoot, projectRoot, TAB).enabled).toBe(false);
   });
 
   it('keeps the pane toggle across a /clear while the nudge ladder RESTARTS', () => {
@@ -575,6 +619,27 @@ describe('Eco mode: one machine-wide default', () => {
     } finally {
       if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
     }
+  });
+});
+
+describe('setEcoModeDefault (the CLI writes the same switch as Settings)', () => {
+  it('sets only ecoMode and keeps every other field', () => {
+    setMachineEco(true);
+    expect(setEcoModeDefault(false)).toBe(true);
+    const ui = JSON.parse(readFileSync(join(machineHome, '.dreamcontext', 'agent-ui.json'), 'utf-8'));
+    expect(ui).toEqual({ readAloud: true, ecoMode: false });
+    expect(ecoModeDefault()).toBe(false);
+    expect(setEcoModeDefault(true)).toBe(true);
+    expect(ecoModeDefault()).toBe(true);
+  });
+
+  it('creates the file on a fresh Mac and never overwrites an unreadable one', () => {
+    expect(setEcoModeDefault(false)).toBe(true);
+    expect(ecoModeDefault()).toBe(false);
+    const path = join(machineHome, '.dreamcontext', 'agent-ui.json');
+    writeFileSync(path, '{broken', 'utf-8');
+    expect(setEcoModeDefault(false)).toBe(false);
+    expect(readFileSync(path, 'utf-8')).toBe('{broken');
   });
 });
 
@@ -784,7 +849,8 @@ describe('maybeNudge', () => {
   }
 
   it('returns null and opens NO transcript when the feature is off', () => {
-    configure({ enabled: false, nudgeAt: 3000 });
+    configure({ enabled: true, nudgeAt: 3000 });
+    setMachineEco(false);
     // A path that would throw if it were ever opened proves the early return is real:
     // "off ⇒ zero extra work" has to be literally true, not merely quiet.
     expect(maybeNudge(contextRoot, {
@@ -815,17 +881,27 @@ describe('maybeNudge', () => {
     expect(readNudgeState(contextRoot, SES)).toBeNull();
   });
 
-  it('honours the PANE toggle over the vault default, in both directions', () => {
+  it('honours the PANE toggle over this Mac, in both directions', () => {
     configure({ ...TINY, enabled: false });
+    setMachineEco(false);
     const p = transcript([usage({ cache_read_input_tokens: 3500 })]);
     const env = { DREAMCONTEXT_TAB_SESSION: TAB } as never;
     expect(maybeNudge(contextRoot, { transcript_path: p, session_id: SES }, env)).toBeNull();
 
-    // Pane A on: it nudges even though the vault says off.
-    writeTabHandoff(contextRoot, TAB, { enabled: true, nudgeAt: 3000, remindEvery: 2000 });
+    // Pane A switched on by a person: it nudges even though the Mac says off.
+    applyPaneHandoffToggle(contextRoot, projectRoot, TAB, true);
     expect(maybeNudge(contextRoot, { transcript_path: p, session_id: SES }, env)).not.toBeNull();
-    // Pane B, untouched, still follows the vault default: off.
+    // Pane B, untouched, follows this Mac: off.
     expect(maybeNudge(contextRoot, { transcript_path: p, session_id: SES2 }, { DREAMCONTEXT_TAB_SESSION: TAB2 } as never)).toBeNull();
+  });
+
+  it('a session with no pane (terminal, CLI, a brain worktree) follows this Mac, not the vault', () => {
+    configure({ ...TINY, enabled: false });
+    const p = transcript([usage({ cache_read_input_tokens: 3500 })]);
+    expect(maybeNudge(contextRoot, { transcript_path: p, session_id: SES }, {} as never)).not.toBeNull();
+    setMachineEco(false);
+    const p2 = transcript([usage({ cache_read_input_tokens: 9000 })], 'y.jsonl');
+    expect(maybeNudge(contextRoot, { transcript_path: p2, session_id: SES2 }, {} as never)).toBeNull();
   });
 
   it('returns null rather than throwing on a missing transcript or session id', () => {

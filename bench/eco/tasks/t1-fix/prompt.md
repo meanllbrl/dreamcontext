@@ -1,0 +1,1 @@
+A volunteer reports: an item that expires exactly 3 days from today does not show up under "Expiring within 3 days" in the weekly report, although the code's own comment says the last day of the window counts. The same item is missing from `expiring --days 3`. Fix it and add a test that would have caught it.

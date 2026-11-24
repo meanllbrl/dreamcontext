@@ -1407,7 +1407,7 @@
     },
     {
       "path": "config context-handoff",
-      "desc": "Opt in to the context-handoff nudge: on | off (default: off)",
+      "desc": "Eco mode, this Mac's one switch for every project: on | off (default: on); the flags set this vault's thresholds",
       "args": [
         "<state>"
       ],
@@ -1816,6 +1816,24 @@
     {
       "path": "doctor",
       "desc": "Validate _dream_context/ structure and report issues",
+      "args": []
+    },
+    {
+      "path": "eco",
+      "desc": "This Mac's saving mode (Kapalı · Eco · Eco Plus) and the models it picks",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "eco model",
+      "desc": "Print the model a role runs on under the current saving mode (role: builder)",
+      "args": [
+        "<role>"
+      ]
+    },
+    {
+      "path": "eco status",
+      "desc": "Print the saving mode: off, eco or plus",
       "args": []
     },
     {

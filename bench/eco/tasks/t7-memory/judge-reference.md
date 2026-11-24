@@ -1,0 +1,5 @@
+The project's brain (`_dream_context/knowledge/`) holds the answers:
+1. No SQLite (storage.md, decided January 2026): the Thursday volunteers copy the data to a USB stick each week and open it in a text editor when something looks wrong; one readable JSON file serves that, SQLite would need a viewer nobody wants to install. (Bonus: atomic temp-file-then-rename write after a December 2025 power cut; revisit past ~5,000 items or a second site needing live sync.)
+2. Two-day shelf rule (parcel-rules.md; `MIN_SHELF_DAYS` in src/parcels.ts): decided March 2026 by the coordinator Rowan Vale, after three households received yoghurt in February 2026 that had expired by the time they got home on the Saturday bus; the health inspector asked for a margin. Those items go to the Friday community kitchen.
+3. Dairy per person is `PER_PERSON.dairy = 1` in src/parcels.ts; capped at 1 per person because the fridge at the Birch Street site is small and a surplus means waste the next week (parcel-rules.md).
+An answer that invents a reason not in these files is wrong on that point. Grade correctness mostly on these facts.
