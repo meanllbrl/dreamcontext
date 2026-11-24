@@ -13,7 +13,7 @@ import {
 } from '../../src/lib/snapshot-budget.js';
 import {
   fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput, takeSessionStartPart,
-  writePromptOverflow, writeSessionStartParts, type PromptBlock,
+  writePromptOverflow, writeSessionStartParts, writeStdoutSync, readStdinSync, type PromptBlock,
 } from '../../src/lib/hook-delivery.js';
 import { HOOK_SPECS, hookCommand } from '../../src/cli/commands/install-skill.js';
 
@@ -269,5 +269,49 @@ describe('fitPromptContext', () => {
     expect(out.startsWith('parked message')).toBe(true);
     expect(out).toContain(path);
     expect(readFileSync(path, 'utf-8')).toContain('- line 299 ');
+  });
+});
+
+describe('writeStdoutSync', () => {
+  const eagain = (): never => { throw Object.assign(new Error('EAGAIN'), { code: 'EAGAIN' }); };
+
+  it('waits for a reader that is behind and delivers every byte (a busy retry gave up in microseconds)', () => {
+    const got: Buffer[] = [];
+    const busyUntil = Date.now() + 60;
+    writeStdoutSync('x'.repeat(30_000), (buf, off) => {
+      if (Date.now() < busyUntil) eagain();
+      const end = Math.min(buf.length, off + 8192);
+      got.push(buf.subarray(off, end));
+      return end - off;
+    });
+    expect(Buffer.concat(got).toString()).toBe('x'.repeat(30_000));
+  });
+
+  it('stops at once on an error other than a full pipe', () => {
+    let calls = 0;
+    writeStdoutSync('hello', () => { calls++; throw Object.assign(new Error('EPIPE'), { code: 'EPIPE' }); });
+    expect(calls).toBe(1);
+  });
+});
+
+describe('readStdinSync', () => {
+  const eagain = (): never => { throw Object.assign(new Error('EAGAIN'), { code: 'EAGAIN' }); };
+
+  it('reads an input past the 8 KB a non-blocking pipe holds at first (a plain read lost every prompt over ~8.6 KB)', () => {
+    const input = Buffer.from(JSON.stringify({ prompt: 'ö'.repeat(20_000) }));
+    let off = 0;
+    const lateUntil = Date.now() + 40;
+    const text = readStdinSync((buf) => {
+      if (off >= 8192 && off < input.length && Date.now() < lateUntil) eagain();
+      const n = input.copy(buf, 0, off, Math.min(input.length, off + (off < 8192 ? 8192 : buf.length)));
+      off += n;
+      return n;
+    }, () => false);
+    expect(text).toBe(input.toString());
+  });
+
+  it('is null on a terminal and empty on an empty pipe', () => {
+    expect(readStdinSync(() => { throw new Error('must not read'); }, () => true)).toBeNull();
+    expect(readStdinSync(() => 0, () => false)).toBe('');
   });
 });
