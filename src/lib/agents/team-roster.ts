@@ -13,6 +13,7 @@ import { wrapUntrusted } from '../assistant/autonomy.js';
 import { bm25Search, RECALL_STRONG_SCORE, type RecallHit } from '../recall.js';
 import { buildCorpusCached } from '../recall-corpus-cache.js';
 import { SUPER_EVENT_PREFIXES, aboutHeads } from '../super/types.js';
+import { isCardFeedbackText } from '../chat-view-spec.js';
 
 /**
  * THE PROJECT'S AI TEAM, AS THE SUPER AGENT AND THE CHATS SEE IT (task super-agent-isi-bolerken-
@@ -342,6 +343,11 @@ export function ownerWords(prompt: string): string | null {
   // A lost first job keeps its job text, without the lead.
   if (prompt.startsWith(RELAUNCH_FIRST_LEAD)) prompt = prompt.slice(RELAUNCH_FIRST_LEAD.length);
   else if (prompt.startsWith(RELAUNCH_PREFIX)) return null;
+  // The server's hidden card-feedback turn (a skipped card, the owner-text gate's "say it again in his
+  // language") holds none of his words. Its inner `<owner-text-gate>` line used to be cut as a server
+  // block, leaving the bare `<dreamcontext-card-feedback>` tag as the recall query: a full judged
+  // recall (p50 ~11 s) on a tag.
+  if (isCardFeedbackText(prompt)) return null;
   let text = prompt;
   const cut = /(^|\n)(<super-|<owner-|\[super )/.exec(text);
   if (cut) text = text.slice(0, cut.index);
