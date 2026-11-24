@@ -13,6 +13,7 @@ import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
 import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
 import './ChatDrawer.css';
+import { HiddenGroupToggle } from './HiddenGroupToggle';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
 const DRAG_START_PX = 4;
@@ -681,14 +682,9 @@ function HiddenGroupRow({ rows, open, label, onToggle }: { rows: readonly Drawer
   const mark: MarkState = (open ? undefined : hiddenGroupMark(rows, superUnread)) ?? { asking: 0, working: false, unread: 0 };
   const words = markWords(t, mark);
   return (
-    <button type="button" className="ns-dr-row ns-dr-hidden-row" aria-expanded={open} data-testid="drawer-hidden-row" {...askRow(mark.asking)}
-      aria-label={`${label} (${rows.length}${words ? `, ${words}` : ''})`} onClick={onToggle}>
-      <svg className="ns-dr-ico ns-dr-hidden-chev" viewBox="0 0 16 16" aria-hidden="true"><path d={open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
-      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /><path d="M2.8 13.2L13.2 2.8" /></svg>
-      <span className="ns-dr-t">{label}</span>
-      <span className="ns-dr-hidden-n">{rows.length}</span>
-      <span className="ns-dr-end" data-testid="drawer-hidden-mark"><StatusMark {...mark} /></span>
-    </button>
+    <HiddenGroupToggle open={open} label={label} count={rows.length} onToggle={onToggle} data-testid="drawer-hidden-row" {...askRow(mark.asking)}
+      aria-label={`${label} (${rows.length}${words ? `, ${words}` : ''})`}
+      end={<span className="ns-dr-end" data-testid="drawer-hidden-mark"><StatusMark {...mark} /></span>} />
   );
 }
 
