@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import {
-  recallViaDashboard, renderRecallBlock, toWirePromptHit, resolveRecallServerPort,
+  recallViaDashboard, renderRecallBlock, toWirePromptHit, resolveRecallServerPort, RECALL_VIA_SERVER_TIMEOUT_MS,
 } from '../../src/cli/commands/hook.js';
+import { QUERY_VIA_SERVER_TIMEOUT_MS } from '../../src/cli/commands/memory.js';
 import { handleRecallPromptPost } from '../../src/server/routes/recall.js';
 import type { RecallHit, CorpusDoc } from '../../src/lib/recall.js';
 
@@ -87,6 +88,19 @@ describe('recallViaDashboard', () => {
     servers.pop()!.close();
     expect(await recallViaDashboard('q', '/v/_dream_context', { port: closed.port, timeoutMs: 1000 })).toBeNull();
   });
+
+  it('waits for a busy running server past 1.5 s (a burst queues there), but not for a missing one', async () => {
+    expect(RECALL_VIA_SERVER_TIMEOUT_MS).toBeGreaterThanOrEqual(QUERY_VIA_SERVER_TIMEOUT_MS);
+    const busy = await fakeDashboard(() => ({ status: 200, json: { label: 'Hybrid · local', hits: [] }, delayMs: 2000 }));
+    const r = await recallViaDashboard('q', '/v/_dream_context', { port: busy.port, home: mkdtempSync(join(tmpdir(), 'dc-home-')) });
+    expect(r).not.toBeNull();
+
+    const gone = await fakeDashboard(() => ({ status: 200 }));
+    servers.pop()!.close();
+    const t0 = Date.now();
+    expect(await recallViaDashboard('q', '/v/_dream_context', { port: gone.port })).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1000);
+  }, 10_000);
 });
 
 describe('POST /api/recall/prompt refuses what it must not serve', () => {
