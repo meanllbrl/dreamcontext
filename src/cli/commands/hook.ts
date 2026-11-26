@@ -811,7 +811,7 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     // cloud-index's nano query: 0.7-1.6 s per prompt, measured). When the app's dashboard server is
     // running it holds the model warm: it runs the very same search (hybridPromptRecall) and answers
     // in milliseconds. The hook names the tier it resolved; an answer for another tier (an older
-    // server that serves only local) is discarded. Not running, too slow (1.5 s), `not_ready` or an
+    // server that serves only local) is discarded. Not running, too slow (RECALL_VIA_SERVER_TIMEOUT_MS), `not_ready` or an
     // older server: the in-process path below, exactly as before.
     if (recallMode === 'hybrid' && deps.viaDashboard !== null && env.DREAMCONTEXT_RECALL_VIA_SERVER !== '0') {
       const remote = await (deps.viaDashboard ?? recallViaDashboard)(prompt, root, { tier }).catch(() => null);
@@ -966,8 +966,16 @@ function fromWirePromptHit(w: WirePromptHit): RecallHit {
   return hit;
 }
 
-/** How long the prompt hook waits for the dashboard before recalling in-process. */
-export const RECALL_VIA_SERVER_TIMEOUT_MS = 1500;
+/**
+ * How long the prompt hook waits for the dashboard before recalling in-process. No server answers at
+ * once (connection refused), so this only bounds a RUNNING server. The server answers one search at a
+ * time (~0.3-0.9 s each); the in-process search it saves costs 2-6 s alone and 9-26 s when 8 hooks start
+ * together (measured 2026-11-26, 8 child kickoffs at once). At 1.5 s a burst sent every hook in-process,
+ * and each abandoned request still ran on the server. A/B of 8 hooks at once, 6 rounds, server drained
+ * before each: 1.5 s p50 19.5 s (5/48 answered by the server), 6 s p50 4.5 s (35/48). Same budget as
+ * `memory recall` (QUERY_VIA_SERVER_TIMEOUT_MS).
+ */
+export const RECALL_VIA_SERVER_TIMEOUT_MS = 6000;
 
 /**
  * Ask the running dashboard server to recall for this prompt with its warm model. Null on any
