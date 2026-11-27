@@ -13,6 +13,7 @@ import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { antigravityTranscriptsDir } from '../../lib/antigravity-conversation.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
+import { lazyCommandNames } from '../lazy-program.js';
 import {
   readFileSync, existsSync, statSync, lstatSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
 } from 'node:fs';
@@ -2217,8 +2218,36 @@ export function peerNamed(query: string, peerNames: readonly string[]): boolean 
     const name = n.trim().toLowerCase();
     if (name.length < 3) return false;
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${esc}($|[^\\p{L}\\p{N}])`, 'u').test(q);
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}])${esc}(?=$|[^\\p{L}\\p{N}])`, 'gu');
+    for (const m of q.matchAll(re)) {
+      const at = (m.index ?? 0) + m[1].length;
+      if (name === CLI_NAME && isToolMention(q, at, at + name.length)) continue;
+      return true;
+    }
+    return false;
   });
+}
+
+/** This CLI's own name. A vault can carry it too (the brain of this very tool), and then it shows up as a peer. */
+const CLI_NAME = 'dreamcontext';
+/** The top-level command words, so `dreamcontext tasks log …` reads as a command line, not as the project named. */
+const CLI_COMMAND_WORDS = new Set([...lazyCommandNames(), 'cli', 'automation', 'automations']);
+
+/**
+ * The CLI's name used as the tool, not as the project: a command line (`dreamcontext tasks log`, `dreamcontext
+ * sleep flow`), the app's own tag (`[dreamcontext] This session is at …`), an env var (`$DREAMCONTEXT_…`) or a
+ * folder or agent name joined by a dash (`harbor-dreamcontext`, `dreamcontext-explore`). A peer vault named after
+ * the tool matched every brief, sleep prompt and app note of the other project that ran a command: over 72 h of
+ * real turns every one of its peer blocks in the other vault came from these, and they put three unrelated files
+ * of the tool's own brain into the other project's turns.
+ */
+function isToolMention(q: string, start: number, end: number): boolean {
+  const before = q[start - 1] ?? '';
+  const after = q[end] ?? '';
+  if (before === '$' || before === '-' || before === '_' || after === '_' || after === '-') return true;
+  if (before === '[' && after === ']') return true;
+  const next = /^\s+([a-z][a-z-]*)/.exec(q.slice(end, end + 40));
+  return next !== null && CLI_COMMAND_WORDS.has(next[1]);
 }
 
 // ─── Dashboard Auto-Open ──────────────────────────────────────────────────────

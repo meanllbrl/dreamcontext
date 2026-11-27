@@ -156,6 +156,22 @@ describe('peerNamed (MM-7)', () => {
     expect(peerNamed('the harbored doubt', ['harbor'])).toBe(false);
     expect(peerNamed('go ab now', ['ab'])).toBe(false);
   });
+  it("the CLI's own name used as the tool is no mention of a peer vault carrying that name", () => {
+    const peers = ['dreamcontext'];
+    expect(peerNamed('when done: dreamcontext tasks log invoice-fix "shipped"', peers)).toBe(false);
+    expect(peerNamed('Run a full dreamcontext memory consolidation, then `dreamcontext sleep done`', peers)).toBe(false);
+    expect(peerNamed('[dreamcontext] This session is at ~300k context tokens', peers)).toBe(false);
+    expect(peerNamed('slot in $DREAMCONTEXT_AUTOMATION_SLOT; use the dreamcontext CLI as needed', peers)).toBe(false);
+    expect(peerNamed('open the harbor-dreamcontext folder and ask dreamcontext-explore', peers)).toBe(false);
+  });
+  it('the CLI name as the project, beside a command line, still counts', () => {
+    const peers = ['dreamcontext'];
+    expect(peerNamed("dreamcontext'te bu nasıl çalışıyordu", peers)).toBe(true);
+    expect(peerNamed('ask dreamcontext about its recall judge', peers)).toBe(true);
+    expect(peerNamed('run dreamcontext builder heavy, then check how dreamcontext ranks files', peers)).toBe(true);
+    // Any other peer name keeps the plain rule: a command word after it is no exception.
+    expect(peerNamed('harbor tasks are late', ['harbor'])).toBe(true);
+  });
 });
 
 describe('recall render: sizes and capped snippets (MM-4, MM-13)', () => {
